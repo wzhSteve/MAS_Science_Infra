@@ -1,0 +1,16 @@
+[
+  {
+    "id": "err-1",
+    "question": "fail A",
+    "answer": "0",
+    "source": "gsm8k",
+    "_mock_error": "tool timeout after 12s"
+  },
+  {
+    "id": "err-2",
+    "question": "fail B",
+    "answer": "0",
+    "source": "gsm8k",
+    "_mock_error": "tool timeout after 99s"
+  }
+]

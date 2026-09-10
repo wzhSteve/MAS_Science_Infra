@@ -1,0 +1,20 @@
+schema_version: "0.1.0"
+topology: hub_react
+hub:
+  role: orchestrator
+  skills:
+    - react_loop
+  verify: verifier
+  max_feedback_hops: 1
+tools:
+  - web_search
+  - execute_python
+llm:
+  kind: api
+  model: ""
+  base_url: ""
+memory:
+  agent: messages
+  system: none
+archive:
+  window: post_first_tool

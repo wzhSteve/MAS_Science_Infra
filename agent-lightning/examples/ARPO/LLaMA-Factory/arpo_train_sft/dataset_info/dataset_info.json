@@ -1,0 +1,26 @@
+{
+  "final_5w4_still": {
+    "file_name": "../dataset/final_5w4_still.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+        "messages": "conversations",
+        "system": "system"
+    }
+  },
+  "final_5w4_still_maxlen_16k": {
+    "file_name": "../dataset/final_5w4_still_maxlen_16k.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+        "messages": "conversations",
+        "system": "system"
+    }
+  },
+  "final_5w4_still_maxlen_18k": {
+    "file_name": "../dataset/final_5w4_still_maxlen_18k.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+        "messages": "conversations",
+        "system": "system"
+    }
+  }
+}

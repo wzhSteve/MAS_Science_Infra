@@ -1,0 +1,65 @@
+{
+  "last_updated": "2026-07-25T06:53:39.073765",
+  "screenshots": [
+    {
+      "screenshot_id": "20260723_140358_1d216015",
+      "task_id": "default",
+      "url": "https://arxiv.org/list/hep-lat/2020-01",
+      "file_path": "/Users/rslh/Documents/工作面试/Agent架构/EPC_AW/solver_cache/20260723_140358_1d216015.png",
+      "page_title": "High Energy Physics - Lattice Jan 2020",
+      "screenshot_size": [
+        1920,
+        1080
+      ],
+      "file_size": 1600984,
+      "created_at": "2026-07-23T14:04:01.410775"
+    },
+    {
+      "screenshot_id": "20260723_144708_958f7adc",
+      "task_id": "default",
+      "url": "https://whitney.org/collection/works/2022.128",
+      "file_path": "/Users/rslh/Documents/工作面试/Agent架构/EPC_AW/solver_cache/20260723_144708_958f7adc.png",
+      "page_title": "Alexander Calder | Juggler with Dog | Whitney Museum of American Art",
+      "screenshot_size": [
+        1920,
+        1080
+      ],
+      "file_size": 1554552,
+      "created_at": "2026-07-23T14:47:15.619558"
+    },
+    {
+      "screenshot_id": "20260725_010059_539ce4dd",
+      "task_id": "default",
+      "url": "https://www.scribd.com/document/319932585/aa",
+      "file_path": "/Users/rslh/Documents/工作面试/Agent架构/EPC_AW/solver_cache/20260725_010059_539ce4dd.png",
+      "page_title": "ScienceDirect Reference Works 2022 Stats | PDF | Elsevier | Abstract (Summary)",
+      "screenshot_size": [
+        1920,
+        1080
+      ],
+      "file_size": 1792835,
+      "created_at": "2026-07-25T01:01:07.655383"
+    },
+    {
+      "screenshot_id": "20260725_065336_4a5e70e8",
+      "task_id": "default",
+      "url": "https://en.wikipedia.org/wiki/Carl_Nebel",
+      "file_path": "/Users/rslh/Documents/工作面试/Agent架构/EPC_AW/solver_cache/20260725_065336_4a5e70e8.png",
+      "page_title": "Carl Nebel - Wikipedia",
+      "screenshot_size": [
+        1920,
+        1080
+      ],
+      "file_size": 1150764,
+      "created_at": "2026-07-25T06:53:39.073030"
+    }
+  ],
+  "index_by_task": {
+    "default": [
+      "20260723_140358_1d216015",
+      "20260723_144708_958f7adc",
+      "20260725_010059_539ce4dd",
+      "20260725_065336_4a5e70e8"
+    ]
+  }
+}

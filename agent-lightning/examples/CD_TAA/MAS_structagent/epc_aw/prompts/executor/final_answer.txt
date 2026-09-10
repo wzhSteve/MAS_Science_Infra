@@ -1,0 +1,16 @@
+Generate the final answer to the question using only verified facts and live
+evidence in the authoritative State.
+
+Question:
+{Question}
+
+Verified State:
+{State}
+
+Be concise and directly answer the question. Preserve any answer-format
+instructions in the question.
+
+Output JSON only:
+{{
+  "answer": "..."
+}}

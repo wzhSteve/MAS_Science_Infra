@@ -1,0 +1,153 @@
+Task: Belief Prediction under Asymmetric Information
+
+You are acting as a meta-reasoner FROM THE DIAGNOSER'S PERSPECTIVE.
+Your goal is NOT to evaluate the plans yourself,
+but to PREDICT the belief distributions that two other agents
+(Planner and Executor) are likely to REPORT
+about the feasibility of each proposed plan.
+
+Your predictions must reflect how a Diagnoser,
+given only PUBLIC information and known agent tendencies,
+would anticipate the beliefs of Planner and Executor.
+
+These predictions must be based strictly on:
+- Publicly observable information
+- The known roles, objectives, and historical tendencies of the agents
+- Public signals from prior steps
+
+Do NOT assume access to:
+- Their private reasoning
+- Hidden internal states
+- Unobserved execution outcomes
+
+--------------------------------------------------
+Public Context
+--------------------------------------------------
+
+Question: {Question}
+
+Target Information: {Target_Information}
+
+Proposed Plans: {Proposed_Plans}
+
+Number of Plans: {Number_of_Plans}
+
+Index Range: {Index_Range}
+
+Toolbox Metadata (public): {Toolbox_Metadata}
+
+Agent Profile (public priors): {Agent_Profile}
+
+Previous Steps: {Previous_Steps}
+
+Last Step Plan Scores (public signals): {Last_Step_Plan_Scores}
+
+Obtained Information So Far: {Obtained_Information_So_Far}
+
+--------------------------------------------------
+Agent Role Models (for prediction only)
+--------------------------------------------------
+
+1. Planner (Failure-Aware, Negative-Evidence-Oriented)
+
+- Maintains an explicit record of PREVIOUSLY FAILED steps and plans.
+- Treats historical failures as NEGATIVE EVIDENCE (counterexamples).
+- Strongly penalizes plans that:
+    • repeat failed tools, evidence types, or reasoning patterns
+    • are minor reformulations of previously failed strategies
+    • rely on assumptions that were already invalidated
+- More conservative than Diagnoser:
+    • prefers epistemic safety over coverage
+    • assigns lower feasibility beliefs when uncertainty overlaps
+      with known failure regions
+- Tends to reduce belief scores sharply when a plan resembles
+  any known failure pattern, even if superficially plausible.
+
+2. Executor (History-Aware, Execution-Grounded)
+
+- Has access to ALL historical execution records,
+  including successful runs, failures, and tool-level traces.
+- Evaluates feasibility based on concrete execution reliability
+  observed in past interactions with tools.
+- Assigns higher belief to plans that:
+    • reuse tool settings that previously executed successfully
+    • rely on stable and interpretable tool outputs
+- Assigns lower belief to plans that:
+    • repeat tools or configurations that previously failed
+    • depend on brittle, ambiguous, or multi-step executions
+- More conservative than Diagnoser,
+  prioritizing operational reliability over abstract plausibility.
+
+--------------------------------------------------
+Prediction Objective
+--------------------------------------------------
+
+For EACH plan index k:
+
+- Predict the probability-weighted feasibility score
+  that the Planner is likely to REPORT.
+- Predict the probability-weighted feasibility score
+  that the Executor is likely to REPORT.
+
+These scores represent the BELIEFS AS REPORTED
+by Planner and Executor,
+as anticipated by a Diagnoser under asymmetric information,
+not your own feasibility judgment.
+
+==================================================
+Feasibility and Scoring Criteria
+==================================================
+
+{Feasibility_Criteria}
+
+- Use a continuous scale in [1.0, 5.0]
+- Higher score = higher believed feasibility
+- Scores should reflect uncertainty when appropriate
+
+You MUST differentiate plans whenever any:
+- public signal,
+- tool dependency,
+- or role-specific risk sensitivity
+provides a basis for distinction.
+
+Do NOT assign identical scores unless plans are genuinely indistinguishable
+from the perspective of the predicted agent.
+
+--------------------------------------------------
+Important Constraints
+--------------------------------------------------
+
+1. You are predicting BELIEFS, NOT deciding which plan is best.
+2. Use ONLY public information and role-consistent reasoning.
+3. Do NOT introduce new facts or assume private signals.
+4. Perform all reasoning internally.
+5. Do NOT output explanations or analysis.
+6. Output ONLY valid JSON in the specified format.
+
+--------------------------------------------------
+Response Format (strict)
+--------------------------------------------------
+
+{{
+"planner_beliefs": {{
+    "0": score0,
+    "1": score1,
+    "...": "...",
+    "N": scoreN
+}},
+"executor_beliefs": {{
+    "0": score0,
+    "1": score1,
+    "...": "...",
+    "N": scoreN
+}}
+}}
+
+--------------------------------------------------
+Example Output
+--------------------------------------------------
+
+{{
+"planner_beliefs": {{"0": 4.5, "1": 2.5, "2": 5.0}},
+"executor_beliefs": {{"0": 3.5, "1": 2.5, "2": 4.5}}
+}}

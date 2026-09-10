@@ -1,0 +1,137 @@
+Task:
+Perform TWO-LAYER verification of the latest tool execution:
+LAYER 1: Did the executor COMPLETE the current sub-goal?
+LAYER 2: (Only if Layer 1=YES) Did the system gather enough information to answer the original question?
+
+CRITICAL PRINCIPLE:
+- Layer 1 failure means: diagnostic intervention is needed (tool/parameter change)
+- Layer 1 success + Layer 2 failure means: proceed to next sub-goal
+- Layer 1 success + Layer 2 success means: task complete, STOP
+
+--------------------------------------------------
+CONTEXT
+--------------------------------------------------
+Question: {Question}
+Current Sub-Goal: {Sub_Goal}
+Current Target Information: {Target_Information}
+Current ExecutionOutline: {Outline}
+Latest Executor Result: {Result_Executor}
+Memory (All Previous Tools & Results): {Memory}
+Obtained Information So Far: {Obtained_Information_So_Far}
+
+--------------------------------------------------
+LAYER 1: SUB-GOAL COMPLETION CHECK (MANDATORY)
+--------------------------------------------------
+
+QUESTION: Did the executor successfully complete the current sub-goal?
+
+JUDGMENT CRITERIA:
+The sub-goal is COMPLETE if:
+1. The executor returned a non-empty result with relevant information
+2. The result directly addresses the requirements of {Sub_Goal}
+3. There is NO indication of failure (timeout, error, no_results, permission denied)
+4. The information quality is sufficient for this step
+
+The sub-goal is INCOMPLETE if:
+1. Executor returned no results or empty results
+2. Executor encountered an error/timeout/failure
+3. The result does not address the sub-goal requirements
+4. The result is clearly inadequate or requires refinement
+
+OUTPUT for Layer 1:
+"SUBGOAL_COMPLETE" — proceed to Layer 2
+"SUBGOAL_INCOMPLETE" — trigger causal diagnostic signal, no Layer 2 judgment
+
+--------------------------------------------------
+LAYER 2: TASK COMPLETION CHECK (ONLY IF LAYER 1 = COMPLETE)
+--------------------------------------------------
+
+QUESTION: Is there enough information gathered to answer the original question {Question}?
+
+JUDGMENT CRITERIA:
+STOP (task complete) if:
+1. The question has been directly answered (yes/no/specific result)
+2. All essential information required for the answer is now available
+3. The answer is accurate and complete enough
+4. Further tool execution would only add redundant details
+
+CONTINUE (task incomplete) if:
+1. The answer to the original question is still missing
+2. Key information is incomplete or uncertain
+3. Critical supporting evidence is needed
+4. Only proceed with clear structural reasoning, not vague "maybe need more"
+
+ANTI-BIAS RULES FOR LAYER 2:
+- DO NOT default to CONTINUE just because "more information might help"
+- DO NOT continue if the answer is already sufficiently clear
+- DO consider explicit stopping conditions, not just "more is better"
+- If you've gathered 80% of useful information, remaining 20% is often diminishing returns
+
+--------------------------------------------------
+STEP 1: Evidence & Information Gain Classification (FOR LAYER 1)
+--------------------------------------------------
+
+Classify the Latest Executor Result:
+
+(1) Evidence Type — select EXACTLY ONE:
+- DIRECT_EVIDENCE: explicitly contains what the sub-goal asks for
+- PARTIAL_EVIDENCE: contains related facts but not the core requirement
+- NO_RELEVANT_EVIDENCE: contains nothing useful for the sub-goal
+
+(2) Information Gain:
+- NEW_USABLE_INFORMATION: introduces facts NOT in memory that advance this step
+- NO_INFORMATION_GAIN: only repeats/rephrases existing information
+
+--------------------------------------------------
+STEP 2: Failure Attribution (IF LAYER 1 = INCOMPLETE)
+--------------------------------------------------
+
+If the sub-goal is incomplete, select the primary failure reason:
+
+(A) RETRIEVAL_ABSTRACTION_FAILURE
+→ Sub-goal is too vague or under-specified. Try parameter variation.
+
+(B) TOOL_INFORMATION_MISMATCH
+→ Selected tool cannot access required information type. Switch tool.
+
+(C) PARAMETER_INSUFFICIENCY
+→ Tool parameters not optimized for this sub-goal. Vary parameters.
+
+(D) PREREQUISITE_MISSING
+→ Information required before this sub-goal is still missing. Adjust goal order.
+
+(E) GENUINE_ABSENCE
+→ Information truly doesn't exist or is inaccessible. Decompose or reframe goal.
+
+This attribution guides the intervention type for causal diagnosis.
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON ONLY)
+--------------------------------------------------
+
+{{
+  "Analysis": "Evidence-grounded explanation covering (1) Layer 1 judgment with failure reason if incomplete, (2) Layer 2 judgment if Layer 1 complete, and (3) structural reasoning for the conclusion.",
+
+  "Subgoal_Conclusion": "<EXACTLY one of: SUBGOAL_COMPLETE | SUBGOAL_INCOMPLETE>",
+
+  "New_Obtained_Information_Flag": "<True if NEW_USABLE_INFORMATION was obtained AND Subgoal_Conclusion=SUBGOAL_COMPLETE, else False>",
+
+  "New_Obtained_Information": "<If flag=True, list ONLY the newly obtained facts not already in Obtained Information So Far. Otherwise empty string.>",
+
+  "Conclusion": "<If Subgoal_Conclusion=SUBGOAL_INCOMPLETE: return null>
+                <If Subgoal_Conclusion=SUBGOAL_COMPLETE and task answer is ready: return 'STOP'>
+                <If Subgoal_Conclusion=SUBGOAL_COMPLETE but more steps needed: return 'CONTINUE'>"
+}}
+
+CRITICAL — Layer 1 vs Layer 2 MUST NOT BE CONFUSED:
+- Subgoal_Conclusion reflects ONLY Layer 1 (current sub-goal {Sub_Goal}).
+- If the executor result satisfies the CURRENT sub-goal, you MUST output Subgoal_Conclusion=SUBGOAL_COMPLETE even when the OVERALL question {Question} is not yet fully answered.
+- Missing information for FUTURE outline steps does NOT make the current sub-goal incomplete.
+- Example: confirming species name completes Step 1 even if USGS zip codes are still unknown → SUBGOAL_COMPLETE + Conclusion=CONTINUE.
+
+NOTES:
+- Subgoal_Conclusion=INCOMPLETE ONLY when THIS sub-goal failed (error, empty, irrelevant to sub-goal).
+- If Layer 1 is COMPLETE but the overall task needs more steps → Subgoal_Conclusion=SUBGOAL_COMPLETE, Conclusion=CONTINUE.
+- If Layer 1 is COMPLETE and the overall question is fully answered → Subgoal_Conclusion=SUBGOAL_COMPLETE, Conclusion=STOP.
+- Do NOT set Subgoal_Conclusion=INCOMPLETE just because later outline steps are still pending.
+- Do NOT use vague language like "might need" or "could be helpful"

@@ -1,0 +1,40 @@
+You initialize the authoritative State for a QA-native StructAgent.
+
+Question:
+{Question}
+
+Available tools:
+{Available_Tools}
+
+Tool metadata:
+{Toolbox_Metadata}
+
+Create 1-6 durable information milestones. A milestone is a fact or reasoning
+requirement whose verified evidence is needed for the final answer, not a
+search action or transient waypoint. Split multi-hop questions so each hop can
+be verified independently and express dependencies with milestone ids.
+
+For every milestone provide:
+- a stable snake_case id
+- a precise description
+- dependency ids
+- a concrete verification description
+- fact names that the verifier should bind
+- whether a source URL/citation is required
+- suitable preferred tool names
+
+Neither the planner nor actor may mark a milestone complete. Output JSON only:
+{{
+  "analysis": "...",
+  "milestones": [
+    {{
+      "id": "...",
+      "description": "...",
+      "depends_on": [],
+      "verification_description": "...",
+      "required_fact_names": ["..."],
+      "require_source": true,
+      "preferred_tools": ["Google_Search_Tool"]
+    }}
+  ]
+}}

@@ -1,0 +1,39 @@
+Task: Critically re-examine a previously produced query analysis and execution outline for hidden-assumption errors. You are a skeptical reviewer.
+
+Inputs:
+- Query: {Question}
+- Available Tools: {Available_Tools}
+- Prior Analysis: {Analysis}
+- Prior ExecutionOutline:
+{ExecutionOutline}
+
+### What to check (in order)
+
+1. **Hidden-base-quantity check.** If the query asks "how many X" / "how much X" / for a count or a quantity derived from a population, then the answer DEPENDS on an external base quantity (the count/size of X, a rate, a population, a published-total, etc.) that must be RETRIEVED from an external source — it can NEVER be derived from pure reasoning alone. If the Prior Analysis claims the answer is a fixed number (including 0) requiring no external retrieval of that base quantity, that is a MISREAD. Flag it.
+
+2. **No-retrieval-yet-numeric check.** If the outline's final step produces a concrete number but no earlier step retrieves an external base quantity / denominator required by the question, the outline is malformed.
+
+3. **Premature-foreclosing check.** If the Prior Analysis text contains phrases like "the answer is 0 by definition", "no external data is needed", "the question contains a misconception" and the question is a how-many/quantity question, treat this as a foreclosing misread.
+
+### Output
+
+If NO issue is found, output exactly:
+NEEDS_REVISION: false
+
+If an issue is found, output a REVISED outline as a single JSON object (no prose outside JSON) with this schema:
+
+NEEDS_REVISION: true
+{{
+"Analysis": "Corrected interpretation that explicitly identifies the external base quantity that must be retrieved.",
+"ExecutionOutline":
+    {{
+    "1": "Target Information: (the external base quantity / denominator needed). Operation Details: (Google_Search_Tool or Wikipedia_Search_Tool with a concrete query). Expected Output: (the retrieved quantity).",
+    "2": "Target Information: (any secondary quantity needed). Operation Details: (Tool). Expected Output: (result).",
+    "3": "Target Information: The final computed answer. Operation Details: Python_Coder_Tool using the retrieved base quantity. Expected Output: (the computed number)."
+    }}
+}}
+
+Rules for the revised outline:
+- Step 1 MUST retrieve the external base quantity from an external search tool (Google_Search_Tool / Wikipedia_Search_Tool / Web_Search_Tool). It must NOT be a Base_Generator_Tool reasoning step.
+- The final step MUST be a computation using the retrieved quantity, not a pure-reasoning assertion.
+- Keep 3-5 steps.

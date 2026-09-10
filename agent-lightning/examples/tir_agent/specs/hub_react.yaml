@@ -1,0 +1,19 @@
+schema_version: "0.1.0"
+topology: hub_react
+hub:
+  role: orchestrator
+  skills:
+    - react_loop
+tools:
+  - web_search
+  - wikipedia_search
+  - execute_python
+llm:
+  kind: api
+  model: ""
+  base_url: ""
+memory:
+  agent: messages
+  system: none
+archive:
+  window: post_first_tool

@@ -1,0 +1,56 @@
+**Task**
+Update the ExecutionOutline after a completed sub-goal. Remove done steps, renumber, adapt remaining work.
+
+{TaskState}
+
+---
+
+## RULES
+
+1. **Remove** Step {current_step} (just completed)
+2. **Remove** steps whose targets are already satisfied in Obtained Information So Far
+3. **Renumber** remaining steps from 1
+4. **NEVER** return empty `{{"execution_outline": {{}}}}` — always ≥1 step until SlotGate confirms all slots filled
+5. Do NOT add Base_Generator synthesis steps while acquisition slots are still missing (see TaskState forbidden_tools)
+
+---
+
+## CONTEXT
+
+**Original Question:** {Question}
+
+**Verification Analysis:**
+{Current_Verification_Analysis}
+
+**Latest Executor Result:**
+{Result_Executor}
+
+**Known Information:**
+{Obtained_Information_So_Far}
+
+
+**Execution History:**
+{Memory}
+
+**Available Tools:**
+{Toolbox_Metadata}
+
+**Learned Tool Capability Boundaries:**
+{Tool_Capability_Hint}
+
+---
+
+## OUTPUT (STRICT JSON)
+
+```json
+{{
+  "execution_outline": {{
+    "1": "Target Information: ... Operation Details: ... Expected Output: ...",
+    "2": "..."
+  }}
+}}
+```
+
+- Reference known facts in remaining steps
+- If only synthesis remains and forbidden_tools allows Generator, add one final formatting step
+- Otherwise add retrieval steps for missing slots listed in TaskState

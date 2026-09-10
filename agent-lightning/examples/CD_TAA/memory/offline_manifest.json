@@ -1,0 +1,8 @@
+{
+  "last_updated": "2026-08-07T16:11:33.210743",
+  "offline_memory_files": [
+    "tool_capability_memory.json",
+    "tool_invocation_memory.json"
+  ],
+  "schema": "tool_knowledge_memory_v2"
+}

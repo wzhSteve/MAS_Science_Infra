@@ -1,0 +1,31 @@
+You route recovery after a QA agent failed to advance State.
+
+Question:
+{Question}
+
+Target milestone:
+{Milestone}
+
+Recent trace:
+{Trace}
+
+Verifier decision:
+{Verification}
+
+Recent failures:
+{Failures}
+
+Attribute the primary failure:
+- planner: wrong subgoal or tool choice
+- actor: malformed/insufficient tool arguments
+- verifier: verification contract or judgment mismatch
+- tool_environment: tool/network/runtime failure
+
+Give a concise recovery hint that does not claim progress.
+
+Output JSON only:
+{{
+  "attributed_to": "planner|actor|verifier|tool_environment",
+  "reason": "...",
+  "recovery_hint": "..."
+}}

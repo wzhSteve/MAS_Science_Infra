@@ -1,0 +1,89 @@
+.layout {
+  display: grid;
+  grid-template-columns: 188px 1fr;
+  min-height: 100vh;
+  height: 100vh;
+}
+.nav {
+  background: var(--nav);
+  color: #e6edf3;
+  padding: 0.85rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.brand {
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 0.4rem 0.7rem 1rem;
+  letter-spacing: 0.04em;
+  color: #f0f3f6;
+}
+.brand span { display: block; font-weight: 400; font-size: 0.7rem; color: #8b949e; margin-top: 2px; }
+.nav-item {
+  text-align: left;
+  background: transparent;
+  color: #c9d1d9;
+  border: none;
+  border-radius: 8px;
+  padding: 0.48rem 0.75rem;
+  border-left: 3px solid transparent;
+}
+.nav-item:hover { background: var(--nav-hover); }
+.nav-item.active {
+  background: #1f6feb22;
+  color: #fff;
+  border-left-color: #58a6ff;
+}
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.topbar-meta { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.train-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 1rem;
+  background: #1f6feb14;
+  border-bottom: 1px solid #b6d4fe;
+  font-size: 0.82rem;
+}
+.content { padding: 0.9rem 1.1rem 0.5rem; overflow: auto; flex: 1; min-height: 0; }
+.pane { min-height: 0; }
+.pane-hidden { display: none !important; }
+.status-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 1rem;
+  background: var(--strip);
+  color: #c9d1d9;
+  font-size: 0.75rem;
+  border-top: 1px solid #21262d;
+  min-height: 36px;
+}
+.status-strip .tail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #8b949e;
+}
+.status-strip button {
+  padding: 0.15rem 0.55rem;
+  font-size: 0.72rem;
+}
+@media (max-width: 800px) {
+  .layout { grid-template-columns: 1fr; height: auto; }
+  .nav { flex-direction: row; flex-wrap: wrap; }
+}

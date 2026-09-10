@@ -1,0 +1,31 @@
+# Local secrets / machine config
+.env
+.secrets.env
+!.env.example
+
+# Browser runtime profiles
+chrome_profile/
+
+# Smoke / collect artifacts
+artifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+node_modules/
+
+.github
+
+.tir_archives
+online
+offline
+agent-lightning/docs
+
+# Exclude datasets, runtime screenshots, and model weights
+/data/*.parquet
+/agent-lightning/examples/ARPO/ARPO/rl_datasets/
+/agent-lightning/examples/CD_TAA/solver_cache/
+model.safetensors

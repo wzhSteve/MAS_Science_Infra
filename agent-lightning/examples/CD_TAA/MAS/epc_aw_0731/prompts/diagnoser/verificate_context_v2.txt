@@ -1,0 +1,93 @@
+Task:
+Verify the latest tool execution in TWO layers:
+LAYER 1: Did the executor COMPLETE the current sub-goal?
+LAYER 2: Report slot fill status — do NOT decide STOP (code uses SlotGate).
+
+{TaskState}
+
+--------------------------------------------------
+CONTEXT
+--------------------------------------------------
+Question: {Question}
+Current Sub-Goal: {Sub_Goal}
+Current Target Information: {Target_Information}
+Current ExecutionOutline: {Outline}
+Remaining Outline Steps: {Remaining_Outline_Steps}
+Latest Executor Result: {Result_Executor}
+Task State: {Memory}
+Obtained Information So Far: {Obtained_Information_So_Far}
+
+--------------------------------------------------
+LAYER 1: SUB-GOAL COMPLETION
+--------------------------------------------------
+
+SUBGOAL_COMPLETE when:
+- Executor returned non-empty, relevant data for {Sub_Goal} in THIS step's result
+- No hard failure (timeout, error, permission denied)
+- For acquisition: result contains structured fields (URL, arXiv ID, zip, number, extracted text)
+- For cross-reference tasks: TWO axis label pairs (e.g. Standardization vs Localization AND Utilitarianism vs Egalitarianism) are sufficient — a third axis is NOT required
+
+SUBGOAL_INCOMPLETE when:
+- Empty/error/irrelevant result from executor
+- Executor returns ABSENCE (not found / no details) with no structured fields
+- Wrong tool class (e.g. Base_Generator for extract/retrieve)
+
+CRITICAL: Do NOT mark SUBGOAL_COMPLETE based only on prior Obtained Information when the Latest Executor Result is ABSENCE or EMPTY.
+
+--------------------------------------------------
+EVIDENCE CLASSIFICATION
+--------------------------------------------------
+
+Evidence_Type — EXACTLY ONE:
+- DIRECT: this step's result contains what the sub-goal asks for
+- ABSENCE: this step explicitly states missing/not found/does not contain
+- ERROR: tool failure/exception
+- EMPTY: no usable content
+
+Tool_Appropriate — false when the tool cannot satisfy this subgoal type.
+
+Slot_Updates — for each required slot, report:
+- slot name (final_term, axis_labels, zip_codes, computed_count, etc.)
+- value ONLY if quoted or paraphrased from Latest Executor Result or explicitly new in this step
+- filled=true ONLY when value is present in THIS step's evidence with citable text
+- Do NOT set filled=true from Obtained Information alone if executor returned ABSENCE/EMPTY
+
+Cross-reference tasks: when two axis pairs and a societal descriptor term (e.g. egalitarian) both appear in cumulative evidence from THIS or prior steps WITH structured citations, you may set final_term filled=true with the matching word.
+
+--------------------------------------------------
+LAYER 2: TASK STATUS (REPORT ONLY)
+--------------------------------------------------
+
+Do NOT return STOP. Always set Conclusion=CONTINUE or null.
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON ONLY)
+--------------------------------------------------
+
+{{
+  "Analysis": "Layer 1 judgment + evidence_type + slot assessment",
+
+  "Subgoal_Conclusion": "SUBGOAL_COMPLETE | SUBGOAL_INCOMPLETE",
+
+  "New_Obtained_Information_Flag": true/false,
+
+  "New_Obtained_Information": "new facts from THIS step only, or empty string",
+
+  "Conclusion": "CONTINUE or null",
+
+  "Slot_Updates": [
+    {{"slot": "final_term", "value": "egalitarian", "filled": true}},
+    {{"slot": "axis_labels", "value": null, "filled": false}}
+  ],
+
+  "Evidence_Type": "DIRECT | ABSENCE | ERROR | EMPTY",
+
+  "Tool_Appropriate": true/false,
+
+  "Task_Recommendation": "CONTINUE"
+}}
+
+NOTES:
+- Subgoal_Conclusion reflects ONLY whether THIS executor result completed the sub-goal.
+- slot_updates.filled=true requires citable support in Latest Executor Result (or explicit structured fields therein).
+- ABSENCE from executor → SUBGOAL_INCOMPLETE unless slot_updates show new fills from executor text.

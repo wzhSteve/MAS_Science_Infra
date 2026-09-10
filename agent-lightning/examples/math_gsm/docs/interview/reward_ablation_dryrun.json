@@ -1,0 +1,128 @@
+[
+  {
+    "name": "correct_strict_format",
+    "mode": "binary",
+    "prediction": "42",
+    "reward": 1.0,
+    "note": "正确 + 严格格式：shaped 应略高于 binary"
+  },
+  {
+    "name": "correct_strict_format",
+    "mode": "shaped",
+    "prediction": "42",
+    "reward": 1.1,
+    "note": "正确 + 严格格式：shaped 应略高于 binary"
+  },
+  {
+    "name": "correct_strict_format",
+    "mode": "format_only",
+    "prediction": "42",
+    "reward": 1.0,
+    "note": "正确 + 严格格式：shaped 应略高于 binary"
+  },
+  {
+    "name": "correct_loose_number",
+    "mode": "binary",
+    "prediction": "42",
+    "reward": 1.0,
+    "note": "正确但无 ###：binary=1；shaped 无格式分；format_only=0"
+  },
+  {
+    "name": "correct_loose_number",
+    "mode": "shaped",
+    "prediction": "42",
+    "reward": 1.0,
+    "note": "正确但无 ###：binary=1；shaped 无格式分；format_only=0"
+  },
+  {
+    "name": "correct_loose_number",
+    "mode": "format_only",
+    "prediction": "42",
+    "reward": 0.0,
+    "note": "正确但无 ###：binary=1；shaped 无格式分；format_only=0"
+  },
+  {
+    "name": "wrong_but_pretty_format",
+    "mode": "binary",
+    "prediction": "41",
+    "reward": 0.0,
+    "note": "格式漂亮但算错：format_only 会被 hacking 成 1"
+  },
+  {
+    "name": "wrong_but_pretty_format",
+    "mode": "shaped",
+    "prediction": "41",
+    "reward": 0.1,
+    "note": "格式漂亮但算错：format_only 会被 hacking 成 1"
+  },
+  {
+    "name": "wrong_but_pretty_format",
+    "mode": "format_only",
+    "prediction": "41",
+    "reward": 1.0,
+    "note": "格式漂亮但算错：format_only 会被 hacking 成 1"
+  },
+  {
+    "name": "tool_result_leak",
+    "mode": "binary",
+    "prediction": "180",
+    "reward": 1.0,
+    "note": "像 tool 输出；extract 可能拿到数，但无 ### 格式"
+  },
+  {
+    "name": "tool_result_leak",
+    "mode": "shaped",
+    "prediction": "180",
+    "reward": 1.0,
+    "note": "像 tool 输出；extract 可能拿到数，但无 ### 格式"
+  },
+  {
+    "name": "tool_result_leak",
+    "mode": "format_only",
+    "prediction": "180",
+    "reward": 0.0,
+    "note": "像 tool 输出；extract 可能拿到数，但无 ### 格式"
+  },
+  {
+    "name": "verbose_correct",
+    "mode": "binary",
+    "prediction": "16",
+    "reward": 1.0,
+    "note": "又对又长：shaped 应被长度惩罚压低（相对 binary 的 1.0）"
+  },
+  {
+    "name": "verbose_correct",
+    "mode": "shaped",
+    "prediction": "16",
+    "reward": 0.5978000000000001,
+    "note": "又对又长：shaped 应被长度惩罚压低（相对 binary 的 1.0）"
+  },
+  {
+    "name": "verbose_correct",
+    "mode": "format_only",
+    "prediction": "16",
+    "reward": 1.0,
+    "note": "又对又长：shaped 应被长度惩罚压低（相对 binary 的 1.0）"
+  },
+  {
+    "name": "empty",
+    "mode": "binary",
+    "prediction": null,
+    "reward": 0.0,
+    "note": "空回复：各 mode 都应为 0"
+  },
+  {
+    "name": "empty",
+    "mode": "shaped",
+    "prediction": null,
+    "reward": 0.0,
+    "note": "空回复：各 mode 都应为 0"
+  },
+  {
+    "name": "empty",
+    "mode": "format_only",
+    "prediction": null,
+    "reward": 0.0,
+    "note": "空回复：各 mode 都应为 0"
+  }
+]

@@ -1,0 +1,34 @@
+Task:
+Generate the FINAL answer to the query with STRICT VERIFICATION CONSTRAINTS.
+You MUST prioritize the Verification Analysis and MUST NOT contradict it.
+
+Context:
+- Question: {Question}
+- Obtained Information (Verified Evidence): {Obtained_Information}
+- History Actions: 
+  {History_Actions}
+
+Instructions:
+1. Review the query and the results from all actions.
+2. Synthesize the key findings into a clear, step-by-step summary of the process.
+3. Provide a direct, precise answer to the original query.
+
+Precision Constraints for Some Kinds of Questions:
+- Dates need to be exact to YEAR-MONTH-DAY if possible.
+  - Even a 1-day difference (e.g., July 3 vs July 4) is WRONG.
+- Numbers need to be as precise as possible.
+  - NO approximations, ranges, or vague quantities.
+- Names need to be FULL LEGAL NAMES if possible.
+- If the question asks Yes/No, you MUST answer explicitly "Yes" or "No".
+- If multiple correct answer forms exist (e.g., full name vs alias),
+  list ALL correct and equivalent answers.
+- If the correct answer is a SET or LIST, output the COMPLETE set.
+- ...
+
+Output Format (STRICT):
+1.  **Process Summary:** A clear, step-by-step breakdown of how the query was addressed, including the purpose and key results of each action.
+2.  **Answer:** A direct and concise final answer to the query.
+- Only the answer.
+- No reasoning.
+- No extra commentary.
+- If required by the query, wrap the answer in specified tags.

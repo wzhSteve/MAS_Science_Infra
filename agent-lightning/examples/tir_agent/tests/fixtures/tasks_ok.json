@@ -1,0 +1,16 @@
+[
+  {
+    "id": "ok-1",
+    "question": "What is 1+1?",
+    "answer": "2",
+    "source": "gsm8k",
+    "_mock_answer": "2"
+  },
+  {
+    "id": "ok-2",
+    "question": "What is 2+2?",
+    "answer": "4",
+    "source": "gsm8k",
+    "_mock_answer": "4"
+  }
+]

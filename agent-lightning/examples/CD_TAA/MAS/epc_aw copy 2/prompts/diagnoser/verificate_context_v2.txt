@@ -1,0 +1,138 @@
+Task:
+Perform TWO-LAYER verification of the latest tool execution:
+LAYER 1: Did the executor COMPLETE the current sub-goal?
+LAYER 2: (Only if Layer 1=YES) Is the ORIGINAL question fully and reliably answered?
+
+CRITICAL PRINCIPLE:
+- Layer 1 failure → diagnostic intervention (tool/parameter change)
+- Layer 1 success + Layer 2 failure → proceed to next outline step (CONTINUE)
+- Layer 1 success + Layer 2 success → task complete (STOP) — ONLY when ALL STOP gates pass
+
+--------------------------------------------------
+CONTEXT
+--------------------------------------------------
+Question: {Question}
+Current Sub-Goal: {Sub_Goal}
+Current Target Information: {Target_Information}
+Current ExecutionOutline: {Outline}
+Remaining Outline Steps: {Remaining_Outline_Steps}
+Latest Executor Result: {Result_Executor}
+Memory (All Previous Tools & Results): {Memory}
+Obtained Information So Far: {Obtained_Information_So_Far}
+
+--------------------------------------------------
+LAYER 1: SUB-GOAL COMPLETION CHECK (MANDATORY)
+--------------------------------------------------
+
+QUESTION: Did the executor successfully complete the current sub-goal?
+
+The sub-goal is COMPLETE if:
+1. The executor returned a non-empty result with information relevant to {Sub_Goal}
+2. The result directly addresses the requirements of the CURRENT sub-goal (not the whole question)
+3. There is NO indication of hard failure (timeout, error, empty, permission denied)
+4. Information quality is sufficient for THIS step only
+
+The sub-goal is INCOMPLETE if:
+1. Executor returned no results or empty results
+2. Executor encountered an error/timeout/failure
+3. The result does not address the current sub-goal requirements
+4. The result is clearly inadequate for this step
+
+OUTPUT for Layer 1:
+"SUBGOAL_COMPLETE" — proceed to Layer 2
+"SUBGOAL_INCOMPLETE" — trigger causal diagnostic signal, no Layer 2 judgment
+
+--------------------------------------------------
+LAYER 2: TASK COMPLETION CHECK (ONLY IF LAYER 1 = COMPLETE)
+--------------------------------------------------
+
+QUESTION: Can we STOP now and answer {Question} with high confidence?
+
+DEFAULT BIAS: When uncertain about NEW retrieval, choose CONTINUE.
+HOWEVER: If Obtained Information So Far ALREADY contains the formatted answer (e.g. five-digit zip codes + USGS/species/location context), you MUST return STOP — do NOT require redundant re-verification.
+
+STOP requires ALL of the following gates to pass:
+
+GATE A — OUTLINE EXHAUSTION OR REDUNDANT REMAINING STEPS
+- Remaining Outline Steps = 0, OR
+- Remaining steps only re-verify/format facts ALREADY in Obtained Information So Far
+- If the answer (e.g. zip codes) is already in memory, remaining "confirm USGS" steps are REDUNDANT → treat as exhausted
+
+GATE B — DIRECT ANSWER AVAILABLE (CHECK CUMULATIVE MEMORY FIRST)
+- The required answer must appear in the Latest Executor Result OR Obtained Information So Far (combined)
+- For zip-code questions: at least one five-digit U.S. zip code in cumulative evidence
+- Partial location info WITHOUT zip codes does NOT satisfy this gate
+
+GATE C — SOURCE AUTHORITY (when question cites a specific source)
+- If the question says "according to USGS":
+  * STOP is allowed when cumulative evidence includes BOTH (1) USGS/nonnative/species/location context AND (2) the required zip code(s)
+  * The zip code may come from a geographic lookup (city/place) IF the USGS location is already established in memory
+  * Do NOT require every field to come from a single USGS page scrape
+  * Do NOT CONTINUE just because the latest step used a non-USGS tool, when memory already satisfies the question
+
+GATE D — FORMAT & COMPLETENESS
+- Required output format must be satisfiable from cumulative evidence
+- For zip-code questions: five-digit zip code(s) present in cumulative evidence
+
+CONTINUE only if cumulative memory still lacks the required answer fields.
+
+--------------------------------------------------
+STEP 1: Evidence & Information Gain Classification (FOR LAYER 1)
+--------------------------------------------------
+
+Classify the Latest Executor Result:
+
+(1) Evidence Type — select EXACTLY ONE:
+- DIRECT_EVIDENCE: explicitly contains what the sub-goal asks for
+- PARTIAL_EVIDENCE: related facts but not the core requirement
+- NO_RELEVANT_EVIDENCE: nothing useful for the sub-goal
+
+(2) Source Provenance (for Layer 2):
+- PRIMARY: direct from authoritative source named in the question
+- SECONDARY: third-party quoting/summarizing the authoritative source
+- INFERRED: inferred from context, not explicitly stated in results
+
+(3) Information Gain:
+- NEW_USABLE_INFORMATION: introduces facts NOT in memory that advance this step
+- NO_INFORMATION_GAIN: only repeats/rephrases existing information
+
+--------------------------------------------------
+STEP 2: Failure Attribution (IF LAYER 1 = INCOMPLETE)
+--------------------------------------------------
+
+If the sub-goal is incomplete, select the primary failure reason:
+
+(A) RETRIEVAL_ABSTRACTION_FAILURE → parameter variation
+(B) TOOL_INFORMATION_MISMATCH → switch tool
+(C) PARAMETER_INSUFFICIENCY → vary parameters
+(D) PREREQUISITE_MISSING → adjust goal order
+(E) GENUINE_ABSENCE → decompose or reframe goal
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON ONLY)
+--------------------------------------------------
+
+{{
+  "Analysis": "Evidence-grounded explanation covering (1) Layer 1 judgment, (2) Layer 2 gate evaluation if Layer 1 complete (cite which gates pass/fail), (3) source provenance assessment.",
+
+  "Subgoal_Conclusion": "<EXACTLY one of: SUBGOAL_COMPLETE | SUBGOAL_INCOMPLETE>",
+
+  "New_Obtained_Information_Flag": "<True if NEW_USABLE_INFORMATION was obtained AND Subgoal_Conclusion=SUBGOAL_COMPLETE, else False>",
+
+  "New_Obtained_Information": "<If flag=True, list ONLY newly obtained facts not already in Obtained Information So Far. Otherwise empty string.>",
+
+  "Conclusion": "<If Subgoal_Conclusion=SUBGOAL_INCOMPLETE: return null>
+                <If Subgoal_Conclusion=SUBGOAL_COMPLETE and ALL Layer 2 gates pass: return 'STOP'>
+                <If Subgoal_Conclusion=SUBGOAL_COMPLETE but any gate fails: return 'CONTINUE'>"
+}}
+
+CRITICAL — Layer 1 vs Layer 2 MUST NOT BE CONFUSED:
+- Subgoal_Conclusion reflects ONLY Layer 1 (current sub-goal {Sub_Goal}).
+- If the executor result satisfies the CURRENT sub-goal, output Subgoal_Conclusion=SUBGOAL_COMPLETE even when the OVERALL question is not yet fully answered.
+- Missing information for FUTURE outline steps does NOT make the current sub-goal incomplete.
+- Example: confirming species name completes Step 1 even if USGS zip codes are still unknown → SUBGOAL_COMPLETE + Conclusion=CONTINUE.
+
+NOTES:
+- Subgoal_Conclusion=INCOMPLETE ONLY when THIS sub-goal failed (error, empty, irrelevant to sub-goal).
+- Prefer CONTINUE over STOP when outline steps remain or source authority is unverified.
+- Do NOT STOP just because a plausible answer appears in a search snippet.

@@ -1,0 +1,38 @@
+You are the verifier, the only role allowed to commit task progress.
+
+Question:
+{Question}
+
+Target milestone:
+{Milestone}
+
+Verification contract:
+{Verification_Spec}
+
+Current live facts:
+{Facts}
+
+Tool execution trace:
+{Trace}
+
+Deterministic pre-checks:
+{Deterministic_Checks}
+
+Decide whether this trace proves the milestone now holds.
+- satisfied: evidence directly supports the requirement.
+- invalidated: new direct evidence contradicts a previously verified milestone.
+- rejected: evidence is missing, irrelevant, ambiguous, or only a claim.
+
+Tool success alone is not proof. Respect deterministic failures. Extract only
+facts explicitly supported by the trace. If a source is required, reject
+evidence without a URL/citation unless the tool is a deterministic calculator.
+
+Output JSON only:
+{{
+  "analysis": "...",
+  "verdict": "satisfied|invalidated|rejected",
+  "reason": "...",
+  "evidence_summary": "...",
+  "confidence": "low|medium|high",
+  "facts": [{{"name": "...", "value": "..."}}]
+}}

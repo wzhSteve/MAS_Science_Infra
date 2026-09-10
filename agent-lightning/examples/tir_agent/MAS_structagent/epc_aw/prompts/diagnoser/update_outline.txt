@@ -1,0 +1,107 @@
+**Task**  
+Update the **ExecutionOutline** via **epistemic repair** to correct
+**Epistemic Planning Calibration failure in Agentic Workflow (EPC-AW)**.
+
+The update MUST:
+- Eliminate all steps whose feasibility depends on **unsupported epistemic assumptions**.
+- Enforce a **clear epistemic stance shift** (action- or goal-level).
+
+Superficial rephrasing, reordering, or cosmetic edits are **STRICTLY FORBIDDEN**.
+
+---
+
+## CONTEXT
+Question: {Question}  
+Current Target Information: {Target_Information}  
+Previous ExecutionOutline: {Outline}  
+EPC-AW Analysis: {EPC_AW_Analysis}  
+Latest Executor Result: {Result_Executor}
+Obtained Information So Far: {Obtained_Information_So_Far}  
+Toolbox Metadata: {Toolbox_Metadata}  
+Memory (All Previous Tools & Results): {Memory}  
+
+---
+
+## STEP 1 — EPC-AW → Structure Alignment (MANDATORY)
+
+If **EPC-AW Analysis** is non-empty:
+
+For EACH identified calibration error:
+- Identify the **exact step(s)** in the Previous ExecutionOutline that depend on it.
+- State the **implicit epistemic assumption** enabling those steps.
+- Explain why the assumption is **invalid**, given:
+  - Available tools,
+  - Verified evidence,
+  - Reachable evidence space.
+
+This defines **hard structural constraints** for repair.
+
+---
+
+## STEP 2 — Invalid Assumption Declaration (BINDING)
+
+Explicitly declare **all invalid assumptions**.
+
+Each MUST be labeled as one or more of:
+- ASSUMED_EXISTENCE  
+- ASSUMED_TOOL_COVERAGE  
+- ASSUMED_CANONICAL_SOURCE  
+- ASSUMED_COMPOSITIONALITY  
+- ASSUMED_SUFFICIENCY  
+
+Declared assumptions are **FORBIDDEN premises**.  
+Any step relying on them is **DISALLOWED**.
+
+---
+
+## STEP 3 — Epistemic Reorientation & Repair (REQUIRED)
+
+You MUST:
+
+1. **Remove** all steps that depend on invalid assumptions.
+2. **Remove** all steps already **solved** in the Previous ExecutionOutline.
+3. **Add at least ONE new step** that:
+
+   - Operates at a **different evidence level** than removed steps.
+   - Targets a **new epistemic objective**, chosen from:
+     - scope delimitation  
+     - non-existence confirmation  
+     - evidence availability assessment  
+     - provenance validation
+   - Does **not** directly answer the original Question.
+   - Produces a **concrete intermediate artifact**
+     (e.g., citation list, paper ID, section index, comparison table).
+
+**Allowed evidence levels:**
+- Wikipedia inspection  
+- Reference list extraction  
+- PDF full-text access  
+- Section-level extraction  
+- Cross-document comparison  
+- Downstream / cited study analysis  
+
+---
+
+## STEP 4 — Epistemic Dead-End Handling (IF APPLICABLE)
+
+If EPC-AW Analysis indicates the target information is:
+- Non-existent,
+- Not verifiable with current tools, or
+- Outside the reachable evidence space,
+
+Revise the ExecutionOutline to:
+- Verify **non-existence or scope limits**, OR
+- Formally justify **unanswerability** under current constraints.
+
+For unrecoverable dead-ends, explain why **each evidence level fails**.
+
+---
+
+## OUTPUT FORMAT (STRICT JSON ONLY)
+
+{{
+  "ExecutionOutline": {{
+    "1": "Target Information: ... Operation Details: ... Expected Output: ...",
+    "2": "Target Information: ... Operation Details: ... Expected Output: ..."
+  }}
+}}

@@ -1,0 +1,285 @@
+{
+  "Google_Search_Tool": {
+    "subgoals": [
+      {
+        "subgoal": "Retrieve external factual knowledge",
+        "factors": {
+          "Entity": {
+            "instruction": "Include sufficient identifiers to uniquely specify the target."
+          },
+          "Freshness": {
+            "instruction": "Specify the temporal boundary and prefer recent sources when temporal relevance affects the answer."
+          },
+          "Scope": {
+            "instruction": "Restrict the search to the requested domain or topic."
+          },
+          "Source": {
+            "instruction": "Prioritize authoritative or widely recognized sources for factual accuracy."
+          }
+        }
+      },
+      {
+        "subgoal": "Disambiguate an ambiguous entity",
+        "factors": {
+          "Entity": {
+            "instruction": "Add distinguishing qualifiers to separate competing candidates."
+          },
+          "Freshness": {
+            "instruction": "Use recent sources when the entity identity may have changed."
+          },
+          "Scope": {
+            "instruction": "Broaden the search to surface multiple candidates."
+          },
+          "Source": {
+            "instruction": "Cross-check at least two independent sources."
+          }
+        }
+      },
+      {
+        "subgoal": "Retrieve time-sensitive information",
+        "factors": {
+          "Entity": {
+            "instruction": "Identify the event or subject whose recency matters."
+          },
+          "Freshness": {
+            "instruction": "Favor the most recent results; constrain by date when possible."
+          },
+          "Scope": {
+            "instruction": "Narrow to sources likely to publish timely updates."
+          },
+          "Source": {
+            "instruction": "Prefer primary or official sources for time-sensitive facts."
+          }
+        }
+      },
+      {
+        "subgoal": "Verify a contested claim",
+        "factors": {
+          "Entity": {
+            "instruction": "Name the specific claim subject being verified."
+          },
+          "Freshness": {
+            "instruction": "Check whether newer evidence has overturned earlier claims."
+          },
+          "Scope": {
+            "instruction": "Search for both supporting and contradicting evidence."
+          },
+          "Source": {
+            "instruction": "Prefer peer-reviewed or official sources over informal ones."
+          }
+        }
+      }
+    ]
+  },
+  "Web_Search_Tool": {
+    "subgoals": [
+      {
+        "subgoal": "Extract a specific field from a known page",
+        "factors": {
+          "Entity": {
+            "instruction": "Pin the exact URL of the target page."
+          },
+          "Source": {
+            "instruction": "Fetch directly from the canonical URL."
+          },
+          "Scope": {
+            "instruction": "Target the specific section or field, not the whole page."
+          },
+          "Format": {
+            "instruction": "Request the exact field format required by the task."
+          }
+        }
+      },
+      {
+        "subgoal": "Verify content of a known page",
+        "factors": {
+          "Entity": {
+            "instruction": "Pin the exact URL to verify."
+          },
+          "Source": {
+            "instruction": "Fetch the canonical URL directly."
+          },
+          "Scope": {
+            "instruction": "Compare the relevant passage against the claim."
+          },
+          "Format": {
+            "instruction": "Return the verbatim text supporting or refuting the claim."
+          }
+        }
+      },
+      {
+        "subgoal": "Retrieve full-text content behind a known URL",
+        "factors": {
+          "Entity": {
+            "instruction": "Pin the exact URL of the document and fetch the canonical URL directly."
+          },
+          "Scope": {
+            "instruction": "Retrieve the full body or the requested section."
+          },
+          "Format": {
+            "instruction": "Preserve the original structure of the extracted content."
+          },
+          "Source": {
+            "instruction": "Use a reliable and authoritative source for content retrieval."
+          }
+        }
+      }
+    ]
+  },
+  "Wikipedia_Search_Tool": {
+    "subgoals": [
+      {
+        "subgoal": "Resolve a notable encyclopedic entity",
+        "factors": {
+          "Entity": {
+            "instruction": "Provide the entity name and any disambiguating context."
+          },
+          "Scope": {
+            "instruction": "Target the Wikipedia namespace/language requested."
+          },
+          "Source": {
+            "instruction": "Use the Wikipedia article as the authoritative source."
+          }
+        }
+      },
+      {
+        "subgoal": "Verify an entity attribute",
+        "factors": {
+          "Entity": {
+            "instruction": "Name the entity and the attribute to verify."
+          },
+          "Scope": {
+            "instruction": "Open the specific section that states the attribute."
+          },
+          "Source": {
+            "instruction": "Prefer the article's cited reference when reliability is critical."
+          },
+          "Freshness": {
+            "instruction": "Prioritize the most widely accepted canonical definition."
+          }
+        }
+      },
+      {
+        "subgoal": "Retrieve structured facts on a topic",
+        "factors": {
+          "Entity": {
+            "instruction": "Identify the topic and the structured fields required."
+          },
+          "Scope": {
+            "instruction": "Target list/table sections (e.g., discography, infobox)."
+          },
+          "Source": {
+            "instruction": "Use Wikipedia as the structured-fact source."
+          }
+        }
+      }
+    ]
+  },
+  "Python_Coder_Tool": {
+    "subgoals": [
+      {
+        "subgoal": "Compute from given numbers",
+        "factors": {
+          "Entity": {
+            "instruction": "Extract numerical values from the context without interpretation, using the most recent or precise values provided."
+          },
+          "Scope": {
+            "instruction": "Apply arithmetic operations to derive a single aggregated result."
+          },
+          "Format": {
+            "instruction": "Apply rounding only as the task specifies."
+          }
+        }
+      },
+      {
+        "subgoal": "Perform a symbolic or logic verification",
+        "factors": {
+          "Inputs": {
+            "instruction": "Bind the symbolic expression or logical statement to test."
+          },
+          "Method": {
+            "instruction": "Implement the equivalence or tautology check directly."
+          },
+          "Precision": {
+            "instruction": "Return a clear boolean/verdict, not an approximation."
+          }
+        }
+      },
+      {
+        "subgoal": "Transform or parse structured data",
+        "factors": {
+          "Inputs": {
+            "instruction": "Bind the raw data string to transform."
+          },
+          "Method": {
+            "instruction": "Use the correct parsing rules for the data format."
+          },
+          "Precision": {
+            "instruction": "Preserve all relevant fields; do not drop data."
+          }
+        }
+      }
+    ]
+  },
+  "Screenshot_Tool": {
+    "subgoals": [
+      {
+        "subgoal": "Capture the visual state of a page",
+        "factors": {
+          "Entity": {
+            "instruction": "Pin the exact URL to capture."
+          },
+          "Viewport": {
+            "instruction": "Set the viewport to reveal the relevant content."
+          }
+        }
+      }
+    ]
+  },
+  "Vision_OCR_Tool": {
+    "subgoals": [
+      {
+        "subgoal": "Extract text from an image",
+        "factors": {
+          "Entity": {
+            "instruction": "Identify the image and the text region of interest."
+          },
+          "Format": {
+            "instruction": "Return extracted text verbatim, preserving order."
+          }
+        }
+      },
+      {
+        "subgoal": "Parse figure axes or a table",
+        "factors": {
+          "Entity": {
+            "instruction": "Identify the chart/table and the structured elements to read."
+          },
+          "Format": {
+            "instruction": "Return axes labels or table cells in a structured form."
+          }
+        }
+      }
+    ]
+  },
+  "Base_Generator_Tool": {
+    "subgoals": [
+      {
+        "subgoal": "Answer by pure reasoning",
+        "factors": {
+          "Reasoning": {
+            "instruction": "Lay out the deductive steps explicitly before the answer."
+          }
+        }
+      },
+      {
+        "subgoal": "Solve a logic or language puzzle",
+        "factors": {
+          "Reasoning": {
+            "instruction": "Apply the puzzle's given rules step by step."
+          }
+        }
+      }
+    ]
+  }
+}

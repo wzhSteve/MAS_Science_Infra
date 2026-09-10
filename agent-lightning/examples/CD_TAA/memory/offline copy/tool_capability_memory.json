@@ -1,0 +1,173 @@
+{
+  "Google_Search_Tool": {
+    "capability_summary": "Retrieve open-domain factual information via web search.",
+    "subgoals": [
+      {
+        "subgoal": "Retrieve external factual knowledge",
+        "context_summary": [
+          "Question requires authoritative or specific factual information",
+          "Target entity has been identified",
+          "External knowledge is unavailable",
+          "Authoritative evidence is required",
+          "Target information is historical"
+        ]
+      },
+      {
+        "subgoal": "Disambiguate an ambiguous entity",
+        "context_summary": [
+          "Entity not yet pinned down",
+          "Multiple candidates"
+        ]
+      },
+      {
+        "subgoal": "Retrieve time-sensitive information",
+        "context_summary": [
+          "Temporal recency required",
+          "Recent event or update"
+        ]
+      },
+      {
+        "subgoal": "Verify a contested claim",
+        "context_summary": [
+          "Conflicting sources",
+          "Authoritative confirmation needed"
+        ]
+      }
+    ]
+  },
+  "Web_Search_Tool": {
+    "capability_summary": "Retrieve content from a known URL via RAG.",
+    "subgoals": [
+      {
+        "subgoal": "Extract a specific field from a known page",
+        "context_summary": [
+          "Target URL known",
+          "Specific field required"
+        ]
+      },
+      {
+        "subgoal": "Verify content of a known page",
+        "context_summary": [
+          "URL known",
+          "Content needs confirmation"
+        ]
+      },
+      {
+        "subgoal": "Retrieve full-text content behind a known URL",
+        "context_summary": [
+          "URL known",
+          "Full body or section required",
+          "External knowledge is unavailable.",
+          "The target entity has already been identified.",
+          "Authoritative evidence is required."
+        ]
+      }
+    ]
+  },
+  "Wikipedia_Search_Tool": {
+    "capability_summary": "Look up encyclopedic entities on Wikipedia.",
+    "subgoals": [
+      {
+        "subgoal": "Resolve a notable encyclopedic entity",
+        "context_summary": [
+          "Entity is encyclopedic",
+          "Background facts required"
+        ]
+      },
+      {
+        "subgoal": "Verify an entity attribute",
+        "context_summary": [
+          "Entity identified",
+          "Authoritative source required",
+          "External knowledge unavailable"
+        ]
+      },
+      {
+        "subgoal": "Retrieve structured facts on a topic",
+        "context_summary": [
+          "Topic identified",
+          "List or attribute required"
+        ]
+      }
+    ]
+  },
+  "Python_Coder_Tool": {
+    "capability_summary": "Compute numerical or logical results in Python.",
+    "subgoals": [
+      {
+        "subgoal": "Compute from given numbers",
+        "context_summary": [
+          "Inputs are known and a specific threshold is defined",
+          "Arithmetic computations or statistical analysis are needed",
+          "No external knowledge is accessible or available",
+          "Authoritative or numerical results are required",
+          "The target entity has already been identified"
+        ]
+      },
+      {
+        "subgoal": "Perform a symbolic or logic verification",
+        "context_summary": [
+          "Symbolic expression available",
+          "Equivalence or tautology to test"
+        ]
+      },
+      {
+        "subgoal": "Transform or parse structured data",
+        "context_summary": [
+          "Raw data available",
+          "Parsing or transformation required"
+        ]
+      }
+    ]
+  },
+  "Screenshot_Tool": {
+    "capability_summary": "Capture a webpage as an image.",
+    "subgoals": [
+      {
+        "subgoal": "Capture the visual state of a page",
+        "context_summary": [
+          "Page URL known",
+          "Visual content needs to be seen"
+        ]
+      }
+    ]
+  },
+  "Vision_OCR_Tool": {
+    "capability_summary": "Extract text or structure from images.",
+    "subgoals": [
+      {
+        "subgoal": "Extract text from an image",
+        "context_summary": [
+          "Image available",
+          "On-image text required"
+        ]
+      },
+      {
+        "subgoal": "Parse figure axes or a table",
+        "context_summary": [
+          "Chart or table image available",
+          "Structured elements to extract"
+        ]
+      }
+    ]
+  },
+  "Base_Generator_Tool": {
+    "capability_summary": "Answer by reasoning without external tools.",
+    "subgoals": [
+      {
+        "subgoal": "Answer by pure reasoning",
+        "context_summary": [
+          "No external knowledge needed",
+          "Question is self-contained"
+        ]
+      },
+      {
+        "subgoal": "Solve a logic or language puzzle",
+        "context_summary": [
+          "Puzzle is self-contained",
+          "Reasoning over given rules"
+        ]
+      }
+    ]
+  }
+}
