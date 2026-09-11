@@ -1,15 +1,16 @@
 import { memo } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { NodeProps } from '@xyflow/react';
 import { Bot, Flag } from 'lucide-react';
 import type { GraphNode } from '../types';
+import { NodeHandles } from './NodeHandles';
 
-function AgentNode({ data: d, selected }: NodeProps<GraphNode>) {
-  const cls = ['mas-node', 'mas-node--agent', selected ? 'is-selected' : '', d.entry ? 'is-entry' : '', d.issue ? 'has-issue' : '']
+function AgentNode({ id, data: d, selected }: NodeProps<GraphNode>) {
+  const cls = ['mas-node', 'mas-node--agent', selected ? 'is-selected' : '', d.entry ? 'is-entry' : '', d.issue ? 'has-issue' : '', d.related ? 'is-related' : '']
     .filter(Boolean)
     .join(' ');
   return (
     <div className={cls}>
-      <Handle type="target" position={Position.Left} />
+      <NodeHandles id={id} />
       <div className="mas-node__heading">
         <span className="mas-node__icon"><Bot size={18} /></span>
         <div><div className="mas-node__name">{d.label || 'Agent'}</div><div className="mas-node__role">{d.role}</div></div>
@@ -19,7 +20,6 @@ function AgentNode({ data: d, selected }: NodeProps<GraphNode>) {
         <span>{d.tools?.length ? `${d.tools.length} 个工具` : d.trainable === false ? '不参与训练' : '参与训练'}</span>
       </div>
       {d.issue && <div className="mas-node__issue">{d.issue}</div>}
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 }

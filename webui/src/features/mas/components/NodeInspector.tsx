@@ -53,6 +53,7 @@ export const NodeInspector = memo(function NodeInspector({ selected, palette, en
             </label>;
           })}
           {!tools.length && <p className="field-hint">暂无可用工具。</p>}
+          {selected.id === 'hub' && <p className="field-hint">hub 未显式绑定工具时会使用工作流的全局工具。移除绑定不等于禁止调用。</p>}
         </fieldset>
         <div className="mas-property-section">
           <label className="mas-checkbox-row"><Checkbox checked={selected.data.trainable !== false}

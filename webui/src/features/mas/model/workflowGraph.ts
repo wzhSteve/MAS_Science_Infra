@@ -1,17 +1,15 @@
-import { MarkerType } from '@xyflow/react';
 import type { AgentSpec, WorkflowSpec } from '../../../shared/api/types';
 import type { GraphNode, GraphEdge } from '../types';
+import { EDGE_KINDS, edgeDefinition } from './edgeDefinitions';
+import { resolveHandles, serializeEdges } from './edgeGeometry';
 export type { AgentSpec, WorkflowSpec } from '../../../shared/api/types';
 
-export const KNOWN_TOOLS = ['web_search', 'wikipedia_search', 'execute_python'];
+export { KNOWN_TOOLS } from './edgeDefinitions';
 
-export const EDGE_LABELS: Record<string, string> = {
-  message: '传递消息', route: '任务路由', feedback: '反馈', tool_call: '调用工具',
-};
+export const EDGE_LABELS: Record<string, string> = Object.fromEntries(EDGE_KINDS.map((kind) => [kind, edgeDefinition(kind).title]));
 
-export function graphEdge(source: string, target: string, kind: string, id = `e-${source}-${target}-${kind}`): GraphEdge {
-  return { id, source, target, label: EDGE_LABELS[kind] || kind, data: { kind },
-    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 } };
+export function graphEdge(source: string, target: string, kind: string, id = `edge-${crypto.randomUUID()}`): GraphEdge {
+  return { id, source, target, type: 'workflow', data: { kind } };
 }
 
 export function workflowToFlow(wf: WorkflowSpec): { nodes: GraphNode[]; edges: GraphEdge[] } {
@@ -83,8 +81,10 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: GraphNode[]; edges: G
     ti += 1;
   }
 
-  const edges = (wf.edges || []).map((e, i) =>
-    graphEdge(e.from, e.to, e.kind || 'message', `e-${e.from}-${e.to}-${i}`));
+  const edges: GraphEdge[] = (wf.edges || []).map((e, i) => ({
+    ...graphEdge(e.from, e.to, e.kind || 'message', `e-${e.from}-${e.to}-${i}`),
+    data: { kind: e.kind || 'message', meta: e.meta },
+  }));
 
   for (const node of nodes.filter((n) => n.type === 'agent')) {
     for (const tool of node.data.tools || []) {
@@ -98,7 +98,8 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: GraphNode[]; edges: G
     edges.push(graphEdge('verifier', 'hub', 'feedback'));
   }
 
-  return { nodes, edges };
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  return { nodes, edges: edges.map((edge) => resolveHandles(edge, nodeById)) };
 }
 
 export function flowToWorkflow(
@@ -130,9 +131,10 @@ export function flowToWorkflow(
     };
   });
 
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
   for (const e of edges) {
     if (String(e.data?.kind || e.label) !== 'tool_call') continue;
-    const agent = agents.find((a) => a.id === e.source);
+    const agent = agentById.get(e.source);
     if (agent && !agent.tools.includes(e.target)) agent.tools.push(e.target);
   }
 
@@ -149,12 +151,6 @@ export function flowToWorkflow(
     hubNode?.data.max_feedback_hops ?? base.hub?.max_feedback_hops ?? 1;
   const hubPrompt =
     hubNode?.data.system_prompt || '';
-
-  const edgeSpecs = edges.map((e) => ({
-    from: e.source,
-    to: e.target,
-    kind: String(e.data?.kind || e.label || 'message'),
-  }));
 
   const onlyHubish = agents.every((a) => a.id === 'hub' || a.id === 'verifier');
   const topology =
@@ -181,7 +177,7 @@ export function flowToWorkflow(
     },
     tools,
     agents,
-    edges: edgeSpecs,
+    edges: serializeEdges(edges),
   };
 }
 

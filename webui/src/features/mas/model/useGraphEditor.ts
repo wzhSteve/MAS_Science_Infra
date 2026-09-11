@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyEdgeChanges, applyNodeChanges,
   type Connection, type EdgeChange, type NodeChange, type XYPosition,
 } from '@xyflow/react';
-import type { WorkflowSpec } from '../../../shared/api/types';
-import type { GraphNodeData, GraphNode, GraphEdge, GraphSelection } from '../types';
+import type { Palette, WorkflowSpec } from '../../../shared/api/types';
+import type { EdgeKind, EdgePatch, GraphNodeData, GraphNode, GraphEdge, GraphSelection } from '../types';
 import { flowToWorkflow, graphEdge, workflowToFlow } from './workflowGraph';
+import { createEdgeRules, edgeConnection } from './edgeRules';
+import { defaultHandles, resolveHandles, serializeEdges } from './edgeGeometry';
 
 type Graph = { nodes: GraphNode[]; edges: GraphEdge[] };
 
-export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: WorkflowSpec) => void) {
+export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: WorkflowSpec) => void, palette: Palette = {}) {
   const [graph, setGraph] = useState<Graph>(() => workflowToFlow(workflow));
   const [selection, setSelection] = useState<GraphSelection>(null);
   const [notice, setNotice] = useState('');
@@ -17,6 +19,9 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
   const workflowRef = useRef(workflow);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const rules = useMemo(() => createEdgeRules(graph.nodes, graph.edges, palette), [graph.nodes, graph.edges, palette]);
+  const rulesRef = useRef(rules);
+  rulesRef.current = rules;
 
   const replaceGraph = useCallback((next: Graph) => {
     graphRef.current = next;
@@ -35,20 +40,34 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
     replaceGraph(next);
   }, [workflow, replaceGraph]);
 
-  const commit = useCallback((next: Graph) => {
+  const commit = useCallback((next: Graph, geometryOnly = false) => {
+    const nodeById = new Map(next.nodes.map((node) => [node.id, node]));
+    next = { ...next, edges: next.edges.map((edge) => resolveHandles(edge, nodeById)) };
     // Tool edges are the canvas representation of each Agent's tool bindings.
-    next = { ...next, nodes: next.nodes.map((node) => {
-      if (node.type === 'tool') return node;
-      const tools = next.edges.filter((e) => e.source === node.id && e.data?.kind === 'tool_call').map((e) => e.target);
-      return tools.join('\0') === (node.data.tools || []).join('\0')
-        ? node : { ...node, data: { ...node.data, tools } };
-    }) };
-    const value = flowToWorkflow(next.nodes, next.edges, workflowRef.current);
+    if (!geometryOnly) {
+      const bindings = new Map<string, string[]>();
+      for (const edge of next.edges) {
+        if (edge.data?.kind !== 'tool_call') continue;
+        const tools = bindings.get(edge.source) || [];
+        tools.push(edge.target);
+        bindings.set(edge.source, tools);
+      }
+      next = { ...next, nodes: next.nodes.map((node) => {
+        if (node.type === 'tool') return node;
+        const tools = bindings.get(node.id) || [];
+        return tools.join('\0') === (node.data.tools || []).join('\0')
+          ? node : { ...node, data: { ...node.data, tools } };
+      }) };
+    }
+    const value = geometryOnly
+      ? { ...workflowRef.current, edges: serializeEdges(next.edges) }
+      : flowToWorkflow(next.nodes, next.edges, workflowRef.current);
     workflowRef.current = value;
+    rulesRef.current = createEdgeRules(next.nodes, next.edges, palette);
     replaceGraph(next);
     onChangeRef.current(value);
     setNotice('');
-  }, [replaceGraph]);
+  }, [replaceGraph, palette]);
 
   const select = useCallback((target: GraphSelection) => {
     setSelection(target);
@@ -95,31 +114,16 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
     }
   }, [replaceGraph, remove]);
 
-  const connectionError = useCallback((connection: Connection, kind: string, replacing?: string) => {
-    const { nodes, edges } = graphRef.current;
-    const source = nodes.find((n) => n.id === connection.source);
-    const target = nodes.find((n) => n.id === connection.target);
-    if (!source || !target) return '请选择存在的节点。';
-    if (source.id === target.id) return '请连接两个不同的节点。';
-    if (source.type === 'tool') return 'Tool 只能作为工具调用的终点。';
-    if (kind === 'tool_call' ? target.type !== 'tool' : target.type === 'tool') return 'Agent 与 Tool 之间只能使用工具调用。';
-    if (edges.some((e) => e.id !== replacing && e.source === source.id && e.target === target.id && e.data?.kind === kind)) {
-      return '这条连线已经存在。';
-    }
-    if (kind === 'route' && edges.some((e) => e.id !== replacing && e.target === target.id && e.data?.kind === 'route')) {
-      return '一个 Agent 只能有一条输入路由。';
-    }
-    return '';
-  }, []);
-
-  const connect = useCallback((connection: Connection, kind: string) => {
-    const error = connectionError(connection, kind);
-    if (error) { setNotice(error); return; }
+  const connect = useCallback((raw: Connection, kind: EdgeKind) => {
+    const connection = kind === 'tool_call' ? rulesRef.current.normalize(raw) : raw;
+    const error = rulesRef.current.error(connection, kind);
+    if (error) { setNotice(error); return false; }
     const current = graphRef.current;
-    const edge = graphEdge(connection.source, connection.target, kind);
+    const edge = { ...graphEdge(connection.source, connection.target, kind), ...connection };
     commit({ ...current, edges: [...current.edges, edge] });
     select({ kind: 'edge', id: edge.id });
-  }, [commit, connectionError, select]);
+    return true;
+  }, [commit, select]);
 
   const addNode = useCallback((kind: 'agent' | 'tool', type: string, position: XYPosition) => {
     const current = graphRef.current;
@@ -159,42 +163,65 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
     let nodes = current.nodes.map((n) => n === selected ? { ...n, data: { ...n.data, ...patch } } : n);
     let edges = current.edges;
     if (patch.tools) {
-      edges = edges.filter((e) => e.source !== selected.id || e.data?.kind !== 'tool_call');
+      edges = edges.filter((e) => e.source !== selected.id || e.data?.kind !== 'tool_call' || patch.tools?.includes(e.target));
       for (const [index, tool] of patch.tools.entries()) {
         if (!nodes.some((n) => n.id === tool)) nodes.push({
           id: tool, type: 'tool',
           position: { x: selected.position.x + 260, y: selected.position.y + index * 120 },
           data: { label: tool, role: 'tool' },
         });
-        edges.push(graphEdge(selected.id, tool, 'tool_call'));
+        if (!edges.some((e) => e.source === selected.id && e.target === tool && e.data?.kind === 'tool_call')) {
+          const candidate = { source: selected.id, target: tool, sourceHandle: null, targetHandle: null };
+          const error = createEdgeRules(nodes, edges, palette).error(candidate, 'tool_call');
+          if (error) { setNotice(error); return; }
+          edges.push(graphEdge(selected.id, tool, 'tool_call'));
+        }
       }
     }
     if (patch.verify !== undefined && selected.id === 'hub') {
-      edges = edges.filter((e) => !(e.source === 'verifier' && e.target === 'hub' && e.data?.kind === 'feedback'));
+      edges = edges.filter((e) => patch.verify || !(e.source === 'verifier' && e.target === 'hub' && e.data?.kind === 'feedback'));
       if (patch.verify) {
         if (!nodes.some((n) => n.id === 'verifier')) nodes.push({
           id: 'verifier', type: 'agent',
           position: { x: selected.position.x + 280, y: selected.position.y + 160 },
           data: { label: 'verifier', role: 'verifier', skills: ['verifier'], tools: [], trainable: false },
         });
-        edges.push(graphEdge('verifier', 'hub', 'feedback'));
+        if (!edges.some((e) => e.source === 'verifier' && e.target === 'hub' && e.data?.kind === 'feedback')) {
+          const error = createEdgeRules(nodes, edges, palette).error({
+            source: 'verifier', target: 'hub', sourceHandle: null, targetHandle: null,
+          }, 'feedback');
+          if (error) { setNotice(error); return; }
+          edges = [...edges, graphEdge('verifier', 'hub', 'feedback')];
+        }
       }
     }
     commit({ nodes, edges });
-  }, [commit, selection]);
+  }, [commit, selection, palette]);
 
-  const updateEdge = useCallback((id: string, kind: string) => {
+  const updateEdge = useCallback((id: string, patch: EdgePatch): boolean => {
     const current = graphRef.current;
     const edge = current.edges.find((e) => e.id === id);
-    if (!edge) return;
-    const error = connectionError({ ...edge, sourceHandle: null, targetHandle: null }, kind, id);
-    if (error) { setNotice(error); return; }
-    const nodes = edge.source === 'verifier' && edge.target === 'hub' && kind !== 'feedback'
+    if (!edge) { setNotice('连线已不存在。'); return false; }
+    const { kind: requestedKind, ...endpoints } = patch;
+    const kind = requestedKind ?? edge.data?.kind ?? 'message';
+    const connection = rulesRef.current.normalizeEdit({ ...edgeConnection(edge), ...endpoints }, edge, kind);
+    const geometryOnly = connection.source === edge.source && connection.target === edge.target && kind === edge.data?.kind;
+    if (!geometryOnly) {
+      const error = rulesRef.current.error(connection, kind, id);
+      if (error) { setNotice(error); return false; }
+    }
+    const defaults = defaultHandles(rulesRef.current.nodeById.get(connection.source), rulesRef.current.nodeById.get(connection.target));
+    if (connection.source !== edge.source && patch.sourceHandle === undefined) connection.sourceHandle = defaults.sourceHandle;
+    if (connection.target !== edge.target && patch.targetHandle === undefined) connection.targetHandle = defaults.targetHandle;
+    const removedFeedback = edge.source === 'verifier' && edge.target === 'hub' && edge.data?.kind === 'feedback'
+      && (connection.source !== 'verifier' || connection.target !== 'hub' || kind !== 'feedback');
+    const nodes = removedFeedback
       ? current.nodes.map((n) => n.id === 'hub' ? { ...n, data: { ...n.data, verify: null } } : n)
       : current.nodes;
     commit({ nodes, edges: current.edges.map((e) =>
-      e === edge ? { ...graphEdge(e.source, e.target, kind, id), selected: true } : e) });
-  }, [commit, connectionError]);
+      e === edge ? { ...e, ...connection, data: { ...e.data, kind }, selected: true } : e) }, geometryOnly);
+    return true;
+  }, [commit]);
 
   const applyTemplate = useCallback((template: WorkflowSpec) => {
     const next = { ...workflowRef.current, ...template };
@@ -214,7 +241,7 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
     nodes: graph.nodes, edges: graph.edges, selection, select, notice, setNotice,
     selected: selection?.kind === 'node' ? graph.nodes.find((n) => n.id === selection.id) ?? null : null,
     selectedEdge: selection?.kind === 'edge' ? graph.edges.find((e) => e.id === selection.id) ?? null : null,
-    onNodesChange, onEdgesChange, connect, connectionError, addNode, setEntry, updateSelected, updateEdge,
+    onNodesChange, onEdgesChange, connect, rules, addNode, setEntry, updateSelected, updateEdge,
     deleteSelected, applyTemplate,
   };
 }

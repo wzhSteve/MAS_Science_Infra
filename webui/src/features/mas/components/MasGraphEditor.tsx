@@ -1,10 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ReactFlowProvider, useReactFlow, type Connection, type XYPosition } from '@xyflow/react';
+import { ReactFlowProvider, useReactFlow, type Connection, type XYPosition, type ReactFlowProps } from '@xyflow/react';
 import { AlertCircle, X } from 'lucide-react';
 import type { Palette, WorkflowSpec } from '../../../shared/api/types';
 import type { Notice } from '../../../shared/components/InlineNotice';
 import type { EditorPanel, GraphNode, GraphEdge } from '../types';
-import { EDGE_LABELS, executableInfo } from '../model/workflowGraph';
+import { executableInfo } from '../model/workflowGraph';
+import { edgeConnection } from '../model/edgeRules';
+import { edgeLanes } from '../model/edgeGeometry';
 import { useGraphEditor } from '../model/useGraphEditor';
 import { Button } from '../../../shared/ui/button';
 import { GraphPalette, type LibraryTab } from './GraphPalette';
@@ -12,6 +14,8 @@ import { GraphCanvas } from './GraphCanvas';
 import { NodeInspector } from './NodeInspector';
 import { EdgeInspector } from './EdgeInspector';
 import { WorkflowSettings } from './WorkflowSettings';
+import { ConnectionPicker } from './ConnectionPicker';
+import { GraphInteractionContext } from './GraphInteractionContext';
 
 type Props = {
   workflow: WorkflowSpec;
@@ -28,14 +32,29 @@ type Props = {
 };
 
 function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelChange, libraryOpen, onLibraryOpenChange, rlDirty, rlNotice, rlSettings }: Props) {
-  const graph = useGraphEditor(workflow, onChange);
+  const graph = useGraphEditor(workflow, onChange, palette);
   const flow = useReactFlow<GraphNode, GraphEdge>();
   const root = useRef<HTMLDivElement>(null);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('agent');
-  const [connection, setConnection] = useState<Connection | null>(null);
+  const [connection, setConnection] = useState<{ value: Connection; anchor: XYPosition } | null>(null);
+  const [reconnecting, setReconnecting] = useState<GraphEdge | null>(null);
+  const reconnectRef = useRef<GraphEdge | null>(null);
   const executable = useMemo(() => executableInfo(workflow), [workflow]);
-  const nodes = useMemo(() => graph.nodes.map((n) =>
-    n.id === executable.nodeId ? { ...n, data: { ...n.data, issue: executable.reason } } : n), [graph.nodes, executable]);
+  const selectedEdge = graph.selectedEdge;
+  const nodes = useMemo(() => graph.nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      issue: node.id === executable.nodeId ? executable.reason : undefined,
+      related: selectedEdge?.source === node.id || selectedEdge?.target === node.id,
+    },
+  })), [graph.nodes, executable, selectedEdge]);
+  const lanes = useMemo(() => edgeLanes(graph.edges), [graph.edges]);
+  const edges = useMemo(() => graph.edges.map((edge) => ({
+    ...edge, reconnectable: Boolean(edge.selected),
+    data: { ...edge.data, kind: edge.data?.kind || 'message', lane: lanes.get(edge.id),
+      issue: graph.rules.error(edgeConnection(edge), edge.data?.kind || 'message', edge.id) },
+  })), [graph.edges, graph.rules, lanes]);
 
   const closePanels = useCallback(() => {
     onPanelChange(null);
@@ -46,6 +65,17 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
   useEffect(() => {
     if (panel) { graph.select(null); setConnection(null); }
   }, [panel, graph.select]);
+
+  useEffect(() => { setConnection(null); }, [workflow]);
+
+  useEffect(() => {
+    if (!connection || !active) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Element && !event.target.closest('.mas-connection-picker')) setConnection(null);
+    };
+    document.addEventListener('pointerdown', dismiss);
+    return () => document.removeEventListener('pointerdown', dismiss);
+  }, [Boolean(connection), active]);
 
   useEffect(() => {
     if (!active) return;
@@ -108,20 +138,16 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
     if (id) revealNode(id);
   };
 
-  const kindsFor = (value: Connection, replacing?: string) => {
-    const target = graph.nodes.find((n) => n.id === value.target);
-    const kinds = target?.type === 'tool' ? ['tool_call'] : (palette.edge_kinds || ['message', 'route', 'feedback']).filter((k) => k !== 'tool_call');
-    if (replacing) {
-      const current = graph.edges.find((e) => e.id === replacing)?.data?.kind;
-      if (current && !kinds.includes(current)) kinds.push(current);
-    }
-    return kinds.map((kind) => ({ kind, reason: graph.connectionError(value, kind, replacing) }));
-  };
-  const connectionKinds = connection ? kindsFor(connection) : [];
-  const selectedEdge = graph.selectedEdge;
+  const onSelectEdge = useCallback((id: string) => {
+    graph.select({ kind: 'edge', id });
+    onPanelChange(null);
+    setConnection(null);
+  }, [graph.select, onPanelChange]);
+  const interaction = useMemo(() => ({ rules: graph.rules, reconnecting, onSelectEdge }), [graph.rules, reconnecting, onSelectEdge]);
 
-  const onConnect = (value: Connection) => {
-    const options = kindsFor(value);
+  const onConnect = (raw: Connection) => {
+    const value = graph.rules.normalize(raw);
+    const options = graph.rules.options(value);
     const valid = options.filter((k) => !k.reason);
     if (!valid.length) { graph.setNotice(options[0]?.reason || '没有可用的连线关系。'); return; }
     if (valid.length === 1) {
@@ -130,20 +156,63 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
     } else {
       graph.select(null);
       onPanelChange(null);
-      setConnection(value);
+      const bounds = root.current?.getBoundingClientRect();
+      const target = graph.rules.nodeById.get(value.target);
+      const point = flow.flowToScreenPosition(target?.position || { x: 0, y: 0 });
+      setConnection({ value, anchor: { x: point.x - (bounds?.left || 0), y: point.y - (bounds?.top || 0) } });
     }
   };
 
-  return <div className="mas-workbench" ref={root} onKeyDown={(event) => {
+  const isValidConnection: NonNullable<ReactFlowProps<GraphNode, GraphEdge>['isValidConnection']> = (raw) => {
+    const value = { source: raw.source, target: raw.target, sourceHandle: raw.sourceHandle ?? null, targetHandle: raw.targetHandle ?? null };
+    const existing = reconnectRef.current;
+    if (existing) {
+      const next = graph.rules.normalizeEdit(value, existing);
+      return next.source === existing.source && next.target === existing.target
+        || !graph.rules.error(next, existing.data?.kind || 'message', existing.id);
+    }
+    return graph.rules.options(value).some((option) => !option.reason);
+  };
+
+  const onConnectEnd: NonNullable<ReactFlowProps<GraphNode, GraphEdge>['onConnectEnd']> = (event, state) => {
+    if (reconnectRef.current) return;
+    const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+    const bounds = root.current?.getBoundingClientRect();
+    if (point && bounds) setConnection((previous) => previous && {
+      ...previous, anchor: { x: point.clientX - bounds.left, y: point.clientY - bounds.top },
+    });
+    if (!state.isValid && state.fromNode && state.toNode) {
+      const value = graph.rules.normalize({
+        source: state.fromNode.id, target: state.toNode.id,
+        sourceHandle: state.fromHandle?.id ?? null, targetHandle: state.toHandle?.id ?? null,
+      });
+      const options = graph.rules.options(value);
+      if (!options.some((option) => !option.reason)) {
+        graph.setNotice(options[0]?.reason || '没有可用的关系。');
+        const existing = graph.edges.find((edge) => edge.source === value.source && edge.target === value.target);
+        if (existing) onSelectEdge(existing.id);
+      }
+    }
+  };
+
+  return <GraphInteractionContext.Provider value={interaction}><div className="mas-workbench" ref={root} tabIndex={-1} onKeyDown={(event) => {
     if (event.key === 'Escape') { event.stopPropagation(); closePanels(); }
     else if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')) {
       event.stopPropagation();
     }
   }}>
-    <GraphCanvas nodes={nodes} edges={graph.edges} active={active}
+    <GraphCanvas nodes={nodes} edges={edges} active={active}
       onNodesChange={graph.onNodesChange} onEdgesChange={graph.onEdgesChange} onConnect={onConnect}
+      isValidConnection={isValidConnection} onConnectStart={() => setConnection(null)} onConnectEnd={onConnectEnd}
+      onMoveStart={() => setConnection(null)}
+      onReconnectStart={(_, edge) => { reconnectRef.current = edge; setReconnecting(edge); setConnection(null); }}
+      onReconnect={(edge, value) => { graph.updateEdge(edge.id, value); }}
+      onReconnectEnd={(_, edge, __, state) => {
+        if (!state.isValid && state.toNode) graph.setNotice('未改接到合法对象，原连线已保留。');
+        reconnectRef.current = null; setReconnecting(null);
+      }}
       onNodeClick={(_, node) => { graph.select({ kind: 'node', id: node.id }); onPanelChange(null); setConnection(null); revealNode(node.id); }}
-      onEdgeClick={(_, edge) => { graph.select({ kind: 'edge', id: edge.id }); onPanelChange(null); setConnection(null); }}
+      onEdgeClick={(_, edge) => onSelectEdge(edge.id)}
       onPaneClick={() => { if (panel !== 'settings') closePanels(); else { graph.select(null); setConnection(null); } }}
       onAdd={add} onOpenLibrary={openLibrary} onError={graph.setNotice} />
     {(graph.notice || !executable.ok) && <div className="mas-graph-notice" role="alert">
@@ -163,17 +232,16 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
     {panel === 'settings' ? <WorkflowSettings workflow={workflow} rlDirty={rlDirty} rlNotice={rlNotice} rlSettings={rlSettings} onClose={closePanels} />
       : panel === null && graph.selected ? <NodeInspector selected={graph.selected} palette={palette} entryId={workflow.entry_agent || 'hub'}
         onPatch={graph.updateSelected} onEntry={graph.setEntry} onDelete={graph.deleteSelected} onClose={closePanels} />
-      : panel === null && selectedEdge ? <EdgeInspector edge={selectedEdge}
-        kinds={kindsFor({ ...selectedEdge, sourceHandle: null, targetHandle: null }, selectedEdge.id)}
-        onChange={(kind) => graph.updateEdge(selectedEdge.id, kind)} onDelete={graph.deleteSelected} onClose={closePanels} /> : null}
-    {connection && panel === null && <div className="mas-connection-picker" role="dialog" aria-label="选择连线关系">
-      <div className="mas-panel-heading"><h2>选择连线关系</h2><Button size="sm" variant="ghost" aria-label="取消连接" onClick={() => setConnection(null)}><X size={15} /></Button></div>
-      <p><code>{connection.source}</code> → <code>{connection.target}</code></p>
-      <div className="mas-connection-options">{connectionKinds.map(({ kind, reason }) =>
-        <Button key={kind} size="sm" disabled={Boolean(reason)} title={reason || undefined}
-          onClick={() => { graph.connect(connection, kind); setConnection(null); }}>{EDGE_LABELS[kind] || kind}</Button>)}</div>
-    </div>}
-  </div>;
+      : panel === null && selectedEdge ? <EdgeInspector key={selectedEdge.id} edge={selectedEdge} nodes={graph.nodes}
+        rules={graph.rules} topology={workflow.topology}
+        onChange={(patch) => graph.updateEdge(selectedEdge.id, patch)} onDelete={graph.deleteSelected} onClose={closePanels} /> : null}
+    {connection && panel === null && <ConnectionPicker connection={connection.value} anchor={connection.anchor}
+      workspace={root} options={graph.rules.options(connection.value)}
+      onClose={() => { setConnection(null); root.current?.focus(); }}
+      onChoose={(kind) => {
+        if (graph.connect(connection.value, kind)) { setConnection(null); root.current?.focus(); }
+      }} />}
+  </div></GraphInteractionContext.Provider>;
 }
 
 export default memo(function MasGraphEditor(props: Props) {

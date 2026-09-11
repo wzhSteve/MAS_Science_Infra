@@ -11,6 +11,13 @@ export interface AgentSpec extends Config {
   trainable?: boolean;
 }
 
+export interface WorkflowEdgeSpec {
+  from: string;
+  to: string;
+  kind?: string;
+  meta?: Config;
+}
+
 export interface WorkflowSpec extends Config {
   schema_version?: string;
   topology: string;
@@ -25,7 +32,7 @@ export interface WorkflowSpec extends Config {
   };
   tools: string[];
   agents?: AgentSpec[];
-  edges?: Array<{ from: string; to: string; kind?: string }>;
+  edges?: WorkflowEdgeSpec[];
   llm?: Config;
   memory?: Config;
   archive?: Config;

@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState, type DragEvent } from 'react';
 import {
-  ReactFlow, Background, BackgroundVariant, MiniMap, Panel,
+  ReactFlow, Background, BackgroundVariant, ConnectionMode, MiniMap, Panel,
   useNodesInitialized, useReactFlow, useViewport, type ReactFlowProps, type XYPosition,
 } from '@xyflow/react';
 import { Maximize, Minus, Plus, Map, Workflow } from 'lucide-react';
@@ -9,10 +9,14 @@ import { Button } from '../../../shared/ui/button';
 import AgentNode from './AgentNode';
 import ToolNode from './ToolNode';
 import { NODE_TRANSFER } from './GraphPalette';
+import { WorkflowEdge } from './WorkflowEdge';
+import { ConnectionPreview } from './ConnectionPreview';
 
 const nodeTypes = { agent: AgentNode, tool: ToolNode };
+const edgeTypes = { workflow: WorkflowEdge };
 type Props = Pick<ReactFlowProps<GraphNode, GraphEdge>,
-  'nodes' | 'edges' | 'onNodesChange' | 'onEdgesChange' | 'onConnect' | 'onNodeClick' | 'onEdgeClick' | 'onPaneClick'> & {
+  'nodes' | 'edges' | 'onNodesChange' | 'onEdgesChange' | 'onConnect' | 'onNodeClick' | 'onEdgeClick' | 'onPaneClick'
+  | 'isValidConnection' | 'onConnectStart' | 'onConnectEnd' | 'onReconnect' | 'onReconnectStart' | 'onReconnectEnd' | 'onMoveStart'> & {
   active: boolean;
   onAdd: (kind: 'agent' | 'tool', type: string, position: XYPosition) => void;
   onOpenLibrary: (templates?: boolean) => void;
@@ -52,7 +56,8 @@ export const GraphCanvas = memo(function GraphCanvas({ active, onAdd, onOpenLibr
 
   return <div className="mas-canvas" aria-label="Workflow 画布" onDrop={onDrop}
     onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}>
-    <ReactFlow<GraphNode, GraphEdge> {...flowProps} nodeTypes={nodeTypes}
+    <ReactFlow<GraphNode, GraphEdge> {...flowProps} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+      connectionMode={ConnectionMode.Loose} connectionLineComponent={ConnectionPreview} reconnectRadius={12}
       minZoom={0.2} maxZoom={2} deleteKeyCode={active ? ['Backspace', 'Delete'] : null} onlyRenderVisibleElements
       ariaLabelConfig={{ 'minimap.ariaLabel': '画布小地图' }}>
       <Background id="mas-dots" variant={BackgroundVariant.Dots} gap={20} size={1.5}
