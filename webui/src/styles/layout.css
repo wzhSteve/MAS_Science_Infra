@@ -1,0 +1,82 @@
+@layer components {
+  .app-shell { display: grid; grid-template-columns: 192px minmax(0, 1fr); height: 100dvh; min-height: 500px; }
+  .sidebar { background: #f0f2f5; border-right: 1px solid var(--border-subtle); padding: 25px 12px 16px; display: flex; flex-direction: column; min-width: 0; }
+  .brand { display: flex; align-items: center; gap: 9px; padding: 0 9px; font-size: 14px; font-weight: 600; letter-spacing: -.02em; }
+  .brand-mark { display: grid; place-items: center; width: 29px; height: 32px; border: 1px solid #d0d7e1; border-radius: 6px; background: var(--surface); color: var(--accent); }
+  .brand div > span { display: block; font-size: 8px; letter-spacing: .15em; font-weight: 500; color: var(--text-secondary); margin-top: 4px; }
+  .sidebar-label { margin: 40px 11px 10px; font-size: 9px; letter-spacing: .13em; color: var(--text-secondary); font-weight: 600; }
+  .sidebar-nav { display: flex; flex-direction: column; gap: 4px; }
+  .nav-link { display: flex; align-items: center; gap: 11px; position: relative; border: 1px solid transparent; background: transparent; color: var(--text-secondary); width: 100%; text-align: left; padding: 9px 11px; font-size: 13px; border-radius: 6px; line-height: 20px; }
+  .nav-link:hover { background: #e8ecf1; color: var(--text-primary); }
+  .nav-link.is-active { background: var(--surface); border-color: var(--border-subtle); color: var(--accent); font-weight: 600; }
+  .nav-link.is-active::after { position: absolute; right: 10px; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); content: ''; }
+  .sidebar-footer { margin: auto 9px 0; padding-top: 30px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 10px; }
+  .sidebar-footer > .mono { width: 100%; margin-left: 11px; font-size: 9px; color: var(--text-secondary); }
+  .sidebar-footer-dot { width: 5px; height: 5px; background: #8b96a4; border-radius: 50%; }
+  .workspace-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .workspace-header { background: var(--surface); border-bottom: 1px solid var(--border-subtle); padding: 15px 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px 24px; min-height: 79px; flex-wrap: wrap; }
+  .workspace-context { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+  .experiment-heading { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+  .experiment-heading > svg { color: var(--text-secondary); }
+  .experiment-heading strong { font-weight: 600; overflow-wrap: anywhere; }
+  .context-divider { height: 12px; width: 1px; background: var(--border-subtle); margin: 0 2px; }
+  .contract-summary { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; font-size: 10px; }
+  .contract-summary > div { display: flex; gap: 5px; }
+  .contract-summary dt { color: var(--text-secondary); }
+  .contract-summary dd { margin: 0; font-family: var(--font-code); max-width: 300px; overflow-wrap: anywhere; }
+  .workspace-actions { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+  .global-actions { display: flex; align-items: center; gap: 6px; }
+  .global-action-area { max-width: 420px; }
+  .global-action-area .inline-notice { font-size: 11px; padding: 6px 8px; margin-top: 7px; }
+  .action-reason { margin-top: 6px; }
+  .gpu-picker { position: relative; }
+  .gpu-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .gpu-unavailable { font-size: 11px; color: var(--text-secondary); padding: 4px 6px; }
+  .gpu-option { border: 1px solid var(--border-subtle); background: var(--surface); border-radius: 5px; padding: 4px 7px 5px; min-width: 74px; font-size: 10px; }
+  .gpu-option > span:first-child { display: flex; justify-content: space-between; gap: 8px; }
+  .gpu-option.is-selected { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+  .gpu-meter { display: block; margin-top: 4px; height: 2px; border-radius: 3px; background: var(--border-subtle); overflow: hidden; }
+  .gpu-meter > span { display: block; height: 100%; background: var(--accent); }
+  .gpu-diagnostic { font-size: 10px; color: var(--text-secondary); margin-top: 2px; }
+  .gpu-diagnostic summary { cursor: pointer; }
+  .gpu-diagnostic > span { display: block; max-width: 260px; overflow-wrap: anywhere; padding-top: 4px; }
+  .workspace-content { flex: 1; min-height: 0; overflow: auto; padding: 26px 28px 32px; }
+  .page-stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+  .settings-page { max-width: 1120px; }
+  .training-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 28px; border-bottom: 1px solid #d7e9df; background: #f3f9f5; font-size: 12px; }
+  .training-banner > .mono { color: var(--text-secondary); overflow-wrap: anywhere; }
+  .runtime-error { padding: 0 28px 8px; }
+  .status-bar { display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 5px 20px; border-top: 1px solid var(--border-subtle); background: var(--surface); color: var(--text-secondary); font-size: 10px; }
+  .status-bar .status-badge { font-size: 10px; padding: 0 5px; }
+  .status-tail { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-code); }
+  .skip-link { position: fixed; top: -60px; left: 16px; background: var(--surface); padding: 12px; z-index: 100; border-radius: 6px; }
+  .skip-link:focus { top: 10px; }
+  @media (max-width: 1279px) {
+    .workspace-header { padding: 14px 22px; }
+    .workspace-actions { gap: 12px; }
+    .workspace-content { padding: 22px; }
+  }
+  @media (max-width: 959px) {
+    .app-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-height: 500px; }
+    .sidebar { padding: 9px 16px; border-right: 0; border-bottom: 1px solid var(--border-subtle); gap: 8px; }
+    .brand { padding: 0; font-size: 13px; }
+    .brand-mark { width: 24px; height: 25px; }
+    .brand div > span, .sidebar-label, .sidebar-footer { display: none; }
+    .sidebar-nav { flex-direction: row; overflow-x: auto; gap: 4px; padding: 3px; }
+    .nav-link { width: auto; white-space: nowrap; padding: 6px 9px; gap: 7px; font-size: 12px; }
+    .nav-link.is-active::after { display: none; }
+    .workspace-header { padding: 12px 18px; gap: 12px; }
+    .workspace-content { padding: 20px 18px; }
+  }
+  @media (max-width: 767px) {
+    .workspace-actions { width: 100%; justify-content: space-between; gap: 8px; }
+    .workspace-header { padding: 12px 16px; }
+    .workspace-content { padding: 18px 12px 24px; }
+    .contract-summary { column-gap: 10px; }
+    .contract-summary dd { max-width: 160px; }
+    .status-bar { padding: 5px 10px; gap: 6px; }
+    .global-actions { flex-wrap: wrap; }
+    .training-banner, .runtime-error { padding-left: 16px; padding-right: 16px; }
+    .page-stack { gap: 16px; }
+  }
+}

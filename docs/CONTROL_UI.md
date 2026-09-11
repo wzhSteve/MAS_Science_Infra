@@ -1,4 +1,4 @@
-# Science Control UI 落地说明
+   # Science Control UI 落地说明
 
 对照设计方案实现的控制面与 WebUI（零代码工作室切片）。
 
@@ -96,11 +96,11 @@ POST /api/mas/collect  {"mock":false,"parquet":"data/val.parquet","data_n":5,"so
 
 ## 切页不丢草稿
 
-六个专家面板在 `App` 里 **keep-mounted**（`display:none` 切换，不卸载）。未点保存的 React 草稿（RL 数字、MAS 图、LLM 密钥框、Harness 勾选、Experiment seed）切 Tab 后仍在。
+六个专家面板在 `app\layout\WorkspacePanels.tsx` 里 **keep-mounted**（`hidden` 切换，不卸载）。未点保存的 React 草稿（RL 数字、MAS 图、LLM 密钥框、Harness 勾选、Experiment seed）切 Tab 后仍在。
 
 - 仅 **切换 `experiment_id`** 时才用磁盘 yaml 覆盖本地草稿。
 - 顶栏 Collect / 勾 GPU 会 `reload()` bundle，但 **不会** 把未保存数字打回 yaml。
-- 训练 `run_id` / stdout 提升到 App：轮询 `GET /api/runs?experiment_id=`，底条与 RL / Monitor 共用 log tail。切走 RL 再回来训练仍显示 running，可 Stop。
+- 训练 `run_id` / stdout 由独立 RuntimeProvider 管理：轮询 `GET /api/runs?experiment_id=`，底条与 RL / Monitor 共用 log tail。切走 RL 再回来训练仍显示 running，可 Stop。
 
 dirty 时 RL 显示「未保存」，MAS 图 / 训练简参各有 chip。
 
@@ -140,3 +140,40 @@ GET  /api/agl/health
 GET  /api/runs?experiment_id=demo
 GET  /api/runs/{run_id}
 ```
+
+## 前端架构与 UI
+
+前端采用 React 18、Tailwind CSS 4、Radix Primitives。基础输入沿用可访问的原生控件，训练确认和提示浮层使用 Radix；React Flow / Recharts 的领域能力保持不变。
+
+| 目录 | 职责 |
+| --- | --- |
+| `webui\src\app` | 工作区布局、实验切换、全局操作、运行状态上下文 |
+| `webui\src\pages` | 六面板公开入口，业务实现按 feature 归类 |
+| `webui\src\features` | 实验、LLM、MAS、RL、Harness、Monitor、GPU 和 runtime |
+| `webui\src\shared\api` | HTTP 错误处理和后端 DTO；端点归属各 feature |
+| `webui\src\shared\ui` | 控件、确认弹层和提示浮层 |
+| `webui\src\shared\components` | 表单字段、区块、表格、日志和结果反馈 |
+| `webui\src\styles` | 语义 token、基础样式、组件、布局及图编辑器适配 |
+
+运行状态与实验配置使用不同更新通道。训练 / Monitor 约每 4 秒刷新，AGL 约每 5 秒探活，GPU 仅初次加载和手动探测；计时器不叠加请求。相同 JSON 复用快照与未变分支引用，日志更新不应重新渲染参数表单或重新布局画布。图表按可见性加载和绘制，不用整页强制刷新恢复尺寸。
+
+切换实验会释放旧工作区、取消读取请求并清理 SSE / interval；旧实验回包不能覆盖新实验。草稿和 API Key 只保留在内存中，不增加自动保存或浏览器持久化。
+
+顶栏 Collect 仍为 `mock=true, n=1`；顶栏 Train / Diagnose 不代保存页面草稿。MAS Collect、本地 LLM 启动、Harness Diagnose 仍先保存对应配置；**保存失败会停止后续操作并展示错误**。RL 训练仍先保存再确认，取消训练确认不会撤销之前的配置保存。
+
+### 本地开发与类型检查
+
+在 `webui` 目录执行：
+
+```powershell
+npm ci
+npm run dev -- --host 127.0.0.1
+npm run typecheck
+npm run build
+```
+
+`build` 同时执行 TypeScript 检查。按当前范围要求，重构期间新增的测试用例、fixture 和辅助测试代码已移除；保留测试依赖、Vitest 配置和 `npm run test` 入口，目前没有项目测试用例。Playwright 配置与 E2E 运行脚本不再保留。
+
+依赖安装遵循本机配置的 npm registry。若锁文件的镜像域名被限制，可以使用 `npm ci --replace-registry-host=registry.npmmirror.com` 经已配置 registry 获取依赖，不关闭安全策略。Tailwind CSS 4 的浏览器基线为 Chrome 111、Safari 16.4、Firefox 128。
+
+开发 UI 为 `5173`，控制面为 `8787`。Vite 保留原有 `/api` 代理；同源 `/agl/metrics` 入口在控制面静态部署下使用，未在本次 UI 重构中扩展开发代理。
