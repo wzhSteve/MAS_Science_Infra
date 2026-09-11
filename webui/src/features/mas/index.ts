@@ -1,4 +1,5 @@
 export { default as MasGraphEditor } from './components/MasGraphEditor';
-export { WorkflowActions, ParquetCollect } from './components/CollectControls';
+export { WorkflowBar } from './components/WorkflowBar';
+export { RunConsole, type ConsoleTab } from './components/RunConsole';
 export { useMasDraft } from './model/useMasDraft';
-export type { RlSettingsSlot } from './types';
+export type { RlSettingsSlot, EditorPanel } from './types';

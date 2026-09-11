@@ -1,0 +1,77 @@
+.mas-run-console { position: relative; display: flex; flex-direction: column; flex: 0 0 36px; min-height: 36px; min-width: 0; background: var(--surface); border-top: 1px solid var(--border-subtle); z-index: 20; }
+.mas-run-console.is-open { flex-basis: var(--console-height); max-height: 65%; }
+.mas-console-header { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 14px; }
+.mas-console-toggle { display: flex; align-items: center; gap: 7px; padding: 5px 0; background: transparent; border: 0; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.mas-console-toggle strong { font-weight: 550; color: var(--text-primary); }
+.mas-console-summary { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mas-console-summary.is-error { color: var(--danger); }
+.mas-console-header > .ui-button { min-height: 26px; padding: 3px 5px; }
+.mas-console-resize { position: absolute; top: -4px; left: 0; right: 0; height: 7px; cursor: ns-resize; touch-action: none; z-index: 2; }
+.mas-console-resize::after { content: ''; position: absolute; height: 2px; width: 34px; border-radius: 2px; background: var(--border-subtle); left: calc(50% - 17px); top: 2px; }
+.mas-console-resize:hover::after, .mas-console-resize:focus-visible::after { background: var(--accent); width: 60px; left: calc(50% - 30px); }
+.mas-console-content { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.mas-console-tabs { display: flex; align-items: center; gap: 18px; flex-shrink: 0; padding: 0 20px; border-bottom: 1px solid var(--border-subtle); }
+.mas-console-tabs > button { display: flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 8px 1px; background: transparent; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.mas-console-tabs > button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.mas-tab-count { padding: 0 5px; border-radius: 4px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 10px; font-variant-numeric: tabular-nums; }
+.mas-run-version { margin-left: auto; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
+.mas-console-body { flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px 20px; scrollbar-width: thin; }
+.mas-console-empty { padding: 22px 0; color: var(--text-secondary); font-size: 12px; }
+.mas-run-config { display: flex; flex-direction: column; gap: 18px; max-width: 1200px; }
+.mas-run-config > form { display: flex; flex-direction: column; gap: 12px; }
+.mas-run-fields { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 18px; }
+.mas-run-fields .form-field { align-content: start; }
+.mas-run-fields .ui-input, .mas-run-fields .ui-select { font-size: 12px; }
+.mas-run-path { grid-column: span 2; }
+.mas-run-advanced { font-size: 11px; color: var(--text-secondary); }
+.mas-run-advanced summary { cursor: pointer; width: fit-content; }
+.mas-run-advanced .form-field { margin-top: 12px; max-width: 400px; }
+.mas-run-submit { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.mas-run-submit > span { font-size: 11px; color: var(--text-secondary); margin-left: 4px; }
+.mas-data-preview { border-top: 1px solid var(--border-subtle); padding-top: 14px; }
+.mas-data-preview h3, .mas-run-log h3 { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 600; margin: 0 0 10px; }
+.mas-data-preview h3 > span, .mas-run-log h3 > span { color: var(--text-secondary); font-size: 10px; font-weight: 400; }
+.mas-preview-list { display: grid; gap: 6px; }
+.mas-preview-list details { border: 1px solid var(--border-subtle); border-radius: 6px; padding: 9px 12px; font-size: 12px; }
+.mas-preview-list summary { cursor: pointer; color: var(--text-secondary); }
+.mas-preview-list summary > span { margin-left: 12px; font-size: 10px; }
+.mas-preview-list summary > p { color: var(--text-primary); margin-top: 5px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
+.mas-preview-list details[open] summary > p { display: none; }
+.mas-preview-question { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; line-height: 1.7; }
+.mas-run-results { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.mas-result-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; font-size: 12px; color: var(--text-secondary); }
+.mas-result-summary strong, .mas-result-summary b { color: var(--text-primary); font-weight: 550; }
+.mas-result-summary time { font-size: 10px; margin-left: auto; }
+.mas-run-results .data-table { table-layout: fixed; width: 100%; }
+.mas-run-results th:first-child { width: 18%; }
+.mas-run-results th:nth-child(3), .mas-run-results th:nth-child(4) { width: 12%; }
+.mas-run-results td { vertical-align: top; overflow-wrap: anywhere; }
+.mas-answer { font-size: 12px; }
+.mas-answer summary { text-overflow: ellipsis; white-space: nowrap; overflow: hidden; cursor: pointer; color: var(--text-primary); }
+.mas-answer[open] summary { color: var(--text-secondary); font-size: 11px; }
+.mas-answer p { white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 7px; line-height: 1.7; }
+.mas-result-path { font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.mas-result-path code { margin-left: 8px; }
+.mas-console-error { padding: 8px 20px 0; max-height: 100px; overflow: auto; flex-shrink: 0; }
+.mas-run-hint { padding: 8px 20px 0; font-size: 11px; color: var(--text-secondary); }
+.mas-run-log { display: grid; gap: 22px; }
+.mas-run-log section { min-width: 0; }
+.mas-run-log ol { padding: 0; margin: 10px 0 0; list-style: none; }
+.mas-run-log li { display: flex; align-items: baseline; gap: 14px; padding: 5px 0; font-family: var(--font-code); font-size: 11px; overflow-wrap: anywhere; line-height: 1.6; }
+.mas-run-log time { flex: none; color: var(--text-secondary); font-size: 10px; }
+.mas-run-log .is-danger { color: var(--danger); }
+.mas-run-log .is-success { color: var(--success); }
+@media (max-width: 760px) {
+  .mas-console-header { padding: 0 10px; gap: 8px; }
+  .mas-console-tabs { padding: 0 12px; gap: 16px; }
+  .mas-console-body { padding: 12px; }
+  .mas-run-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .mas-run-version { display: none; }
+  .mas-run-results th:first-child { width: 20%; }
+  .mas-run-results th:nth-child(3), .mas-run-results th:nth-child(4) { width: 17%; }
+}
+@media (max-width: 440px) {
+  .mas-run-fields { grid-template-columns: minmax(0, 1fr); }
+  .mas-run-path { grid-column: auto; }
+  .mas-console-summary { font-size: 10px; }
+}

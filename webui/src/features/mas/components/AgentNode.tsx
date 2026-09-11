@@ -1,24 +1,25 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import type { GraphNodeData } from '../types';
+import { Bot, Flag } from 'lucide-react';
+import type { GraphNode } from '../types';
 
-function AgentNode({ data, selected }: NodeProps) {
-  const d = data as GraphNodeData;
-  const cls = ['mas-node', 'mas-node--agent', selected ? 'is-selected' : '', d.entry ? 'is-entry' : '']
+function AgentNode({ data: d, selected }: NodeProps<GraphNode>) {
+  const cls = ['mas-node', 'mas-node--agent', selected ? 'is-selected' : '', d.entry ? 'is-entry' : '', d.issue ? 'has-issue' : '']
     .filter(Boolean)
     .join(' ');
   return (
     <div className={cls}>
-      <Handle type="target" position={Position.Top} />
-      <div className="flex items-start justify-between gap-2">
-        <div className="mono font-semibold">{d.label || 'agent'}</div>
-        {d.entry ? <span className="mas-node__entry">入口</span> : null}
+      <Handle type="target" position={Position.Left} />
+      <div className="mas-node__heading">
+        <span className="mas-node__icon"><Bot size={18} /></span>
+        <div><div className="mas-node__name">{d.label || 'Agent'}</div><div className="mas-node__role">{d.role}</div></div>
       </div>
-      <div className="mas-node__role">{d.role}</div>
-      {d.tools && d.tools.length ? <div className="mas-node__meta">{d.tools.join(', ')}</div> : null}
-      {d.verify ? <div className="mas-node__meta">verify → {d.verify}</div> : null}
-      <div className="mas-node__meta">{d.trainable === false ? '不训练' : '可训练'}</div>
-      <Handle type="source" position={Position.Bottom} />
+      <div className="mas-node__footer">
+        {d.entry ? <span className="mas-node__entry"><Flag size={10} />入口</span> : <span>Agent</span>}
+        <span>{d.tools?.length ? `${d.tools.length} 个工具` : d.trainable === false ? '不参与训练' : '参与训练'}</span>
+      </div>
+      {d.issue && <div className="mas-node__issue">{d.issue}</div>}
+      <Handle type="source" position={Position.Right} />
     </div>
   );
 }

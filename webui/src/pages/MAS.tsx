@@ -1,11 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Bundle, RlConfig } from '../shared/api/types';
-import { MasGraphEditor, WorkflowActions, ParquetCollect, useMasDraft, type RlSettingsSlot } from '../features/mas';
-import { PageHeader } from '../shared/components/PageHeader';
-import { Section } from '../shared/components/Section';
-import { StatusBadge } from '../shared/components/StatusBadge';
+import { MasGraphEditor, WorkflowBar, RunConsole, useMasDraft, type RlSettingsSlot, type ConsoleTab, type EditorPanel } from '../features/mas';
+import { executableInfo } from '../features/mas/model/workflowGraph';
 import { InlineNotice } from '../shared/components/InlineNotice';
 import { LoadingState } from '../shared/components/LoadingState';
+import { Button } from '../shared/ui/button';
 
 export type MASPanelProps = {
   expId: string;
@@ -13,34 +12,38 @@ export type MASPanelProps = {
   onReload: () => void;
   normalizeRl: (rl: RlConfig) => RlConfig;
   renderRlSettings?: RlSettingsSlot;
+  active?: boolean;
 };
 
 export function MASPanel(props: MASPanelProps) {
   const draft = useMasDraft(props);
-  const [algo, setAlgo] = useState('grpo');
+  const [panel, setPanel] = useState<EditorPanel>(null);
+  const [libraryOpen, setLibraryOpen] = useState(true);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [consoleTab, setConsoleTab] = useState<ConsoleTab>('config');
   const { workflow } = draft;
+  const executable = useMemo(() => workflow ? executableInfo(workflow) : { ok: false, reason: '加载中…' }, [workflow]);
+  const rlSettings = useMemo(() => props.renderRlSettings?.({
+    rl: draft.rl, onPatch: draft.onRlPatch, onSave: draft.saveRl, saving: draft.savingRl,
+  }), [props.renderRlSettings, draft.rl, draft.onRlPatch, draft.saveRl, draft.savingRl]);
   if (!workflow) return <LoadingState label="加载 workflow…" />;
 
-  return <div className="page-stack">
-    <PageHeader title="MAS · Workflow" eyebrow="MULTI-AGENT SYSTEM"
-      description={<>编辑 Agent / Tool 与连线，保存为 WorkflowSpec。topology · <code>{workflow.topology}</code></>}
-      actions={<>
-        <StatusBadge tone={draft.workflowDirty ? 'warning' : 'neutral'}>{draft.workflowDirty ? '图未保存' : '图已同步'}</StatusBadge>
-        {draft.rlDirty && <StatusBadge tone="warning">训练简参未保存</StatusBadge>}
-      </>} />
-    <Section className="mas-workspace-section">
-      <WorkflowActions pending={draft.pending} executable={Boolean(props.bundle?.executable?.ok)}
-        onSave={draft.save} onCollect={draft.collect} algo={algo} onAlgoChange={setAlgo} />
-      {draft.notice && <InlineNotice tone={draft.notice.tone}>{draft.notice.message}</InlineNotice>}
-      {draft.rlNotice && <InlineNotice tone={draft.rlNotice.tone}>{draft.rlNotice.message}</InlineNotice>}
-      {!props.bundle?.executable?.ok && <InlineNotice tone="danger">
-        {props.bundle?.executable?.reason || 'Workflow 不可执行'}
-      </InlineNotice>}
-      <MasGraphEditor workflow={workflow} palette={draft.palette} onChange={draft.onWorkflowChange}
-        rl={draft.rl} onRlPatch={draft.onRlPatch} onRlSave={draft.saveRl} savingRl={draft.savingRl}
-        renderRlSettings={props.renderRlSettings} />
-    </Section>
-    <ParquetCollect pending={draft.pending} executable={Boolean(props.bundle?.executable?.ok)} algo={algo}
-      onCollect={draft.collect} onPreview={draft.preview} rows={draft.rows} />
+  return <div className="mas-workspace">
+    <WorkflowBar expId={props.expId} dirty={draft.workflowDirty} pending={draft.pending}
+      saving={draft.savingWorkflow} saveError={Boolean(draft.saveError)} rlDirty={draft.rlDirty}
+      panel={panel} onPanelChange={setPanel} onSave={draft.save}
+      libraryOpen={libraryOpen} onOpenLibrary={() => setLibraryOpen(true)}
+      onRun={() => { setConsoleOpen(true); setConsoleTab('config'); }} />
+    {(draft.paletteError || draft.saveError) && <div className="mas-workspace-notice">
+      <InlineNotice tone="danger">{draft.paletteError ? <>节点库加载失败：{draft.paletteError}
+        <Button size="sm" onClick={() => void draft.loadPalette()}>重试</Button>
+      </> : draft.saveError}</InlineNotice>
+    </div>}
+    <MasGraphEditor workflow={workflow} palette={draft.palette} onChange={draft.onWorkflowChange}
+      active={props.active ?? true} panel={panel} onPanelChange={setPanel}
+      libraryOpen={libraryOpen} onLibraryOpenChange={setLibraryOpen}
+      rlSettings={rlSettings} rlDirty={draft.rlDirty} rlNotice={draft.rlNotice} />
+    <RunConsole draft={draft} open={consoleOpen} onOpenChange={setConsoleOpen}
+      tab={consoleTab} onTabChange={setConsoleTab} executable={executable} />
   </div>;
 }

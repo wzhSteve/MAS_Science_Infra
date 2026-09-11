@@ -7,5 +7,6 @@
 @import "./layout.css";
 @import "@xyflow/react/dist/style.css";
 @import "./integrations/react-flow.css";
+@import "./integrations/mas-console.css";
 
 @source "../";

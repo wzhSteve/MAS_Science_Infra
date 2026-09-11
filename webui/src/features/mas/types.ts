@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { Edge, Node } from '@xyflow/react';
 import type { RlConfig } from '../../shared/api/types';
 
 export type RlSettingsSlot = (args: {
@@ -18,7 +19,13 @@ export type GraphNodeData = Record<string, unknown> & {
   entry?: boolean;
   verify?: string | null;
   max_feedback_hops?: number;
+  issue?: string;
 };
+
+export type GraphNode = Node<GraphNodeData, 'agent' | 'tool'>;
+export type GraphEdge = Edge<{ kind: string }>;
+export type GraphSelection = { kind: 'node' | 'edge'; id: string } | null;
+export type EditorPanel = 'settings' | null;
 
 export type SelectedGraphNode = {
   id: string;

@@ -36,7 +36,7 @@ const Workspace = memo(function Workspace({ expId, tab, meta, setExpId }: {
     </>}</div>;
   }
   return <RuntimeProvider expId={expId} onReload={refresh}>
-    <WorkspaceHeader bundle={bundle} onReload={refresh} />
+    {tab !== 'mas' && <WorkspaceHeader bundle={bundle} onReload={refresh} />}
     <TrainingBanner />
     {error && <div className="runtime-error"><InlineNotice tone="warning">实验刷新失败，草稿保持不变：{error}</InlineNotice></div>}
     <WorkspaceBoundary><WorkspacePanels active={tab} bundle={bundle} meta={meta} onReload={refresh} setExpId={setExpId} /></WorkspaceBoundary>

@@ -1,4 +1,5 @@
-import { memo, type ReactNode } from 'react';
+import { memo } from 'react';
+import { Bot, Flag, Trash2, Wrench, X } from 'lucide-react';
 import type { Palette } from '../../../shared/api/types';
 import type { GraphNodeData, SelectedGraphNode } from '../types';
 import { Button } from '../../../shared/ui/button';
@@ -7,71 +8,70 @@ import { Select } from '../../../shared/ui/select';
 import { Textarea } from '../../../shared/ui/textarea';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { FormField } from '../../../shared/components/FormField';
-import { StatusBadge } from '../../../shared/components/StatusBadge';
-import { EmptyState } from '../../../shared/components/EmptyState';
 
-export const NodeInspector = memo(function NodeInspector({ selected, palette, entryId, onPatch, onEntry, rlSettings }: {
-  selected: SelectedGraphNode | null;
+export const NodeInspector = memo(function NodeInspector({ selected, palette, entryId, onPatch, onEntry, onDelete, onClose }: {
+  selected: SelectedGraphNode;
   palette: Palette;
   entryId: string;
   onPatch: (patch: Partial<GraphNodeData>) => void;
   onEntry: (id: string) => void;
-  rlSettings?: ReactNode;
+  onDelete: () => void;
+  onClose: () => void;
 }) {
-  return <aside className="mas-inspector" aria-label="节点属性">
-    <div className="mas-inspector__heading">
-      <h2>节点属性</h2>
-      {selected && <StatusBadge tone={selected.type === 'tool' ? 'neutral' : 'info'}>{selected.type === 'tool' ? 'Tool' : 'Agent'}</StatusBadge>}
+  const isTool = selected.type === 'tool';
+  const Icon = isTool ? Wrench : Bot;
+  const tools = Array.from(new Set([...(palette.tools || []), ...(selected.data.tools || [])]));
+  return <aside className="mas-panel mas-inspector" aria-label="节点属性">
+    <div className="mas-panel-heading">
+      <div><span className="mas-panel-caption">{isTool ? 'Tool' : 'Agent'} 属性</span><h2><Icon size={16} />{selected.id}</h2></div>
+      <Button size="sm" variant="ghost" onClick={onClose} aria-label="关闭节点属性"><X size={16} /></Button>
     </div>
-    {!selected ? <EmptyState title="选择一个节点">
-      选中 Agent 编辑 prompt、skills、tools 和训练参与；将「采集入口」拖到 Agent 设置 Episode 起点。
-    </EmptyState>
-      : selected.type === 'tool' ? <div className="space-y-3">
-        <div className="mono break-all font-semibold">{selected.id}</div>
-        <p className="field-hint">工具节点通过 tool_call 边连接 Agent，不作为采集入口。</p>
-      </div> : <div className="space-y-4">
-        <div className="space-y-3">
-          <FormField label="id"><Input value={selected.id} disabled className="mono" /></FormField>
-          <FormField label="role"><Input value={selected.data.role || ''}
-            onChange={(event) => onPatch({ role: event.target.value })} /></FormField>
+    <div className="mas-panel-body">
+      {isTool ? <div className="mas-property-section">
+        <FormField label="工具标识"><Input value={selected.id} readOnly className="mono" /></FormField>
+        <p className="field-hint">从 Agent 拉出连线调用此工具。工具不能作为运行入口。</p>
+      </div> : <>
+        <div className="mas-property-section">
+          <FormField label="角色"><Input value={selected.data.role || ''} onChange={(e) => onPatch({ role: e.target.value })} /></FormField>
+          <FormField label="系统提示词" hint="定义 Agent 的职责、行为和输出要求。">
+            <Textarea rows={7} value={selected.data.system_prompt || ''} placeholder="描述这个 Agent 应该完成什么…"
+              onChange={(e) => onPatch({ system_prompt: e.target.value })} />
+          </FormField>
+          <FormField label="Skills" hint="多个技能以逗号分隔。">
+            <Input value={(selected.data.skills || []).join(', ')} onChange={(e) =>
+              onPatch({ skills: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} />
+          </FormField>
         </div>
-        <FormField label="system prompt（profile）">
-          <Textarea rows={5} value={selected.data.system_prompt || ''}
-            onChange={(event) => onPatch({ system_prompt: event.target.value })} />
-        </FormField>
-        <FormField label="skills（逗号分隔）">
-          <Input value={(selected.data.skills || []).join(', ')} onChange={(event) =>
-            onPatch({ skills: event.target.value.split(',').map((skill) => skill.trim()).filter(Boolean) })} />
-        </FormField>
-        <fieldset className="space-y-2">
-          <legend className="mb-2 text-xs font-semibold">tools</legend>
-          {(palette.tools || []).map((tool) => {
-            const tools = selected.data.tools || [];
-            const checked = tools.includes(tool);
-            return <label key={tool} className="flex items-center gap-2 text-xs">
-              <Checkbox checked={checked} onChange={() =>
-                onPatch({ tools: checked ? tools.filter((value) => value !== tool) : [...tools, tool] })} />
-              <span className="mono break-all">{tool}</span>
+        <fieldset className="mas-property-section">
+          <legend>可调用工具</legend>
+          {tools.map((tool) => {
+            const selectedTools = selected.data.tools || [];
+            const checked = selectedTools.includes(tool);
+            return <label key={tool} className="mas-checkbox-row">
+              <Checkbox checked={checked} onChange={() => onPatch({ tools: checked ? selectedTools.filter((t) => t !== tool) : [...selectedTools, tool] })} />
+              <span>{tool}</span>
             </label>;
           })}
+          {!tools.length && <p className="field-hint">暂无可用工具。</p>}
         </fieldset>
-        <label className="flex items-center gap-2 text-xs">
-          <Checkbox checked={selected.data.trainable !== false}
-            onChange={(event) => onPatch({ trainable: event.target.checked })} />
-          参与 RL（trainable）
-        </label>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => onEntry(selected.id)}>设为采集入口</Button>
-          {selected.id === entryId && <StatusBadge tone="info">当前入口</StatusBadge>}
+        <div className="mas-property-section">
+          <label className="mas-checkbox-row"><Checkbox checked={selected.data.trainable !== false}
+            onChange={(e) => onPatch({ trainable: e.target.checked })} />参与训练</label>
+          <Button size="sm" disabled={selected.id === entryId} onClick={() => onEntry(selected.id)}>
+            <Flag size={14} />{selected.id === entryId ? '当前运行入口' : '设为运行入口'}
+          </Button>
         </div>
-        {selected.id === 'hub' && <FormField label="verify skill（空=关闭）">
-          <Select value={selected.data.verify || ''} onChange={(event) => onPatch({ verify: event.target.value || null })}>
-            <option value="">(none)</option>
-            {(palette.skills || []).map((skill) => <option key={skill} value={skill}>{skill}</option>)}
-          </Select>
-        </FormField>}
-        {selected.id === entryId && rlSettings}
-      </div>}
-    <p className="field-hint mt-4">图写入 WorkflowSpec YAML；画布位置仅用于当前视图。每题采样条数与采集入口独立。</p>
+        {selected.id === 'hub' && <details className="mas-property-section">
+          <summary>高级配置</summary>
+          <FormField label="验证技能" hint="启用后通过 Verifier 向 hub 反馈。">
+            <Select value={selected.data.verify || ''} onChange={(e) => onPatch({ verify: e.target.value || null })}>
+              <option value="">关闭</option>
+              {(palette.skills || []).map((skill) => <option key={skill} value={skill}>{skill}</option>)}
+            </Select>
+          </FormField>
+        </details>}
+      </>}
+    </div>
+    <div className="mas-panel-footer"><Button size="sm" variant="danger" onClick={onDelete}><Trash2 size={14} />删除节点</Button></div>
   </aside>;
 });

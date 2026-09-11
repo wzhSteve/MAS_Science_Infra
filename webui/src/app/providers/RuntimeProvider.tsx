@@ -5,7 +5,7 @@ import { rlApi } from '../../features/rl/api';
 import { monitorApi } from '../../features/monitor/api';
 import { runtimeApi } from '../../features/runtime/api';
 import { useTrainingRun, type TrainingSnapshot } from '../../features/runtime/model/useTrainingRun';
-import { useExperimentEvents } from '../../features/runtime/model/useExperimentEvents';
+import { useExperimentEvents, type ExperimentEvents } from '../../features/runtime/model/useExperimentEvents';
 import { usePollingResource, type Resource } from '../../shared/hooks/usePollingResource';
 import { useAction } from '../../shared/hooks/useAction';
 import { useTrainConfirmation } from '../../shared/ui/alert-dialog';
@@ -24,7 +24,7 @@ const CommandStatusContext = createContext<CommandStatus | null>(null);
 const TrainingContext = createContext<Resource<TrainingSnapshot> | null>(null);
 const AglContext = createContext<Resource<AglHealth> | null>(null);
 const MonitorContext = createContext<Resource<MonitorResponse> | null>(null);
-const EventsContext = createContext<{ latest: string; error: string | null } | null>(null);
+const EventsContext = createContext<ExperimentEvents | null>(null);
 
 function required<T>(value: T | null): T {
   if (value === null) throw new Error('RuntimeProvider is required');

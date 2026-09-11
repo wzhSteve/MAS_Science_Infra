@@ -6,6 +6,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
+    watch: {
+      // Avoid compiling partial imports while an editor is still writing a file.
+      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+    },
     proxy: {
       '/api': 'http://127.0.0.1:8787',
     },
