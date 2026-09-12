@@ -28,4 +28,25 @@ agents:
   - wikipedia_search
   - execute_python
   trainable: true
-edges: []
+edges:
+- from: hub
+  to: web_search
+  kind: tool_call
+  meta:
+    ui:
+      sourceHandle: bottom
+      targetHandle: top
+- from: hub
+  to: wikipedia_search
+  kind: tool_call
+  meta:
+    ui:
+      sourceHandle: bottom
+      targetHandle: top
+- from: hub
+  to: execute_python
+  kind: tool_call
+  meta:
+    ui:
+      sourceHandle: bottom
+      targetHandle: top
