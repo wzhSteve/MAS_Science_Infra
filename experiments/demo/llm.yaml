@@ -1,3 +1,6 @@
 kind: api
-model: qwen3.5-27b
-base_url: https://www.dmxapi.cn/v1/
+model: DeepSeek-V4-Flash
+base_url: https://ai-gateway.xfusion.com
+model_path: ''
+port: 8000
+gpu_memory_utilization: 0.45

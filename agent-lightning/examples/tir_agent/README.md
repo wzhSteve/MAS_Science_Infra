@@ -116,6 +116,7 @@ Control 可提前调用 `workflow.runtime.validate_execution_spec(spec)` 校验�
 - 每个 Agent 使用自己的 Prompt、Skill 和工具绑定。显式 `Agent.tools=[]` 禁用工具，
   `tool_call` 边可显式增加工具；仅未声明 hub 节点的旧配置继承顶层 tools。
   `LLMConfig.enabled_tools` 是额外的允许列表；`TirAgent(enabled_tools=None)` 仅在旧直接入口继承默认工具。
+  无工具的 Agent 不绑定工具，模型请求省略 `tools` 字段，而不是发送部分兼容服务拒绝的 `tools: []`。
 - Skill 使用现有注册表，在 Agent 进入时执行，结果进入当前 Agent 上下文；verifier / critic
   无 Prompt 和工具时仅运行验证 Skill，有 Prompt / 工具时先执行模型、再验证。
   Skill 的 route 元数据保留，但一般图的派发以已编译边为准，不动态创建边。

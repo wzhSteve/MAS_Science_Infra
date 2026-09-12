@@ -343,7 +343,8 @@ class TirAgent:
         llm_kwargs["temperature"] = temperature
         llm_kwargs["max_tokens"] = max_tokens
         self.sampling = {**sampling, "temperature": temperature, "max_tokens": max_tokens, **extra}
-        self.llm = init_chat_model(model_name, **llm_kwargs).bind_tools(bound_tools)
+        model = init_chat_model(model_name, **llm_kwargs)
+        self.llm = model.bind_tools(bound_tools) if bound_tools else model
         fin_kwargs = dict(llm_kwargs)
         fin_kwargs["temperature"] = min(temperature, 0.3)
         fin_kwargs["max_tokens"] = min(max_tokens, 256)
