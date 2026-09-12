@@ -19,12 +19,14 @@ type Props = {
   onSave: () => void;
   onRecommend: () => void;
   onPrefill: () => void;
+  initiallyAdvanced?: boolean;
+  showSaveAction?: boolean;
 };
 
 const HYDRA_GROUPS = ['Actor', 'Rollout', 'Data', 'Trainer'];
 
-export const RlSettingsForm = memo(function RlSettingsForm({ rl, meta, dirty, pending, onPatch, onSave, onRecommend, onPrefill }: Props) {
-  const [showAdvanced, setShowAdvanced] = useState(false);
+export const RlSettingsForm = memo(function RlSettingsForm({ rl, meta, dirty, pending, onPatch, onSave, onRecommend, onPrefill, initiallyAdvanced = false, showSaveAction = true }: Props) {
+  const [showAdvanced, setShowAdvanced] = useState(initiallyAdvanced);
   const advancedId = useId();
   return <Section title="训练参数" actions={<StatusBadge tone={dirty ? 'warning' : 'neutral'}>{dirty ? '未保存' : '已载入配置'}</StatusBadge>}>
     <p className="section-description">占用卡数 = 已选 GPU 数（{(rl.devices?.ids || [0]).length}）。Train 与本地 vLLM 互斥。每题采样 ≠ 画布上的采集入口。</p>
@@ -65,6 +67,6 @@ export const RlSettingsForm = memo(function RlSettingsForm({ rl, meta, dirty, pe
         </div>
       </fieldset>)}
     </div>}
-    <ActionBar><Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={onSave}>保存超参</Button></ActionBar>
+    {showSaveAction && <ActionBar><Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={onSave}>保存超参</Button></ActionBar>}
   </Section>;
 });

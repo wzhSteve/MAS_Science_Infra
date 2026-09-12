@@ -6,6 +6,7 @@ import { useAction } from '../../shared/hooks/useAction';
 import { Button } from '../../shared/ui/button';
 import { Tooltip } from '../../shared/ui/tooltip';
 import { InlineNotice } from '../../shared/components/InlineNotice';
+import { useUnsavedChanges } from '../../shared/hooks/useUnsavedChanges';
 export type { GpuInfo } from '../../shared/api/types';
 
 export default memo(function GpuPicker({ selected, onChange, compact = false }: {
@@ -13,6 +14,9 @@ export default memo(function GpuPicker({ selected, onChange, compact = false }: 
 }) {
   const { data, loading, error, refresh } = usePollingResource('gpus', gpuApi.gpus);
   const { pending, notice, run } = useAction();
+  useUnsavedChanges('gpu-selection', {
+    label: 'GPU 配置保存', resource: 'rl', dirty: false, busy: pending !== null,
+  });
   const toggle = useCallback((id: number) => {
     const ids = selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id].sort((a, b) => a - b);
     void run('select', async () => { await onChange(ids.length ? ids : [id]); });

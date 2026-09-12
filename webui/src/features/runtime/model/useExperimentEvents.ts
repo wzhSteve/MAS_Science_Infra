@@ -18,12 +18,15 @@ export interface ExperimentEvents {
   collectEvents: ScienceEvent[];
 }
 
-export function useExperimentEvents(expId: string, onTrain: () => Promise<void>, onEvent: () => Promise<void>) {
+export function useExperimentEvents(expId: string, onTrain: () => Promise<void>, onEvent: () => Promise<void>, active = true) {
   const [state, setState] = useState<ExperimentEvents>({
     latest: '', error: null, connected: false, collectEvents: [],
   });
   useEffect(() => {
-    setState({ latest: '', error: null, connected: false, collectEvents: [] });
+    if (!active) {
+      setState(previous => previous.connected ? { ...previous, connected: false } : previous);
+      return;
+    }
     const source = new EventSource(`/api/events?experiment_id=${encodeURIComponent(expId)}`);
     source.onopen = () => setState(previous => ({ ...previous, connected: true, error: null }));
     source.onerror = () => setState(previous => previous.error === '事件连接中断，正在重新连接'
@@ -44,6 +47,6 @@ export function useExperimentEvents(expId: string, onTrain: () => Promise<void>,
       }
     };
     return () => source.close();
-  }, [expId, onTrain, onEvent]);
+  }, [expId, onTrain, onEvent, active]);
   return state;
 }

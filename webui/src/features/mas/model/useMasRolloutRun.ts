@@ -3,6 +3,7 @@ import type { RolloutExecution, RolloutRunSummary, RolloutTrajectoryResponse, Wo
 import { ApiError, errorMessage } from '../../../shared/api/http';
 import { masApi } from '../api';
 import type { useMasDraft } from './useMasDraft';
+import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
 
 export type RolloutStatus = 'saving' | 'running' | 'succeeded' | 'failed' | 'interrupted' | 'unknown';
 export const rolloutStatusLabel: Record<RolloutStatus, string> = {
@@ -25,9 +26,8 @@ interface RolloutLog {
   tone: 'neutral' | 'success' | 'danger';
 }
 
-export function useMasRolloutRun(expId: string, executeWithSavedWorkflow: ReturnType<typeof useMasDraft>['executeWithSavedWorkflow']) {
+export function useMasRolloutRun(expId: string, executeWithSavedWorkflow: ReturnType<typeof useMasDraft>['executeWithSavedWorkflow'], execution: RolloutExecution = 'live') {
   const [question, setQuestion] = useState('');
-  const [execution, setExecution] = useState<RolloutExecution>('mock');
   const [attempt, setAttempt] = useState<RolloutAttempt | null>(null);
   const [logs, setLogs] = useState<RolloutLog[]>([]);
   const [trajectory, setTrajectory] = useState<RolloutTrajectoryResponse | null>(null);
@@ -36,6 +36,11 @@ export function useMasRolloutRun(expId: string, executeWithSavedWorkflow: Return
   const generation = useRef(0);
   const mounted = useRef(false);
   const reading = useRef<AbortController | null>(null);
+  useUnsavedChanges(`rollout-input-${execution}`, {
+    label: execution === 'live' ? '未提交的真实调试输入' : '未提交的模拟演示输入', resource: `rollout-input-${execution}`,
+    dirty: Boolean(question.trim()) && (!attempt?.summary || question !== attempt.question || execution !== attempt.execution),
+    busy: attempt?.status === 'saving' || attempt?.status === 'running',
+  });
 
   useEffect(() => {
     mounted.current = true;
@@ -65,7 +70,7 @@ export function useMasRolloutRun(expId: string, executeWithSavedWorkflow: Return
         setLogs([]);
         run = { workflow, question, execution, status: 'saving', startedAt: Date.now() };
         setAttempt(run);
-        log(`${execution === 'mock' ? '模拟' : '真实'}单次 Rollout · 正在保存本次 Workflow`);
+        log(`${execution === 'mock' ? '模拟演示' : '真实调试'} · 正在保存本次 Workflow`);
       },
       onSaveError: error => {
         if (!current()) return;
@@ -86,7 +91,7 @@ export function useMasRolloutRun(expId: string, executeWithSavedWorkflow: Return
             endedAt: summary.status === 'running' ? undefined : Date.now() });
           log(`${rolloutStatusLabel[summary.status]} · ${summary.run_id} · 模型调用 ${summary.model_call_count} 次 · 工具调用 ${summary.tool_call_count} 次`,
             summary.status === 'succeeded' ? 'success' : summary.status === 'running' ? 'neutral' : 'danger');
-          if (summary.error) log(`${summary.error.stage} / ${summary.error.code}：${summary.error.message}`, 'danger');
+          if (summary.error) log(`${summary.error.stage} / ${summary.error.code}：执行失败，完整原因见结果详情。`, 'danger');
         } catch (error) {
           if (!current()) return;
           const rejected = error instanceof ApiError && (error.status === 400 || error.status === 422);
@@ -110,6 +115,7 @@ export function useMasRolloutRun(expId: string, executeWithSavedWorkflow: Return
     try {
       const data = await masApi.rolloutTrajectory(expId, runId, controller.signal);
       if (!mounted.current || token !== generation.current) return;
+      if (data.run.run_id !== runId) throw new Error('轨迹响应与本次运行身份不匹配，请重新读取。');
       setTrajectory(data);
       setAttempt(previous => previous && ({ ...previous, summary: data.run, status: data.run.status,
         endedAt: data.run.status === 'running' ? undefined : previous.endedAt ?? Date.now() }));
@@ -123,7 +129,7 @@ export function useMasRolloutRun(expId: string, executeWithSavedWorkflow: Return
     }
   }, [attempt?.summary?.run_id, expId]);
 
-  return { experimentId: expId, question, setQuestion, execution, setExecution, attempt, logs, start,
+  return { experimentId: expId, question, setQuestion, execution, attempt, logs, start,
     trajectory, trajectoryLoading, trajectoryError, readTrajectory,
     running: attempt?.status === 'saving' || attempt?.status === 'running' };
 }

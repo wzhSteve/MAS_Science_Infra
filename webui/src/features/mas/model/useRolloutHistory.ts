@@ -51,6 +51,7 @@ export function useRolloutHistory(experimentId: string) {
     contextRequest.current = controller;
     try {
       const result = await masApi.rolloutContext(experimentId, runId, controller.signal);
+      if (!controller.signal.aborted && result.run.run_id !== runId) throw new Error('返回的历史记录身份不匹配。');
       if (!controller.signal.aborted) setContext(result);
     } catch (reason) {
       if (!controller.signal.aborted) setError(errorMessage(reason));
@@ -68,6 +69,7 @@ export function useRolloutHistory(experimentId: string) {
     try {
       const result = await masApi.rolloutTrajectory(experimentId, selectedId, controller.signal);
       if (controller.signal.aborted) return;
+      if (result.run.run_id !== selectedId) throw new Error('返回的轨迹与所选历史记录不匹配。');
       setTrajectory(result); setContext(result);
     } catch (reason) {
       if (!controller.signal.aborted) setTrajectoryError(errorMessage(reason));

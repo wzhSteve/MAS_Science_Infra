@@ -1,0 +1,44 @@
+@layer components {
+  .experiment-settings-panel { right: 14px; width: 488px; max-width: calc(100% - 28px); }
+  .experiment-settings-tabs { display: flex; flex: none; gap: 3px; overflow-x: auto; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); scrollbar-width: thin; }
+  .experiment-settings-tabs > button { flex: 1 0 auto; border: 0; border-radius: 5px; padding: 7px 8px; background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
+  .experiment-settings-tabs > button[aria-selected="true"] { background: var(--accent-subtle); color: var(--accent); font-weight: 600; }
+  .experiment-settings-tabs > button:hover { background: var(--surface-subtle); }
+  .experiment-settings-body { display: flex; flex-direction: column; gap: 16px; }
+  .experiment-settings-body > * { flex-shrink: 0; min-width: 0; }
+  .experiment-settings-intro { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--text-secondary); }
+  .experiment-settings-status { flex: none; white-space: nowrap; padding: 2px 6px; border-radius: 4px; background: var(--warning-subtle); color: var(--warning); font-size: 10px; }
+  .experiment-settings-body .ui-section { padding: 15px; border-radius: 7px; }
+  .experiment-settings-body .section-header { gap: 8px; margin-bottom: 14px; }
+  .experiment-settings-body .section-header h2 { font-size: 12px; }
+  .experiment-settings-body .section-description, .experiment-settings-body .field-hint { font-size: 11px; }
+  .experiment-settings-body .form-grid { gap: 14px 12px; }
+  .experiment-settings-body .form-field > label { font-size: 12px; overflow-wrap: anywhere; }
+  .experiment-settings-body .ui-input, .experiment-settings-body .checkbox-label { font-size: 12px; }
+  .experiment-settings-body .action-bar { gap: 7px; margin-top: 16px; }
+  .experiment-settings-body .page-stack { gap: 16px; }
+  .experiment-settings-body .settings-embedded > div:not([hidden]) + div:not([hidden]) { margin-top: 0; }
+  .experiment-settings-body .ui-section > .field-hint + .form-field { margin-top: 12px; }
+  .experiment-settings-facts { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 7px 12px; margin: 12px 0; font-size: 11px; }
+  .experiment-settings-facts dt { color: var(--text-secondary); }
+  .experiment-settings-facts dd { margin: 0; overflow-wrap: anywhere; }
+  .experiment-settings-body details > summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; }
+  .experiment-settings-logs > summary { padding: 8px 0; }
+  .experiment-settings-body .log-pre { max-height: 240px; font-size: 11px; }
+  .experiment-settings-view-switch { display: flex; gap: 4px; padding: 3px; background: var(--surface-subtle); border-radius: 6px; }
+  .experiment-settings-view-switch > button { flex: 1; border: 0; background: transparent; border-radius: 4px; padding: 6px 10px; font-size: 12px; color: var(--text-secondary); }
+  .experiment-settings-view-switch > button[aria-pressed="true"] { background: var(--surface); color: var(--text-primary); }
+  @media (max-width: 1150px) {
+    .mas-workflow-bar .mas-workflow-label { display: none; }
+    .mas-workflow-bar .mas-workflow-identity { flex-wrap: wrap; gap: 5px; }
+  }
+  @media (max-width: 959px) {
+    .mas-workflow-bar { flex-wrap: wrap; gap: 8px; }
+    .mas-workflow-actions { flex-wrap: wrap; }
+  }
+  @media (max-width: 767px) {
+    .experiment-settings-panel { left: 10px; right: 10px; width: auto; max-width: none; }
+    .experiment-settings-tabs > button { min-height: 38px; }
+    .experiment-settings-body .form-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+}

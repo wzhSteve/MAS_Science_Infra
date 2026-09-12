@@ -32,7 +32,7 @@ export function RolloutExport({ experimentId, runId }: { experimentId: string; r
   };
   return <div className="mas-rollout-export">
     <Button size="sm" variant="ghost" loading={loading} disabled={loading} onClick={() => void download()}>
-      <Download size={14} />导出记录
+      <Download size={14} />下载完整 JSON
     </Button>
     <span className="field-hint">包含本次任务、Prompt 和工具返回，不含传输凭据。</span>
     {error && <InlineNotice tone="danger">{error}</InlineNotice>}

@@ -1,32 +1,23 @@
-import { memo, type ComponentProps } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import type { Bundle, MetaResponse } from '../../shared/api/types';
 import { ExperimentPanel } from '../../pages/Experiment';
-import { LLMPanel } from '../../pages/LLM';
 import { MASPanel } from '../../pages/MAS';
-import { RLPanel } from '../../pages/RL';
-import { HarnessPanel } from '../../pages/Harness';
 import { MonitorPanel } from '../../pages/Monitor';
-import { RlQuickSettings } from '../../features/rl/components/RlQuickSettings';
-import { normalizeRlPayload } from '../../features/rl/model/normalizeRlPayload';
-import { useAgl, useMonitor, useRuntimeCommands, useTraining } from '../providers/RuntimeProvider';
-import { NAVIGATION, type PanelId } from '../navigation';
+import { useAgl, useMonitor, useTraining } from '../providers/RuntimeProvider';
+import { isCanvasPanel, type PanelId } from '../navigation';
 
-const renderRlSettings = (props: ComponentProps<typeof RlQuickSettings>) => <RlQuickSettings {...props} />;
 const Experiment = memo(ExperimentPanel);
-const Llm = memo(LLMPanel);
 const Mas = memo(MASPanel);
-const Harness = memo(HarnessPanel);
 
-const RlConnection = memo(function RlConnection({ bundle, meta, onReload }: {
-  bundle: Bundle; meta: MetaResponse | null; onReload: () => Promise<void>;
+function RetainedPanel({ active, id, label, children }: {
+  active: boolean; id: PanelId; label: string; children: ReactNode;
 }) {
-  const { data, refresh } = useTraining();
-  const agl = useAgl();
-  const { startTrain, stopTrain } = useRuntimeCommands();
-  return <RLPanel expId={bundle.id} bundle={bundle} meta={meta} onReload={onReload}
-    trainRunId={data?.runId ?? null} trainRunning={data?.running ?? false} trainLog={data?.log ?? ''}
-    aglOnline={!!agl.data?.ok && !agl.error} onStartTrain={startTrain} onStopTrain={stopTrain} onRefreshLog={refresh} />;
-});
+  const [visited, setVisited] = useState(active);
+  useEffect(() => { if (active) setVisited(true); }, [active]);
+  return <div id={`panel-${id}`} hidden={!active} role="region" aria-label={`${label} 面板`}>
+    {(active || visited) && children}
+  </div>;
+}
 
 const MonitorConnection = memo(function MonitorConnection({ expId, visible }: { expId: string; visible: boolean }) {
   const { data, refresh } = useTraining();
@@ -38,19 +29,22 @@ const MonitorConnection = memo(function MonitorConnection({ expId, visible }: { 
     aglOnline={!!agl.data?.ok && !agl.error} onRefreshLog={refresh} />;
 });
 
-export const WorkspacePanels = memo(function WorkspacePanels({ active, bundle, meta, onReload, setExpId, onConfigureModel }: {
-  active: PanelId; bundle: Bundle; meta: MetaResponse | null; onReload: () => Promise<void>; setExpId: (id: string) => void;
-  onConfigureModel: () => void;
+export const WorkspacePanels = memo(function WorkspacePanels({ active, visible, bundle, meta, onReload, setExpId, onWorkspace }: {
+  active: PanelId; visible: boolean; bundle: Bundle; meta: MetaResponse | null; onReload: () => Promise<void>; setExpId: (id: string) => void;
+  onWorkspace: () => void;
 }) {
   const common = { expId: bundle.id, bundle, onReload };
-  return <div className={`workspace-content${active === 'mas' ? ' workspace-content--mas' : ''}`} id="workspace-content" tabIndex={-1}>
-    {NAVIGATION.map(({ id, label }) => <div key={id} id={`panel-${id}`} hidden={active !== id} role="region" aria-label={`${label} 面板`}>
-      {id === 'experiment' && <Experiment {...common} setExpId={setExpId} />}
-      {id === 'llm' && <Llm {...common} />}
-      {id === 'mas' && <Mas key={bundle.id} {...common} active={active === 'mas'} onConfigureModel={onConfigureModel} renderRlSettings={renderRlSettings} normalizeRl={normalizeRlPayload} />}
-      {id === 'rl' && <RlConnection bundle={bundle} meta={meta} onReload={onReload} />}
-      {id === 'harness' && <Harness {...common} meta={meta} />}
-      {id === 'monitor' && <MonitorConnection expId={bundle.id} visible={active === 'monitor'} />}
-    </div>)}
+  const canvas = isCanvasPanel(active);
+  const requestedSettings = active === 'llm' ? 'model' : active === 'rl' ? 'training' : active === 'harness' ? 'diagnostics' : null;
+  return <div className={`workspace-content${canvas ? ' workspace-content--mas' : ''}`} id="workspace-content" tabIndex={-1}>
+    <RetainedPanel id="mas" label="MAS" active={visible && canvas}>
+      <Mas key={bundle.id} {...common} meta={meta} active={visible && canvas} requestedSettings={requestedSettings} onWorkspace={onWorkspace} />
+    </RetainedPanel>
+    <RetainedPanel id="experiment" label="实验配置" active={visible && active === 'experiment'}>
+      <Experiment {...common} setExpId={setExpId} />
+    </RetainedPanel>
+    <RetainedPanel id="monitor" label="实验监控" active={visible && active === 'monitor'}>
+      <MonitorConnection expId={bundle.id} visible={visible && active === 'monitor'} />
+    </RetainedPanel>
   </div>;
 });

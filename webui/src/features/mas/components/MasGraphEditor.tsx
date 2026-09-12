@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { ReactFlowProvider, useReactFlow, type Connection, type XYPosition, type ReactFlowProps } from '@xyflow/react';
 import { AlertCircle, X } from 'lucide-react';
 import type { Palette, WorkflowSpec } from '../../../shared/api/types';
-import type { Notice } from '../../../shared/components/InlineNotice';
 import type { EditorPanel, GraphNode, GraphEdge, TraceFocusRequest } from '../types';
 import { executableInfo } from '../model/workflowGraph';
 import { edgeConnection } from '../model/edgeRules';
@@ -13,7 +12,6 @@ import { GraphPalette, type LibraryTab } from './GraphPalette';
 import { GraphCanvas } from './GraphCanvas';
 import { NodeInspector } from './NodeInspector';
 import { EdgeInspector } from './EdgeInspector';
-import { WorkflowSettings } from './WorkflowSettings';
 import { ConnectionPicker } from './ConnectionPicker';
 import { GraphInteractionContext } from './GraphInteractionContext';
 
@@ -26,13 +24,11 @@ type Props = {
   onPanelChange: (panel: EditorPanel) => void;
   libraryOpen: boolean;
   onLibraryOpenChange: (open: boolean) => void;
-  rlDirty: boolean;
-  rlNotice: Notice | null;
-  rlSettings: ReactNode;
+  settingsContent: ReactNode;
   traceFocus?: TraceFocusRequest | null;
 };
 
-function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelChange, libraryOpen, onLibraryOpenChange, rlDirty, rlNotice, rlSettings, traceFocus }: Props) {
+function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelChange, libraryOpen, onLibraryOpenChange, settingsContent, traceFocus }: Props) {
   const graph = useGraphEditor(workflow, onChange, palette);
   const flow = useReactFlow<GraphNode, GraphEdge>();
   const root = useRef<HTMLDivElement>(null);
@@ -61,13 +57,13 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
 
   const closePanels = useCallback(() => {
     onPanelChange(null);
-    graph.select(null);
+    if (panel !== 'settings') graph.select(null);
     setConnection(null);
-  }, [onPanelChange, graph.select]);
+  }, [onPanelChange, graph.select, panel]);
 
   useEffect(() => {
-    if (panel) { graph.select(null); setConnection(null); }
-  }, [panel, graph.select]);
+    if (panel) setConnection(null);
+  }, [panel]);
 
   useEffect(() => { setConnection(null); }, [workflow]);
 
@@ -254,8 +250,8 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
         graph.applyTemplate(template); onPanelChange(null); setConnection(null);
         requestAnimationFrame(() => void flow.fitView({ padding: 0.25, maxZoom: 1 }));
       }} />}
-    {panel === 'settings' ? <WorkflowSettings workflow={workflow} rlDirty={rlDirty} rlNotice={rlNotice} rlSettings={rlSettings} onClose={closePanels} />
-      : panel === null && graph.selected ? <NodeInspector selected={graph.selected} palette={palette} entryId={workflow.entry_agent || 'hub'}
+    {settingsContent}
+    {panel === null && graph.selected ? <NodeInspector selected={graph.selected} palette={palette} entryId={workflow.entry_agent || 'hub'}
         onPatch={graph.updateSelected} onEntry={graph.setEntry} onDelete={graph.deleteSelected} onClose={closePanels} />
       : panel === null && selectedEdge ? <EdgeInspector key={selectedEdge.id} edge={selectedEdge} nodes={graph.nodes}
         rules={graph.rules} topology={workflow.topology}

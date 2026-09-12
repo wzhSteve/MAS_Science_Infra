@@ -21,8 +21,8 @@ export const RlTrainingActions = memo(function RlTrainingActions({ trainRunId, t
     actions={<StatusBadge tone={trainRunning ? 'info' : 'neutral'}>{trainRunning ? 'running' : 'idle'}</StatusBadge>}>
     {trainRunId && <p className="field-hint">run=<span className="mono break-all">{trainRunId}</span></p>}
     <ActionBar>
-      <Button variant="primary" loading={pending === 'start'} disabled={trainRunning || pending !== null} onClick={onStart}>一键启动训练</Button>
-      <Button variant="danger" loading={stop.pending !== null} onClick={() => { void stop.run('stop', onStop); }}>一键中断训练</Button>
+      <Button variant="primary" loading={pending === 'start'} disabled={trainRunning || pending !== null} onClick={onStart}>保存训练配置并确认启动</Button>
+      <Button variant="danger" loading={stop.pending !== null} onClick={() => { void stop.run('stop', onStop); }}>停止训练</Button>
       {aglOnline ? <a className="ui-button ui-button--secondary ui-button--md" href="/agl/metrics" target="_blank" rel="noreferrer">打开 AGL Metrics</a> :
         <Button disabled aria-describedby="rl-metrics-unavailable">Metrics 未就绪</Button>}
     </ActionBar>

@@ -10,11 +10,15 @@ import { PageHeader } from '../../../shared/components/PageHeader';
 import { Section } from '../../../shared/components/Section';
 import { StatusBadge } from '../../../shared/components/StatusBadge';
 import { useAction } from '../../../shared/hooks/useAction';
+import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
 import { Button } from '../../../shared/ui/button';
 import { Input } from '../../../shared/ui/input';
 import { Select } from '../../../shared/ui/select';
 
-type Props = { expId: string; bundle: Bundle | null; onReload: () => void };
+type Props = {
+  expId: string; bundle: Bundle | null; onReload: () => void;
+  embedded?: boolean; view?: 'connection' | 'environment'; onConfigureModel?: () => void;
+};
 
 const probeLabels: Record<HealthResponse['status'], string> = {
   reachable: '模型列表可访问',
@@ -42,7 +46,7 @@ export function LLMPanel(props: Props) {
   return <LlmSettings key={props.expId} {...props} bundle={props.bundle} />;
 }
 
-function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
+function LlmSettings({ expId, bundle, onReload, embedded = false, view = 'connection', onConfigureModel }: Props & { bundle: Bundle }) {
   const [kind, setKind] = useState(String(bundle.llm.kind || 'api'));
   const [model, setModel] = useState(String(bundle.llm.model || ''));
   const [baseUrl, setBaseUrl] = useState(String(bundle.llm.base_url || ''));
@@ -53,6 +57,10 @@ function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
   const [probe, setProbe] = useState<{ result: HealthResponse; snapshot: ProbeSnapshot } | null>(null);
   const inputRevision = useRef(0);
   const keyRevision = useRef(0);
+  const editRevision = useRef(0);
+  const settings = { kind, model, base_url: baseUrl, model_path: modelPath, port, gpu_memory_utilization: gpuMem };
+  const [savedSettings, setSavedSettings] = useState(() => JSON.stringify(settings));
+  const dirty = JSON.stringify(settings) !== savedSettings || apiKey !== '';
   const health = probe?.result;
   const probeStale = Boolean(probe && (probe.snapshot.inputRevision !== inputRevision.current
     || probe.snapshot.kind !== kind || probe.snapshot.model !== model || probe.snapshot.baseUrl !== baseUrl
@@ -65,14 +73,14 @@ function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
     return () => { mounted.current = false; };
   }, []);
 
-  const save = async () => {
+  const persist = async () => {
     const submittedKeyRevision = keyRevision.current;
     const submitted = {
-      kind, model, base_url: baseUrl, model_path: modelPath, port,
-      gpu_memory_utilization: gpuMem, ...(apiKey ? { api_key: apiKey } : {}),
+      ...settings, ...(apiKey ? { api_key: apiKey } : {}),
     };
     await api.putSection(expId, 'llm', submitted);
     if (mounted.current) {
+      setSavedSettings(JSON.stringify(settings));
       if (keyRevision.current === submittedKeyRevision && apiKey) {
         inputRevision.current += 1;
         keyRevision.current += 1;
@@ -82,11 +90,27 @@ function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
     }
   };
 
-  return <div className="page-stack settings-page">
-    <PageHeader title="LLM" eyebrow="模型连接" description="配置模型端点，或管理当前实验的本地 vLLM 进程。" />
-    <Section title="连接配置">
+  const save = async () => {
+    const submittedRevision = editRevision.current;
+    const success = await run('save', async () => { await persist(); return '已保存 llm.yaml；未发起模型探测。'; });
+    return success && mounted.current && editRevision.current === submittedRevision;
+  };
+
+  useUnsavedChanges('llm-settings', {
+    label: 'LLM 配置', resource: 'llm',
+    dirty,
+    busy: pending !== null || stopAction.pending !== null, save,
+  });
+
+  return <div className={`page-stack ${embedded ? 'settings-embedded' : 'settings-page'}`}>
+    {!embedded && <PageHeader title="LLM" eyebrow="模型连接" description="配置模型端点，或管理当前实验的本地 vLLM 进程。" />}
+    <div hidden={view === 'environment'}>
+    <Section title={embedded ? '默认推理模型' : '连接配置'} actions={<StatusBadge tone={dirty ? 'warning' : 'neutral'}>
+      {pending === 'save' ? '保存中' : dirty ? '未保存' : '已保存配置'}
+    </StatusBadge>}>
+      {embedded && <p className="field-hint">所有 Agent 继承此连接。逐 Agent 独立模型暂未开放；训练模型由训练方案单独配置。</p>}
       <FormField label="模式">
-        <Select value={kind} onChange={(event) => { inputRevision.current += 1; setKind(event.target.value); }}>
+        <Select value={kind} onChange={(event) => { editRevision.current += 1; inputRevision.current += 1; setKind(event.target.value); }}>
           <option value="api">API（第三方 OpenAI-compat）</option>
           <option value="local">Local（一键启动 vLLM）</option>
           <option value="rl_endpoint">RL endpoint（训练时由 AGL 注入）</option>
@@ -96,13 +120,13 @@ function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
       {kind === 'local' && <InlineNotice tone="info">需要可用的模型服务及其算力。保存只更新配置，不自动启动本地服务；已有兼容服务可直接填写端点。</InlineNotice>}
       {kind === 'rl_endpoint' && <InlineNotice tone="warning">此模式由训练过程注入。独立真实运行请选择 API 或本地服务；示例模拟执行不受影响。</InlineNotice>}
       <div className="form-grid">
-        <FormField label="model"><Input value={model} onChange={(event) => { inputRevision.current += 1; setModel(event.target.value); }} /></FormField>
-        <FormField label="base_url"><Input value={baseUrl} onChange={(event) => { inputRevision.current += 1; setBaseUrl(event.target.value); }} /></FormField>
+        <FormField label="model"><Input value={model} onChange={(event) => { editRevision.current += 1; inputRevision.current += 1; setModel(event.target.value); }} /></FormField>
+        <FormField label="base_url"><Input value={baseUrl} onChange={(event) => { editRevision.current += 1; inputRevision.current += 1; setBaseUrl(event.target.value); }} /></FormField>
       </div>
       {kind !== 'rl_endpoint' && <div className="grid gap-2">
         <FormField label="API Key" hint="写入实验 .secrets.env，不会回显。留空保留已有密钥；保存后仅清空未再次编辑的输入。">
           <Input type="password" autoComplete="off" placeholder={bundle.llm.api_key_set ? '••••（已配置）' : '可选：无鉴权服务可留空'} value={apiKey}
-            onChange={(event) => { inputRevision.current += 1; keyRevision.current += 1; setApiKey(event.target.value); }} />
+            onChange={(event) => { editRevision.current += 1; inputRevision.current += 1; keyRevision.current += 1; setApiKey(event.target.value); }} />
         </FormField>
         <div><StatusBadge tone={bundle.llm.api_key_set ? 'success' : 'neutral'}>
           {bundle.llm.credential_source === 'experiment' ? '使用实验密钥'
@@ -111,14 +135,12 @@ function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
         </StatusBadge></div>
       </div>}
       {kind === 'local' && <div className="form-grid">
-        <FormField label="model_path"><Input value={modelPath} onChange={(event) => setModelPath(event.target.value)} /></FormField>
-        <FormField label="port"><Input type="number" value={port} onChange={(event) => setPort(Number(event.target.value))} /></FormField>
-        <FormField label="gpu_memory_utilization"><Input type="number" step="0.05" value={gpuMem} onChange={(event) => setGpuMem(Number(event.target.value))} /></FormField>
+        <FormField label="model_path"><Input value={modelPath} onChange={(event) => { editRevision.current += 1; setModelPath(event.target.value); }} /></FormField>
+        <FormField label="port"><Input type="number" value={port} onChange={(event) => { editRevision.current += 1; setPort(Number(event.target.value)); }} /></FormField>
+        <FormField label="gpu_memory_utilization"><Input type="number" step="0.05" value={gpuMem} onChange={(event) => { editRevision.current += 1; setGpuMem(Number(event.target.value)); }} /></FormField>
       </div>}
       <ActionBar>
-        <Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={() => {
-          void run('save', async () => { await save(); return '已保存 llm.yaml；未发起模型探测。'; });
-        }}>保存 llm.yaml</Button>
+        <Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={() => { void save(); }}>保存模型配置</Button>
         <Button loading={pending === 'health'} disabled={pending !== null || kind === 'rl_endpoint'} onClick={() => {
           void run('health', async () => {
             const snapshot = { kind, model, baseUrl, inputRevision: inputRevision.current, configRevision: bundle.llm.config_revision };
@@ -131,11 +153,13 @@ function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
         只请求 /models，不生成内容，不验证实际推理或工具调用。不支持模型列表不等于无法推理。</p>
       {notice && <InlineNotice tone={notice.tone}>{notice.message}</InlineNotice>}
     </Section>
-    {kind === 'local' && <Section title="本地进程" description="启动前先保存当前配置；保存失败不会启动。Train 与本地 vLLM 互斥。">
+    </div>
+    {(view === 'environment' || !embedded) && kind === 'local' && <Section title="本地模型服务" description="启动前先保存当前模型配置；保存失败不会启动。Train 与本地 vLLM 互斥。">
+      <p className="field-hint">模型：{model || '未填写'} · 端口：{port}{dirty ? ' · 模型配置尚未保存，启动会先保存当前草稿' : ''}</p>
       <ActionBar>
         <Button loading={pending === 'start'} disabled={pending !== null} onClick={() => {
           void run('start', async () => {
-            await save();
+            await persist();
             if (!mounted.current) return;
             const result = await api.llmStart(expId);
             if (mounted.current) onReload();
@@ -148,6 +172,12 @@ function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
       </ActionBar>
       {stopAction.notice && <InlineNotice tone={stopAction.notice.tone}>{stopAction.notice.message}</InlineNotice>}
     </Section>}
+    {view === 'environment' && kind !== 'local' && <Section title="推理环境">
+      <p className="field-hint">{kind === 'api' ? '当前使用远程 API 推理，无需本机 GPU 或训练进程。'
+        : '当前模型端点由训练过程注入，独立调试请选择 API 或已启动的本地模型服务。'}</p>
+      {onConfigureModel && <Button size="sm" onClick={onConfigureModel}>前往模型绑定</Button>}
+    </Section>}
+    <div hidden={view === 'environment'}>
     <Section title="连接探测结果" actions={<StatusBadge tone={!health ? 'neutral' : probeStale || health.status === 'unsupported' ? 'warning' : health.ok ? 'success' : 'danger'}>
       {!health ? '尚未探测' : probeStale ? '探测结果已过期' : probeLabels[health.status]}
     </StatusBadge>}>
@@ -164,5 +194,6 @@ function LlmSettings({ expId, bundle, onReload }: Props & { bundle: Bundle }) {
         }} label="查看探测详情（不含密钥）" />
       </>}
     </Section>
+    </div>
   </div>;
 }

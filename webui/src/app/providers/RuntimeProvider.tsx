@@ -11,6 +11,7 @@ import { useAction } from '../../shared/hooks/useAction';
 import { useTrainConfirmation } from '../../shared/ui/alert-dialog';
 import type { AglHealth, MonitorResponse } from '../../shared/api/types';
 import type { Notice } from '../../shared/components/InlineNotice';
+import { useUnsavedChanges } from '../../shared/hooks/useUnsavedChanges';
 
 interface RuntimeCommands {
   startTrain: () => Promise<void>;
@@ -37,18 +38,21 @@ export const useAgl = () => required(useContext(AglContext));
 export const useMonitor = () => required(useContext(MonitorContext));
 export const useRuntimeEvents = () => required(useContext(EventsContext));
 
-export function RuntimeProvider({ expId, onReload, children }: {
-  expId: string; onReload: () => Promise<void>; children: ReactNode;
+export function RuntimeProvider({ expId, onReload, active = true, children }: {
+  expId: string; onReload: () => Promise<void>; active?: boolean; children: ReactNode;
 }) {
-  const training = useTrainingRun(expId);
-  const agl = usePollingResource('agl', runtimeApi.aglHealth, 5000);
+  const training = useTrainingRun(expId, active);
+  const agl = usePollingResource('agl', runtimeApi.aglHealth, 5000, active);
   const monitorLoad = useCallback((signal: AbortSignal) => monitorApi.monitor(expId, signal), [expId]);
-  const monitor = usePollingResource(`monitor:${expId}`, monitorLoad, 4000);
-  const events = useExperimentEvents(expId, training.refresh, monitor.refresh);
+  const monitor = usePollingResource(`monitor:${expId}`, monitorLoad, 4000, active);
+  const events = useExperimentEvents(expId, training.refresh, monitor.refresh, active);
   const { run, pending, notice } = useAction();
   const stopAction = useAction();
   const { confirm, dialog } = useTrainConfirmation();
   const [status, setStatus] = useState('idle');
+  useUnsavedChanges('runtime-operation', {
+    label: '实验执行操作', resource: 'runtime', dirty: false, busy: pending !== null || stopAction.pending !== null,
+  });
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 

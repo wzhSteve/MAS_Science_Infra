@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../../api/client';
-import type { Bundle, CollectBody, CollectResponse, LlmConfig, Palette, RlConfig, WorkflowSpec } from '../../../shared/api/types';
+import type { Bundle, CollectBody, CollectResponse, LlmConfig, Palette, WorkflowSpec } from '../../../shared/api/types';
 import { errorMessage } from '../../../shared/api/http';
 import { useAction } from '../../../shared/hooks/useAction';
+import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
 import type { SampleDataInput, SampleDataResponse } from '../api';
 
 interface ConsoleRun {
@@ -34,18 +35,15 @@ function bindSavedModel(workflow: WorkflowSpec, llm: LlmConfig): WorkflowSpec {
   return JSON.stringify(workflow.llm) === JSON.stringify(binding) ? workflow : { ...workflow, llm: binding };
 }
 
-export function useMasDraft({ expId, bundle, onReload, normalizeRl }: {
+export function useMasDraft({ expId, bundle, onReload }: {
   expId: string;
   bundle: Bundle | null;
   onReload: () => void;
-  normalizeRl: (rl: RlConfig) => RlConfig;
 }) {
   const [workflow, setWorkflow] = useState<WorkflowSpec | null>(() =>
     bundle?.id === expId && bundle.workflow ? bindSavedModel(bundle.workflow, bundle.llm) : null);
-  const [rl, setRl] = useState<RlConfig>(() => structuredClone(bundle?.rl || {}));
   const [palette, setPalette] = useState<Palette>({});
   const [workflowDirty, setWorkflowDirty] = useState(false);
-  const [rlDirty, setRlDirty] = useState(false);
   const [paletteError, setPaletteError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
@@ -59,9 +57,7 @@ export function useMasDraft({ expId, bundle, onReload, normalizeRl }: {
   const savedLlm = useRef(bundle?.llm || {});
   if (bundle?.id === expId) savedLlm.current = bundle.llm;
   const workflowRef = useRef(workflow);
-  const rlRef = useRef(rl);
   const action = useAction();
-  const rlAction = useAction();
   const log = useCallback((message: string, tone: OperationLog['tone'] = 'neutral') => {
     const entry = { id: ++sequence.current, at: Date.now(), message, tone };
     setLogs(previous => [...previous.slice(-199), entry]);
@@ -90,14 +86,10 @@ export function useMasDraft({ expId, bundle, onReload, normalizeRl }: {
       }
       return;
     }
-    const nextRl = structuredClone(bundle.rl || {});
     const nextWorkflow = bindSavedModel(bundle.workflow, bundle.llm);
     setWorkflow(nextWorkflow);
     workflowRef.current = nextWorkflow;
-    setRl(nextRl);
-    rlRef.current = nextRl;
     setWorkflowDirty(false);
-    setRlDirty(false);
     synced.current = expId;
     syncedModelRevision.current = bundle.llm.config_revision;
   }, [expId, bundle]);
@@ -107,13 +99,6 @@ export function useMasDraft({ expId, bundle, onReload, normalizeRl }: {
     workflowRef.current = bound;
     setWorkflow(bound);
     setWorkflowDirty(true);
-  }, []);
-
-  const onRlPatch = useCallback((patch: Partial<RlConfig>) => {
-    const next = { ...rlRef.current, ...patch };
-    rlRef.current = next;
-    setRl(next);
-    setRlDirty(true);
   }, []);
 
   const saveWorkflow = useCallback(async () => {
@@ -137,13 +122,17 @@ export function useMasDraft({ expId, bundle, onReload, normalizeRl }: {
     }
   }, [expId, onReload]);
 
-  const save = useCallback(async () => {
-    await action.run('save', async () => {
-      await saveWorkflow();
+  const saveForNavigation = useCallback(async () => {
+    let currentSaved = false;
+    const success = await action.run('save', async () => {
+      const submitted = await saveWorkflow();
+      currentSaved = workflowRef.current === submitted;
       log('Workflow 已保存', 'success');
       return 'Workflow 已保存';
     });
+    return success && currentSaved;
   }, [action.run, saveWorkflow, log]);
+  const save = useCallback(async () => { await saveForNavigation(); }, [saveForNavigation]);
 
   const executeWithSavedWorkflow = useCallback((name: string, operation: {
     onSaving: (workflow: WorkflowSpec | null) => void;
@@ -160,21 +149,6 @@ export function useMasDraft({ expId, bundle, onReload, normalizeRl }: {
     }
     await operation.execute(submitted);
   }), [action.run, saveWorkflow]);
-
-  const saveRl = useCallback(async () => {
-    await rlAction.run('save-rl', async () => {
-      const submitted = rlRef.current;
-      const payload = normalizeRl(submitted);
-      await api.putSection(expId, 'rl', payload);
-      if (rlRef.current === submitted) {
-        rlRef.current = payload;
-        setRl(payload);
-        setRlDirty(false);
-      }
-      onReload();
-      return '训练配置已保存';
-    });
-  }, [expId, normalizeRl, onReload, rlAction.run]);
 
   const collect = useCallback(async (name: string, body: CollectBody) => {
     await action.run(name, async () => {
@@ -227,10 +201,13 @@ export function useMasDraft({ expId, bundle, onReload, normalizeRl }: {
     });
   }, [action.run, log]);
 
+  useUnsavedChanges('mas-workflow', {
+    label: 'Workflow 设计', resource: 'workflow', dirty: workflowDirty,
+    busy: savingWorkflow || (action.pending !== null && action.pending !== 'preview'), save: saveForNavigation,
+  });
   return {
-    workflow, rl, palette, workflowDirty, rlDirty, rows: lastResult?.data.rows || [], onWorkflowChange, onRlPatch,
-    save, saveRl, collect, preview, executeWithSavedWorkflow, pending: action.pending, notice: action.notice,
-    savingRl: Boolean(rlAction.pending), rlNotice: rlAction.notice,
+    workflow, palette, workflowDirty, rows: lastResult?.data.rows || [], onWorkflowChange,
+    save, collect, preview, executeWithSavedWorkflow, pending: action.pending, notice: action.notice,
     lastRun, lastResult, previewData, logs,
     paletteError, loadPalette, saveError, savingWorkflow,
     running: lastRun?.status === 'saving' || lastRun?.status === 'running',

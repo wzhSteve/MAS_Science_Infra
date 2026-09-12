@@ -5,12 +5,15 @@ import { rolloutStatusLabel } from '../model/useMasRolloutRun';
 import { Button } from '../../../shared/ui/button';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
 
-export function RolloutHistory({ history, currentRunId }: {
+export function RolloutHistory({ history, currentRunId, openRequest = 0, active = true }: {
   history: ReturnType<typeof useRolloutHistory>;
   currentRunId?: string;
+  openRequest?: number;
+  active?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  useEffect(() => { if (open) void history.load(); }, [open, currentRunId, history.load]);
+  useEffect(() => { if (openRequest > 0) setOpen(true); }, [openRequest]);
+  useEffect(() => { if (open && active) void history.load(); }, [open, active, currentRunId, history.load]);
   return <div className="mas-history">
     <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}><History size={14} />最近运行</Button>
     {history.selectedId && <Button size="sm" variant="ghost" onClick={() => void history.select(null)}>返回本页运行</Button>}

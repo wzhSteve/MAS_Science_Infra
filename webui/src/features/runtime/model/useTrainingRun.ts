@@ -4,7 +4,7 @@ import { usePollingResource } from '../../../shared/hooks/usePollingResource';
 
 export interface TrainingSnapshot { runId: string | null; running: boolean; log: string }
 
-export function useTrainingRun(expId: string) {
+export function useTrainingRun(expId: string, active = true) {
   const load = useCallback(async (signal: AbortSignal): Promise<TrainingSnapshot> => {
     const { runs } = await runtimeApi.runs(expId, signal);
     const trains = runs.filter(run => run.kind === 'train');
@@ -15,5 +15,5 @@ export function useTrainingRun(expId: string) {
     const detail = await runtimeApi.run(latest.run_id, signal);
     return { runId: latest.run_id, running: latest.running, log: detail.log_tail || '' };
   }, [expId]);
-  return usePollingResource(`training:${expId}`, load, 4000);
+  return usePollingResource(`training:${expId}`, load, 4000, active);
 }

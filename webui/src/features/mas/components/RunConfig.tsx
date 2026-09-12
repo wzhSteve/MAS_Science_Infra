@@ -7,6 +7,7 @@ import { Select } from '../../../shared/ui/select';
 import { FormField } from '../../../shared/components/FormField';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
 import type { ModelReadinessState } from '../model/useModelReadiness';
+import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
 
 export function RunConfig({ draft, executable, readiness }: {
   draft: ReturnType<typeof useMasDraft>;
@@ -20,6 +21,11 @@ export function RunConfig({ draft, executable, readiness }: {
   const [parquet, setParquet] = useState('data/val.parquet');
   const [source, setSource] = useState('gsm8k');
   const [algo, setAlgo] = useState('grpo');
+  useUnsavedChanges('collect-input', {
+    label: '采集输入设置', resource: 'collect-input',
+    dirty: input !== 'demo' || !mock || count !== '1' || dataCount !== '5'
+      || parquet !== 'data/val.parquet' || source !== 'gsm8k' || algo !== 'grpo',
+  });
   const amount = Number(input === 'demo' ? count : dataCount);
   const countError = Number.isInteger(amount) && amount > 0 ? undefined : '请输入大于零的整数。';
   const pathError = input === 'parquet' && !parquet.trim() ? '请输入服务端文件路径。' : undefined;

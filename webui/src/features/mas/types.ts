@@ -1,13 +1,5 @@
-import type { ReactNode } from 'react';
 import type { Edge, Node } from '@xyflow/react';
-import type { Config, RlConfig } from '../../shared/api/types';
-
-export type RlSettingsSlot = (args: {
-  rl: RlConfig;
-  onPatch: (patch: Partial<RlConfig>) => void;
-  onSave: () => void | Promise<void>;
-  saving?: boolean;
-}) => ReactNode;
+import type { Config } from '../../shared/api/types';
 
 export type GraphNodeData = Record<string, unknown> & {
   label?: string;

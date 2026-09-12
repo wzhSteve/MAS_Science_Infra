@@ -14,6 +14,7 @@ export function usePollingResource<T>(
   key: string,
   load: (signal: AbortSignal) => Promise<T>,
   interval?: number,
+  enabled = true,
 ): Resource<T> {
   const [snapshot, setSnapshot] = useState<Snapshot<T>>({ key, data: null, error: null, loading: true });
   const loadRef = useRef(load);
@@ -21,6 +22,7 @@ export function usePollingResource<T>(
   useLayoutEffect(() => { loadRef.current = load; }, [load]);
 
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     let running: Promise<void> | null = null;
     let queued = false;
@@ -63,7 +65,7 @@ export function usePollingResource<T>(
       clearInterval(timer);
       if (refreshRef.current === refresh) refreshRef.current = async () => {};
     };
-  }, [key, interval]);
+  }, [key, interval, enabled]);
 
   const refresh = useCallback(() => refreshRef.current(), []);
   const data = snapshot.key === key ? snapshot.data : null;

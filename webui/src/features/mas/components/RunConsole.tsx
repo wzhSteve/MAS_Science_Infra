@@ -1,7 +1,5 @@
-import { useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, CircleCheck, CircleAlert, LoaderCircle, Terminal, Settings2 } from 'lucide-react';
-import type { ScienceEvent } from '../../../shared/api/types';
-import { useRuntimeEvents } from '../../../app/providers/RuntimeProvider';
 import type { useMasDraft } from '../model/useMasDraft';
 import { Button } from '../../../shared/ui/button';
 import { DataTable } from '../../../shared/components/DataTable';
@@ -9,14 +7,16 @@ import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { RunConfig } from './RunConfig';
 import { ModelReadiness } from './ModelReadiness';
 import type { ModelReadinessState } from '../model/useModelReadiness';
-import { rolloutStatusLabel, type MasRolloutRun } from '../model/useMasRolloutRun';
-import { RolloutConfig, RolloutResults, RolloutLog } from './RolloutRun';
+import { rolloutStatusLabel, useMasRolloutRun } from '../model/useMasRolloutRun';
+import { RolloutConfig, RolloutResults } from './RolloutRun';
 import type { TrajectoryLocation } from '../model/trajectoryView';
+import { RunErrorDetails } from './RunErrorDetails';
+import { DownloadText } from '../../../shared/components/DownloadText';
 
-export type ConsoleTab = 'config' | 'results' | 'logs';
+export type ConsoleTab = 'config' | 'results';
 type Draft = ReturnType<typeof useMasDraft>;
 const tabs: Array<{ id: ConsoleTab; label: string }> = [
-  { id: 'config', label: '运行配置' }, { id: 'results', label: '结果' }, { id: 'logs', label: '日志' },
+  { id: 'config', label: '任务输入' }, { id: 'results', label: '答案与过程' },
 ];
 const clock = (at: number) => new Date(at).toLocaleTimeString('zh-CN', { hour12: false });
 
@@ -47,41 +47,16 @@ function RunResults({ draft }: { draft: Draft }) {
   </div>;
 }
 
-function eventDescription(event: ScienceEvent) {
-  const data = event.data || {};
-  if (data.state === 'done') return `采集完成 · ${data.n ?? '—'} 条 · 平均奖励 ${data.mean_reward ?? '—'}`;
-  if (typeof data.index === 'number' && typeof data.total === 'number') {
-    return `正在处理第 ${data.index + 1} / ${data.total} 题 · ${data.task_id ?? ''}`;
-  }
-  if (data.state === 'running') return `采集开始 · ${data.n_tasks ?? '—'} 题 · ${data.mock ? '模拟执行' : '真实模型'}`;
-  return JSON.stringify(data);
+function RetainedContent({ active, children }: { active: boolean; children: ReactNode }) {
+  const [visited, setVisited] = useState(active);
+  useEffect(() => { if (active) setVisited(true); }, [active]);
+  return <div hidden={!active}>{(active || visited) && children}</div>;
 }
 
-function RunLog({ draft }: { draft: Draft }) {
-  const events = useRuntimeEvents();
-  return <div className="mas-run-log">
-    <section>
-      <h3>Workflow 保存与数据集采集操作记录</h3>
-      {!draft.logs.length ? <p className="mas-console-empty">尚无操作记录。</p>
-        : <ol>{draft.logs.map((entry) => <li key={entry.id} className={`is-${entry.tone}`}>
-          <time>{clock(entry.at)}</time><span>{entry.message}</span>
-        </li>)}</ol>}
-    </section>
-    <section>
-      <h3>实验采集事件 <span>{events.connected ? '已连接' : '未连接'}</span></h3>
-      <p className="field-hint">来自当前实验的后端事件，可能包含其他页面发起的采集，不作为本次运行的完成依据。</p>
-      {events.error && <InlineNotice tone="warning">进度暂不可用：{events.error}。运行结果仍以请求返回为准。</InlineNotice>}
-      {!events.collectEvents.length ? <p className="mas-console-empty">暂无后端采集事件。</p>
-        : <ol>{events.collectEvents.map((event, index) => <li key={`${event.ts}-${index}`}>
-          <time>{event.ts ? clock(event.ts * 1000) : '—'}</time><span>{eventDescription(event)}</span>
-        </li>)}</ol>}
-    </section>
-  </div>;
-}
-
-export function RunConsole({ draft, rollout, open, onOpenChange, tab, onTabChange, executable, readiness, onConfigureModel, onLocate }: {
+export const RunConsole = memo(function RunConsole({ draft, experimentId, active, open, onOpenChange, tab, onTabChange, executable, readiness, onConfigureModel, onLocate, mode, onModeChange, historyRequest }: {
   draft: Draft;
-  rollout: MasRolloutRun;
+  experimentId: string;
+  active: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tab: ConsoleTab;
@@ -90,12 +65,27 @@ export function RunConsole({ draft, rollout, open, onOpenChange, tab, onTabChang
   readiness: ModelReadinessState;
   onConfigureModel: () => void;
   onLocate: (target: TrajectoryLocation) => void;
+  mode: 'rollout' | 'collect' | 'demo';
+  onModeChange: (mode: 'rollout' | 'collect' | 'demo') => void;
+  historyRequest?: number;
 }) {
   const root = useRef<HTMLElement>(null);
   const drag = useRef<{ y: number; height: number; parentHeight: number } | null>(null);
   const [height, setHeight] = useState(36);
-  const [mode, setMode] = useState<'rollout' | 'collect'>('rollout');
-  const single = mode === 'rollout';
+  const live = useMasRolloutRun(experimentId, draft.executeWithSavedWorkflow, 'live');
+  const demo = useMasRolloutRun(experimentId, draft.executeWithSavedWorkflow, 'mock');
+  const rollout = mode === 'demo' ? demo : live;
+  const [currentRequest, setCurrentRequest] = useState(0);
+  const showResults = useCallback(() => {
+    setCurrentRequest(value => value + 1);
+    onTabChange('results');
+  }, [onTabChange]);
+  const showInput = useCallback(() => onTabChange('config'), [onTabChange]);
+  const single = mode !== 'collect';
+  const logs = single ? rollout.logs : draft.logs;
+  const logText = useMemo(() => logs.map(entry => `${new Date(entry.at).toISOString()} [${entry.tone}] ${entry.message}`).join('\n'), [logs]);
+  const visible = active && open;
+  const label = mode === 'demo' ? '模拟演示 · Mock' : mode === 'collect' ? '数据集采集' : '真实调试';
   const clampHeight = (value: number) => Math.min(65, Math.max(22, value));
   const run = draft.lastRun;
   const result = draft.lastResult;
@@ -106,10 +96,9 @@ export function RunConsole({ draft, rollout, open, onOpenChange, tab, onTabChang
   const failed = single ? ['failed', 'interrupted', 'unknown'].includes(rollout.attempt?.status || '') : run?.status === 'failed';
   const hasRun = single ? Boolean(rollout.attempt) : Boolean(run);
   const StatusIcon = running ? LoaderCircle : failed ? CircleAlert : CircleCheck;
-  const workflowChanged = Boolean(rollout.attempt && rollout.attempt.workflow !== draft.workflow);
 
   return <section ref={root} className={`mas-run-console${open ? ' is-open' : ''}`}
-    style={{ '--console-height': `${height}%` } as CSSProperties} aria-label="运行控制台">
+    style={{ '--console-height': `${height}%` } as CSSProperties} aria-label={label}>
     {open && <div className="mas-console-resize" role="separator" tabIndex={0} aria-orientation="horizontal"
       aria-label="调整控制台高度" aria-valuenow={Math.round(height)} aria-valuemin={22} aria-valuemax={65}
       onPointerDown={(event) => {
@@ -132,21 +121,27 @@ export function RunConsole({ draft, rollout, open, onOpenChange, tab, onTabChang
       }} />}
     <div className="mas-console-header">
       <button type="button" className="mas-console-toggle" aria-expanded={open} aria-controls="mas-console-content" onClick={() => onOpenChange(!open)}>
-        {open ? <ChevronDown size={14} /> : <ChevronUp size={14} />}<Terminal size={14} /><strong>运行控制台</strong>
+        {open ? <ChevronDown size={14} /> : <ChevronUp size={14} />}<Terminal size={14} /><strong>{label}</strong>
       </button>
       <span className={`mas-console-summary${failed ? ' is-error' : ''}`} role="status">
         {hasRun && <StatusIcon size={13} className={running ? 'animate-spin' : undefined} aria-hidden="true" />}
-        {single ? '单次 Rollout' : '数据集采集'} · {summary}
-        {single && draft.running ? ' · 数据集采集中' : !single && rollout.running ? ' · 单次 Rollout 运行中' : ''}
+        {summary}
+        {single && draft.running ? ' · 数据集采集中' : mode !== 'rollout' && live.running ? ' · 真实调试执行中' : mode !== 'demo' && demo.running ? ' · 模拟演示执行中' : ''}
       </span>
       <Button size="sm" variant="ghost" aria-label="打开运行配置" title="运行配置"
         onClick={() => { onOpenChange(true); onTabChange('config'); }}><Settings2 size={14} /></Button>
     </div>
     <div id="mas-console-content" className="mas-console-content" hidden={!open}>
-      <div className="mas-console-modes" role="group" aria-label="运行用途">
-        <button type="button" aria-pressed={single} onClick={() => setMode('rollout')}>单次 Rollout</button>
-        <button type="button" aria-pressed={!single} onClick={() => setMode('collect')}>数据集采集</button>
-      </div>
+      {mode !== 'rollout' && <div className="debug-mode-banner">
+        <span>{mode === 'demo' ? '独立演示入口，不产生真实模型结果。' : '独立采集入口；参数、奖励与单题调试分开。'}</span>
+        <Button size="sm" variant="ghost" onClick={() => onModeChange('rollout')}>返回真实调试</Button>
+      </div>}
+      {single && rollout.attempt && <div className="debug-current-attempt" role="status">
+        <strong>本次{rollout.execution === 'live' ? '真实调试' : '模拟演示'}：{rolloutStatusLabel[rollout.attempt.status]}</strong>
+        <time>{new Date(rollout.attempt.startedAt).toLocaleTimeString()}</time>
+        <code>{rollout.attempt.summary?.run_id || (rollout.running ? '等待服务端返回 Run ID' : '未取得 Run ID')}</code>
+        <Button size="sm" variant="ghost" onClick={showResults}>查看本次结果</Button>
+      </div>}
       <div className="mas-console-tabs" role="tablist" aria-label="控制台内容">
         {tabs.map(({ id, label }, index) => <button key={id} type="button" role="tab" id={`mas-console-tab-${id}`}
           aria-controls={`mas-console-panel-${id}`} aria-selected={tab === id} tabIndex={tab === id ? 0 : -1}
@@ -161,29 +156,40 @@ export function RunConsole({ draft, rollout, open, onOpenChange, tab, onTabChang
           {label}{id === 'results' && !single && result && <span className="mas-tab-count">{result.data.n}</span>}
         </button>)}
         {single && rollout.attempt && <span className="mas-run-version">
-          {rollout.attempt.execution === 'mock' ? 'Mock' : 'Live'} · 已捕获 Workflow{workflowChanged ? ' · 草稿有新编辑' : ''}
+          {rollout.attempt.execution === 'mock' ? 'Mock' : 'Live'} · 已捕获 Workflow{rollout.attempt.workflow !== draft.workflow ? ' · 草稿有新编辑' : ''}
         </span>}
         {!single && run && <span className="mas-run-version">{run.mock ? '模拟' : '真实'} · {run.input === 'parquet' ? '数据集' : '示例'}
           {run.workflow !== draft.workflow ? ' · 草稿有新编辑' : ''}</span>}
       </div>
-      {!single && run?.status === 'failed' && <div className="mas-console-error"><InlineNotice tone="danger">{run.error}</InlineNotice></div>}
-      {single && rollout.attempt?.error && tab !== 'results' && <div className="mas-console-error">
-        <InlineNotice tone={rollout.attempt.status === 'unknown' ? 'warning' : 'danger'}>{rollout.attempt.error}</InlineNotice>
-      </div>}
+      {!single && run?.status === 'failed' && <div className="mas-console-error"><RunErrorDetails message={run.error || '未返回错误详情'} label="数据集采集失败" /></div>}
       {running && <p className="mas-run-hint">本次使用启动时保存的 Workflow，新编辑不会自动加入本次运行。</p>}
       <div className="mas-console-body" role="tabpanel" id="mas-console-panel-config" aria-labelledby="mas-console-tab-config" hidden={tab !== 'config'}>
-        <ModelReadiness readiness={readiness} onConfigureModel={onConfigureModel} />
-        <div hidden={!single}><RolloutConfig rollout={rollout} pending={Boolean(draft.pending)} executable={executable}
-          readiness={readiness} onShowResults={() => onTabChange('results')} /></div>
-        <div hidden={single}><RunConfig draft={draft} executable={executable} readiness={readiness} /></div>
+        {visible && tab === 'config' && mode === 'rollout' && <ModelReadiness readiness={readiness} onConfigureModel={onConfigureModel} />}
+        {visible && tab === 'config' && !single && <Button size="sm" variant="ghost" onClick={onConfigureModel}>配置采集模型</Button>}
+        {visible && tab === 'config' && single && <RolloutConfig rollout={rollout} pending={Boolean(draft.pending)} executable={executable}
+          readiness={readiness} onShowResults={showResults} />}
+        <RetainedContent active={visible && tab === 'config' && !single}>
+          <RunConfig draft={draft} executable={executable} readiness={readiness} />
+        </RetainedContent>
       </div>
       <div className="mas-console-body" role="tabpanel" id="mas-console-panel-results" aria-labelledby="mas-console-tab-results" hidden={tab !== 'results'}>
-        {single ? <RolloutResults rollout={rollout} workflowChanged={workflowChanged} workflow={draft.workflow}
-          onLocate={onLocate} onUseQuestion={() => onTabChange('config')} /> : <RunResults draft={draft} />}
-      </div>
-      <div className="mas-console-body" role="tabpanel" id="mas-console-panel-logs" aria-labelledby="mas-console-tab-logs" hidden={tab !== 'logs'}>
-        {single ? <RolloutLog rollout={rollout} /> : <RunLog draft={draft} />}
+        <RetainedContent active={visible && tab === 'results' && mode === 'rollout'}>
+          <RolloutResults rollout={live} workflowChanged={Boolean(live.attempt && live.attempt.workflow !== draft.workflow)}
+            workflow={draft.workflow} historyRequest={historyRequest} currentRequest={currentRequest} active={visible && tab === 'results' && mode === 'rollout'}
+            onLocate={onLocate} onUseQuestion={showInput} />
+        </RetainedContent>
+        <RetainedContent active={visible && tab === 'results' && mode === 'demo'}>
+          <RolloutResults rollout={demo} workflowChanged={Boolean(demo.attempt && demo.attempt.workflow !== draft.workflow)}
+            workflow={draft.workflow} currentRequest={currentRequest} active={visible && tab === 'results' && mode === 'demo'}
+            onLocate={onLocate} onUseQuestion={showInput} />
+        </RetainedContent>
+        {visible && tab === 'results' && !single && <RunResults draft={draft} />}
+        {visible && tab === 'results' && logs.length > 0 && <div className="debug-log-download">
+          <DownloadText text={logText} filename={`${single ? rollout.attempt?.summary?.run_id || mode : 'collect'}-operations.log`}
+            label="下载本页操作日志" />
+          <span className="field-hint">保存和请求状态仅供排错；模型及工具原文见完整 JSON。</span>
+        </div>}
       </div>
     </div>
   </section>;
-}
+});
