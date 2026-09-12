@@ -7,7 +7,10 @@ Hub ReAct is the default Runtime. Topology Compiler walks graph agents
 from .archive import Archive, dump_resume_with_archive, load_resume_messages
 from .collector import Collector, collect_with_mock, default_reward_fn
 from .compiler import compile_spec, trainable_agents
-from .contracts import ArchiveRef, BranchPoint, MemoryItem, Snapshot, Trajectory, TrajectoryBatch
+from .contracts import (
+    AgentExecutionContext, ArchiveRef, BranchPoint, ExecutionRecorder, MemoryItem,
+    ModelCapabilities, ModelIdentity, Snapshot, SnapshotCoverage, Trajectory, TrajectoryBatch,
+)
 from .harness import HARNESS, Hypothesis, default_harness
 from .memory import MemoryStore
 from .plugins import REGISTRY, SkillResult
@@ -16,6 +19,11 @@ from .spec import MASSpec, load_spec
 from .train_signal import AdvantageSpec, LossSpec, TrainSignal, batch_to_train_signal
 
 __all__ = [
+    "AgentExecutionContext",
+    "ExecutionRecorder",
+    "ModelCapabilities",
+    "ModelIdentity",
+    "SnapshotCoverage",
     "AdvantageSpec",
     "Archive",
     "ArchiveRef",

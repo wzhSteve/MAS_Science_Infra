@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from science_infra.control.events import BUS, format_sse
 from science_infra.control.experiments import (
@@ -26,6 +26,8 @@ from science_infra.control.experiments import (
 from science_infra.control.paths import webui_dist
 from science_infra.control.process_manager import PROCS
 from science_infra.control import services
+from science_infra.control.readiness import model_readiness
+from science_infra.control import rollout_runs
 
 
 class CreateExperimentBody(BaseModel):
@@ -67,7 +69,31 @@ class TrainBody(BaseModel):
 
 class LlmHealthBody(BaseModel):
     base_url: Optional[str] = None
-    api_key: Optional[str] = None
+    api_key: Optional[str] = Field(default=None, repr=False)
+    model: Optional[str] = None
+    kind: Optional[str] = None
+
+
+class RolloutTaskBody(BaseModel):
+    id: Optional[str] = None
+    question: str = Field(min_length=1)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("question")
+    @classmethod
+    def nonblank_question(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("请输入希望 Workflow 完成的任务。")
+        return value
+
+
+class RolloutRunBody(BaseModel):
+    workflow: Dict[str, Any]
+    task: RolloutTaskBody
+    execution: Literal["mock", "live"]
+
+    model_config = {"extra": "forbid"}
 
 
 def create_app() -> FastAPI:
@@ -201,10 +227,19 @@ def create_app() -> FastAPI:
 
     @app.post("/api/llm/health")
     async def llm_health(body: LlmHealthBody, experiment_id: str = Query("demo")) -> Dict[str, Any]:
-        base = body.base_url
-        if not base:
-            base = str(load_bundle(experiment_id)["llm"].get("base_url") or "")
-        return await services.llm_health(base, body.api_key)
+        try:
+            return await services.llm_health(
+                body.base_url, body.api_key, experiment_id=experiment_id, model=body.model, kind=body.kind,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/mas/readiness")
+    def mas_readiness(experiment_id: str = Query("demo")) -> Dict[str, Any]:
+        try:
+            return model_readiness(experiment_id)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
 
     @app.post("/api/llm/start")
     def llm_start(experiment_id: str = Query("demo")) -> Dict[str, Any]:
@@ -248,6 +283,108 @@ def create_app() -> FastAPI:
             )
         except Exception as e:
             raise HTTPException(400, str(e)) from e
+
+    @app.post("/api/mas/rollout-runs", response_model=rollout_runs.RolloutRunSummary)
+    def mas_rollout(body: RolloutRunBody, experiment_id: str = Query("demo")) -> rollout_runs.RolloutRunSummary:
+        try:
+            return rollout_runs.run_rollout(
+                experiment_id, body.workflow, body.task.model_dump(exclude_none=True), body.execution,
+            )
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except rollout_runs.RolloutStorageError as error:
+            raise HTTPException(500, str(error)) from error
+
+    @app.get("/api/mas/rollout-runs")
+    def mas_rollout_list(experiment_id: str = Query("demo"), cursor: Optional[str] = None,
+                         limit: int = Query(15, ge=1, le=50)) -> Dict[str, Any]:
+        try:
+            return rollout_runs.list_rollouts(experiment_id, cursor, limit)
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except rollout_runs.RolloutStorageError as error:
+            raise HTTPException(500, str(error)) from error
+
+    @app.get("/api/mas/rollout-runs/{run_id}", response_model=rollout_runs.RolloutRunSummary)
+    def mas_rollout_summary(run_id: str, experiment_id: str = Query("demo")) -> rollout_runs.RolloutRunSummary:
+        try:
+            return rollout_runs.get_rollout(experiment_id, run_id).summary
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except rollout_runs.RolloutStorageError as error:
+            raise HTTPException(500, str(error)) from error
+
+    @app.get("/api/mas/rollout-runs/{run_id}/trajectory")
+    def mas_rollout_trajectory(
+        run_id: str, experiment_id: str = Query("demo"), view: Literal["full", "preview"] = "full",
+        offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200),
+    ) -> Dict[str, Any]:
+        try:
+            return rollout_runs.get_trajectory(experiment_id, run_id, preview=view == "preview", offset=offset, limit=limit)
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except rollout_runs.RolloutStorageError as error:
+            raise HTTPException(500, str(error)) from error
+
+    @app.get("/api/mas/rollout-runs/{run_id}/context")
+    def mas_rollout_context(run_id: str, experiment_id: str = Query("demo")) -> Dict[str, Any]:
+        try:
+            return rollout_runs.get_rollout_context(experiment_id, run_id)
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except rollout_runs.RolloutStorageError as error:
+            raise HTTPException(500, str(error)) from error
+
+    @app.get("/api/mas/rollout-runs/{run_id}/trajectory/events/{event_id}")
+    def mas_rollout_event(run_id: str, event_id: str, experiment_id: str = Query("demo")) -> Dict[str, Any]:
+        try:
+            return rollout_runs.get_trajectory_event(experiment_id, run_id, event_id)
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except rollout_runs.RolloutStorageError as error:
+            raise HTTPException(500, str(error)) from error
+
+    @app.get("/api/mas/rollout-runs/{run_id}/trajectory/messages")
+    def mas_rollout_messages(run_id: str, experiment_id: str = Query("demo"),
+                             offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=50)) -> Dict[str, Any]:
+        try:
+            return rollout_runs.get_trajectory_messages(experiment_id, run_id, offset, limit)
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except rollout_runs.RolloutStorageError as error:
+            raise HTTPException(500, str(error)) from error
+
+    @app.get("/api/mas/rollout-runs/{run_id}/export")
+    def mas_rollout_export(run_id: str, experiment_id: str = Query("demo")) -> Response:
+        import json
+
+        try:
+            payload = rollout_runs.export_rollout(experiment_id, run_id)
+            return Response(
+                json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False),
+                media_type="application/json",
+                headers={"Content-Disposition": f'attachment; filename="rollout-{run_id}.json"'},
+            )
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except rollout_runs.RolloutStorageError as error:
+            raise HTTPException(500, str(error)) from error
 
     @app.post("/api/harness/diagnose")
     def harness_diagnose(body: DiagnoseBody, experiment_id: str = Query("demo")) -> Dict[str, Any]:

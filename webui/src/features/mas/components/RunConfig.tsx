@@ -6,10 +6,12 @@ import { Input } from '../../../shared/ui/input';
 import { Select } from '../../../shared/ui/select';
 import { FormField } from '../../../shared/components/FormField';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
+import type { ModelReadinessState } from '../model/useModelReadiness';
 
-export function RunConfig({ draft, executable }: {
+export function RunConfig({ draft, executable, readiness }: {
   draft: ReturnType<typeof useMasDraft>;
   executable: { ok: boolean; reason: string };
+  readiness: ModelReadinessState;
 }) {
   const [input, setInput] = useState<'demo' | 'parquet'>('demo');
   const [mock, setMock] = useState(true);
@@ -27,10 +29,18 @@ export function RunConfig({ draft, executable }: {
   const previewCurrent = preview && preview.input.parquet === previewInput.parquet
     && preview.input.data_n === previewInput.data_n && preview.input.source === previewInput.source;
   const pending = Boolean(draft.pending);
+  const readinessError = readiness.loading ? '正在检查本地配置与依赖，请稍候。'
+    : readiness.error ? `就绪检查失败：${readiness.error} 请重试检查。`
+      : !readiness.data ? '本地就绪状态尚未加载，请刷新检查。' : null;
+  const liveError = mock ? null : readinessError || (readiness.data?.ready ? null
+    : readiness.data?.blocking_issues.map(issue => issue.message).join('；') || '尚未满足真实运行的前置条件。');
+  const parquetError = input !== 'parquet' ? null : readinessError || (readiness.data?.dependencies.parquet.available ? null
+    : `parquet 数据读取依赖不可用（模拟执行也需要）：${readiness.data?.dependencies.parquet.hint || '请检查 Control 服务环境。'}`);
+  const runBlocked = Boolean(liveError || parquetError);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!valid || pending || !executable.ok) return;
+    if (!valid || pending || !executable.ok || runBlocked) return;
     void draft.collect('collect', {
       mock, algo: algo.trim(),
       ...(input === 'parquet' ? { ...previewInput, n: 1, sequential: true } : { n: amount }),
@@ -71,14 +81,16 @@ export function RunConfig({ draft, executable }: {
         </FormField>
       </details>
       {!mock && <InlineNotice tone="warning">将调用已配置的模型及工具，可能产生费用。</InlineNotice>}
+      {liveError && <InlineNotice tone="danger">{liveError}</InlineNotice>}
+      {parquetError && parquetError !== liveError && <InlineNotice tone="danger">{parquetError}</InlineNotice>}
       {!executable.ok && <InlineNotice tone="danger">{executable.reason}</InlineNotice>}
       {draft.notice && <InlineNotice tone={draft.notice.tone}>{draft.notice.message}</InlineNotice>}
       <div className="mas-run-submit">
-        <Button type="submit" size="sm" variant="primary" disabled={pending || !valid || !executable.ok} loading={draft.running}>
+        <Button type="submit" size="sm" variant="primary" disabled={pending || !valid || !executable.ok || runBlocked} loading={draft.running}>
           <Play size={13} aria-hidden="true" />{draft.running ? '正在运行' : mock ? '开始模拟运行' : '开始真实运行'}
         </Button>
-        {input === 'parquet' && <Button size="sm" disabled={pending || Boolean(countError || pathError)} loading={draft.pending === 'preview'}
-          onClick={() => void draft.preview(previewInput)}><Eye size={14} aria-hidden="true" />预览前 N 条</Button>}
+        {input === 'parquet' && <Button size="sm" disabled={pending || Boolean(countError || pathError || parquetError)} loading={draft.pending === 'preview'}
+          onClick={() => { if (!parquetError) void draft.preview(previewInput); }}><Eye size={14} aria-hidden="true" />预览前 N 条</Button>}
         <span>运行前自动保存 Workflow；保存失败则不执行。</span>
       </div>
     </form>

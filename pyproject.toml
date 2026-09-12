@@ -33,6 +33,10 @@ live = [
 rl = [
   "agentlightning>=0.3.0",
 ]
+data = [
+  "pandas>=2.0",
+  "pyarrow>=14.0",
+]
 dev = [
   "pytest>=7.0",
 ]

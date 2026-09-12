@@ -17,6 +17,14 @@ class MemoryStore:
         self._agent: Dict[str, List[MemoryItem]] = {}
         self._system: List[MemoryItem] = []
 
+    def clear(self) -> None:
+        """Begin a fresh rollout; message resume does not restore MAS memory."""
+        self._agent.clear()
+        self._system.clear()
+
+    def items(self) -> List[MemoryItem]:
+        return [item for items in self._agent.values() for item in items] + list(self._system)
+
     def read(self, scope: str, owner: str = "hub") -> List[MemoryItem]:
         if scope == "system":
             return list(self._system)

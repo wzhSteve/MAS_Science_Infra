@@ -3,7 +3,7 @@ import { ReactFlowProvider, useReactFlow, type Connection, type XYPosition, type
 import { AlertCircle, X } from 'lucide-react';
 import type { Palette, WorkflowSpec } from '../../../shared/api/types';
 import type { Notice } from '../../../shared/components/InlineNotice';
-import type { EditorPanel, GraphNode, GraphEdge } from '../types';
+import type { EditorPanel, GraphNode, GraphEdge, TraceFocusRequest } from '../types';
 import { executableInfo } from '../model/workflowGraph';
 import { edgeConnection } from '../model/edgeRules';
 import { edgeLanes } from '../model/edgeGeometry';
@@ -29,12 +29,15 @@ type Props = {
   rlDirty: boolean;
   rlNotice: Notice | null;
   rlSettings: ReactNode;
+  traceFocus?: TraceFocusRequest | null;
 };
 
-function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelChange, libraryOpen, onLibraryOpenChange, rlDirty, rlNotice, rlSettings }: Props) {
+function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelChange, libraryOpen, onLibraryOpenChange, rlDirty, rlNotice, rlSettings, traceFocus }: Props) {
   const graph = useGraphEditor(workflow, onChange, palette);
   const flow = useReactFlow<GraphNode, GraphEdge>();
   const root = useRef<HTMLDivElement>(null);
+  const lastTraceFocus = useRef<number | null>(null);
+  const [traceInfo, setTraceInfo] = useState('');
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('agent');
   const [connection, setConnection] = useState<{ value: Connection; anchor: XYPosition } | null>(null);
   const [reconnecting, setReconnecting] = useState<GraphEdge | null>(null);
@@ -117,6 +120,25 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
       if (dx || dy) void flow.setViewport({ x: x + dx, y: y + dy, zoom });
     });
   }, [flow, visibleArea]);
+
+  useEffect(() => {
+    if (!active || !traceFocus || lastTraceFocus.current === traceFocus.token) return;
+    lastTraceFocus.current = traceFocus.token;
+    const agent = graph.nodes.find(node => node.id === traceFocus.agentId && node.type === 'agent');
+    if (!agent) {
+      setTraceInfo(`历史记录中的 Agent ${traceFocus.agentId} 不在当前画布中，未修改画布。`);
+      return;
+    }
+    const bindings = traceFocus.toolName ? graph.edges.filter(edge =>
+      edge.source === agent.id && edge.target === traceFocus.toolName && edge.data?.kind === 'tool_call') : [];
+    graph.select(bindings.length === 1 ? { kind: 'edge', id: bindings[0].id } : { kind: 'node', id: agent.id });
+    setTraceInfo(traceFocus.toolName && bindings.length !== 1
+      ? '当前画布没有唯一对应的工具绑定，仅定位到调用者 Agent。'
+      : `已定位历史执行涉及的实体${traceFocus.agentExecutionId ? ` · ${traceFocus.agentExecutionId}` : ''}，这不是实时执行状态。`);
+    onPanelChange(null);
+    setConnection(null);
+    revealNode(agent.id);
+  }, [active, traceFocus, graph.nodes, graph.edges, graph.select, graph.setNotice, onPanelChange, revealNode]);
 
   const add = (kind: 'agent' | 'tool', type: string, position?: XYPosition) => {
     const area = visibleArea();
@@ -215,6 +237,9 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
       onEdgeClick={(_, edge) => onSelectEdge(edge.id)}
       onPaneClick={() => { if (panel !== 'settings') closePanels(); else { graph.select(null); setConnection(null); } }}
       onAdd={add} onOpenLibrary={openLibrary} onError={graph.setNotice} />
+    {traceInfo && <div className="mas-trace-location" role="status"><span>{traceInfo}</span>
+      <Button size="sm" variant="ghost" aria-label="关闭历史定位说明" onClick={() => setTraceInfo('')}><X size={14} /></Button>
+    </div>}
     {(graph.notice || !executable.ok) && <div className="mas-graph-notice" role="alert">
       <AlertCircle size={15} /><span>{graph.notice || executable.reason}</span>
       {!graph.notice && executable.nodeId && <Button size="sm" variant="ghost" onClick={() => {

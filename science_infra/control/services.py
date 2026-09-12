@@ -21,60 +21,26 @@ from science_infra.control.experiments import (
     ensure_experiment,
     exp_dir,
     load_bundle,
-    load_secrets_env,
     workflow_executable,
     write_json,
 )
 from science_infra.control.paths import tir_agent_root
 from science_infra.control.process_manager import PROCS
-
-
-def _ensure_tir_on_path() -> None:
-    p = str(tir_agent_root())
-    if p not in sys.path:
-        sys.path.insert(0, p)
+from science_infra.control.llm_config import resolve_llm_config
+from science_infra.control.readiness import probe_llm, require_live, require_parquet
+from science_infra.control.readiness import ensure_workflow_path as _ensure_tir_on_path
 
 
 def _llm_env(exp_id: str, llm: Dict[str, Any]) -> Dict[str, str]:
-    env: Dict[str, str] = {}
-    secrets = load_secrets_env(exp_id)
-    if secrets.get("OPENAI_API_KEY"):
-        env["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
-    base = str(llm.get("base_url") or "").strip()
-    model = str(llm.get("model") or "").strip()
-    if base:
-        env["OPENAI_API_BASE"] = base
-        env["OPENAI_BASE_URL"] = base
-    if model:
-        env["OPENAI_MODEL"] = model
-        env["MODEL"] = model
-    return env
+    return resolve_llm_config(exp_id, llm=llm).subprocess_env()
 
 
-async def llm_health(base_url: str, api_key: Optional[str] = None) -> Dict[str, Any]:
-    base = base_url.rstrip("/")
-    if not base:
-        return {"ok": False, "error": "empty base_url"}
-    url = f"{base}/models"
-    headers = {}
-    key = api_key or os.environ.get("OPENAI_API_KEY")
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.get(url, headers=headers)
-            ok = r.status_code < 500
-            body: Any
-            try:
-                body = r.json()
-            except Exception:
-                body = r.text[:500]
-            models = []
-            if isinstance(body, dict) and isinstance(body.get("data"), list):
-                models = [m.get("id") for m in body["data"] if isinstance(m, dict)]
-            return {"ok": ok, "status_code": r.status_code, "models": models, "url": url}
-    except Exception as e:
-        return {"ok": False, "error": str(e), "url": url}
+async def llm_health(
+    base_url: Optional[str] = None, api_key: Optional[str] = None, *,
+    experiment_id: str = "demo", model: Optional[str] = None, kind: Optional[str] = None,
+) -> Dict[str, Any]:
+    config = resolve_llm_config(experiment_id, base_url=base_url, api_key=api_key, model=model, kind=kind)
+    return await probe_llm(config, experiment_id=experiment_id)
 
 
 def start_local_llm(exp_id: str, *, stop_if_running: bool = True) -> Dict[str, Any]:
@@ -348,6 +314,7 @@ def sample_parquet_tasks(
     """Sample first N rows from a tir_agent parquet (same logic as run.sh live-api-data)."""
     import ast
 
+    require_parquet()
     import pandas as pd
 
     path = Path(parquet)
@@ -431,15 +398,12 @@ def run_collect(
     _ensure_tir_on_path()
     from workflow import Collector, batch_to_train_signal
     from workflow.contracts import TrajectoryBatch
+    from workflow.runtime import LLMConfig
 
     spec_path = str(exp_dir(exp_id) / "workflow.yaml")
-    llm = bundle["llm"]
-    env = _llm_env(exp_id, llm)
-    # Prefer process/.env key when experiment secrets absent
-    if not env.get("OPENAI_API_KEY") and os.environ.get("OPENAI_API_KEY"):
-        env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
-    for k, v in env.items():
-        os.environ[k] = v
+    model_config = resolve_llm_config(exp_id)
+    if not mock:
+        require_live(model_config)
 
     if tasks is not None:
         task_list = list(tasks)
@@ -459,8 +423,12 @@ def run_collect(
 
     collector = Collector(
         mock=mock,
-        endpoint=str(llm.get("base_url") or "") or None,
-        model=str(llm.get("model") or "") or None,
+        llm_config=None if mock else LLMConfig(
+            endpoint=model_config.base_url,
+            model=model_config.model,
+            api_key=model_config.api_key,
+            source=model_config.kind,
+        ),
         n=1,
         spec_path=spec_path,
         archive_root=str(exp_dir(exp_id) / "artifacts" / "archives"),

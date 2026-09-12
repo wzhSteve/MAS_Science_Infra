@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from .contracts import ArchiveRef, BranchPoint, ExecutionEvent, EventKind, Snapshot
+from .recorder import Redactor
 
 DEFAULT_ARCHIVE_ROOT = os.getenv(
     "TIR_ARCHIVE_DIR",
@@ -24,6 +25,27 @@ _GLOBAL: Dict[str, "Archive"] = {}
 _ROLLOUT_INDEX: Dict[str, tuple[str, str, Optional[str]]] = {}
 
 
+class ArchiveWriteError(RuntimeError):
+    """A persistence failure must escape execution error handling."""
+
+
+def _write_json(path: Path, content: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pending = path.with_suffix(path.suffix + ".pending")
+        pending.write_text(content, encoding="utf-8")
+        pending.replace(path)
+    except OSError as exc:
+        raise ArchiveWriteError("Could not persist archive data") from exc
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ArchiveWriteError("Could not read archive data") from exc
+
+
 class Archive:
     def __init__(self, archive_id: Optional[str] = None, root_dir: Optional[str] = None) -> None:
         self.archive_id = archive_id or uuid4().hex
@@ -32,16 +54,32 @@ class Archive:
         self._snaps: Dict[str, Snapshot] = {}
         self._snap_order: List[str] = []
         self._rollout_snapshots: Dict[str, str] = {}
+        self.redact = Redactor()
+        self.run_id: Optional[str] = None
+        self.trajectory_id: Optional[str] = None
+        self.active_recorder = None
         if self.root_dir:
-            Path(self.root_dir).mkdir(parents=True, exist_ok=True)
+            try:
+                Path(self.root_dir).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise ArchiveWriteError("Could not create archive directory") from exc
 
     def append(self, event: ExecutionEvent) -> ExecutionEvent:
-        self._events.append(event)
+        event = event.model_copy(update={
+            "payload": self.redact(event.payload),
+            "run_id": event.run_id or self.run_id,
+            "trajectory_id": event.trajectory_id or self.trajectory_id,
+            "occurred_at": event.occurred_at or event.ts,
+        })
         if self.root_dir:
-            path = Path(self.root_dir) / self.archive_id / "events.jsonl"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as f:
-                f.write(event.model_dump_json() + "\n")
+            try:
+                path = Path(self.root_dir) / self.archive_id / "events.jsonl"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(event.model_dump_json() + "\n")
+            except (OSError, ValueError, TypeError) as exc:
+                raise ArchiveWriteError("Could not persist execution event") from exc
+        self._events.append(event)
         return event
 
     def snapshot(
@@ -63,8 +101,11 @@ class Archive:
         snap = Snapshot(
             archive_id=self.archive_id,
             event_id=event_id,
-            messages=list(messages),
-            meta=dict(meta or {}),
+            messages=self.redact(messages),
+            meta=self.redact({
+                **(meta or {}), "run_id": self.run_id, "trajectory_id": self.trajectory_id,
+                "resume_scope": "messages_only",
+            }),
         )
         self._snaps[snap.snapshot_id] = snap
         self._snap_order.append(snap.snapshot_id)
@@ -73,20 +114,17 @@ class Archive:
             _ROLLOUT_INDEX[rollout_id] = (self.archive_id, snap.snapshot_id, self.root_dir)
         if self.root_dir:
             base = Path(self.root_dir) / self.archive_id
-            (base / "snapshots").mkdir(parents=True, exist_ok=True)
-            (base / "snapshots" / f"{snap.snapshot_id}.json").write_text(
-                snap.model_dump_json(indent=2), encoding="utf-8"
-            )
+            _write_json(base / "snapshots" / f"{snap.snapshot_id}.json", snap.model_dump_json(indent=2))
             if rollout_id:
                 idx_path = base / "rollout_index.json"
                 idx = {}
                 if idx_path.is_file():
                     try:
                         idx = json.loads(idx_path.read_text(encoding="utf-8"))
-                    except Exception:
-                        idx = {}
+                    except (OSError, ValueError) as exc:
+                        raise ArchiveWriteError("Could not read existing archive index") from exc
                 idx[rollout_id] = snap.snapshot_id
-                idx_path.write_text(json.dumps(idx, indent=2), encoding="utf-8")
+                _write_json(idx_path, json.dumps(idx, indent=2))
         return snap
 
     def restore(self, snapshot_id: str) -> Snapshot:
@@ -95,7 +133,7 @@ class Archive:
         if self.root_dir:
             path = Path(self.root_dir) / self.archive_id / "snapshots" / f"{snapshot_id}.json"
             if path.is_file():
-                snap = Snapshot.model_validate_json(path.read_text(encoding="utf-8"))
+                snap = Snapshot.model_validate_json(_read_text(path))
                 self._snaps[snap.snapshot_id] = snap
                 return snap
         raise KeyError(f"snapshot_id not found: {snapshot_id}")
@@ -134,25 +172,25 @@ class Archive:
         base = Path(root) / archive_id
         events_path = base / "events.jsonl"
         if events_path.is_file():
-            for line in events_path.read_text(encoding="utf-8").splitlines():
+            for line in _read_text(events_path).splitlines():
                 if line.strip():
                     arch._events.append(ExecutionEvent.model_validate_json(line))
         snap_dir = base / "snapshots"
         if snap_dir.is_dir():
             for p in sorted(snap_dir.glob("*.json")):
-                snap = Snapshot.model_validate_json(p.read_text(encoding="utf-8"))
+                snap = Snapshot.model_validate_json(_read_text(p))
                 arch._snaps[snap.snapshot_id] = snap
                 arch._snap_order.append(snap.snapshot_id)
         idx_path = base / "rollout_index.json"
         if idx_path.is_file():
             try:
                 arch._rollout_snapshots = {
-                    str(k): str(v) for k, v in json.loads(idx_path.read_text(encoding="utf-8")).items()
+                    str(k): str(v) for k, v in json.loads(_read_text(idx_path)).items()
                 }
                 for rid, sid in arch._rollout_snapshots.items():
                     _ROLLOUT_INDEX[rid] = (archive_id, sid, root)
-            except Exception:
-                pass
+            except ValueError as exc:
+                raise ArchiveWriteError("Could not read archive index") from exc
         return arch
 
 
@@ -195,6 +233,7 @@ def dump_resume_with_archive(
         "consecutive_high": payload.get("consecutive_high", 0),
         "reason": "post_tool",
         "rollout_id": rollout_id,
+        "uncertainty_evidence": payload.get("uncertainty_evidence", "legacy_unspecified"),
     }
     register_archive(arch)
     snap = arch.snapshot(messages=messages, meta=meta, rollout_id=rollout_id)
@@ -220,6 +259,8 @@ def load_resume_messages(rollout_id: str) -> Optional[Dict[str, Any]]:
                 "archive_id": archive_id,
                 "snapshot_id": snapshot_id,
             }
+        except ArchiveWriteError:
+            raise
         except Exception:
             pass
     # Disk: scan archives for rollout_index
@@ -232,7 +273,9 @@ def load_resume_messages(rollout_id: str) -> Optional[Dict[str, Any]]:
             if not idx_path.is_file():
                 continue
             try:
-                idx = json.loads(idx_path.read_text(encoding="utf-8"))
+                idx = json.loads(_read_text(idx_path))
+            except ArchiveWriteError:
+                raise
             except Exception:
                 continue
             if rollout_id in idx:
@@ -258,7 +301,9 @@ def _load_legacy_resume_cache(rollout_id: str) -> Optional[Dict[str, Any]]:
     if not dest.is_file():
         return None
     try:
-        return json.loads(dest.read_text(encoding="utf-8"))
+        return json.loads(_read_text(dest))
+    except ArchiveWriteError:
+        raise
     except Exception:
         return None
 

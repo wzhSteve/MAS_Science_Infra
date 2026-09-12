@@ -25,8 +25,9 @@ class WorkspaceBoundary extends Component<{ children: ReactNode }, { error: stri
   }
 }
 
-const Workspace = memo(function Workspace({ expId, tab, meta, setExpId }: {
+const Workspace = memo(function Workspace({ expId, tab, meta, setExpId, onConfigureModel }: {
   expId: string; tab: PanelId; meta: MetaResponse | null; setExpId: (id: string) => void;
+  onConfigureModel: () => void;
 }) {
   const load = useCallback((signal: AbortSignal) => experimentApi.getExperiment(expId, signal), [expId]);
   const { data: bundle, error, loading, refresh } = usePollingResource(`experiment:${expId}`, load);
@@ -39,7 +40,7 @@ const Workspace = memo(function Workspace({ expId, tab, meta, setExpId }: {
     {tab !== 'mas' && <WorkspaceHeader bundle={bundle} onReload={refresh} />}
     <TrainingBanner />
     {error && <div className="runtime-error"><InlineNotice tone="warning">实验刷新失败，草稿保持不变：{error}</InlineNotice></div>}
-    <WorkspaceBoundary><WorkspacePanels active={tab} bundle={bundle} meta={meta} onReload={refresh} setExpId={setExpId} /></WorkspaceBoundary>
+    <WorkspaceBoundary><WorkspacePanels active={tab} bundle={bundle} meta={meta} onReload={refresh} setExpId={setExpId} onConfigureModel={onConfigureModel} /></WorkspaceBoundary>
     <StatusBar />
   </RuntimeProvider>;
 });
@@ -47,6 +48,7 @@ const Workspace = memo(function Workspace({ expId, tab, meta, setExpId }: {
 export default function App() {
   const [tab, setTab] = useState<PanelId>('mas');
   const [expId, setExpId] = useState('demo');
+  const configureModel = useCallback(() => setTab('llm'), []);
   const meta = usePollingResource('meta', experimentApi.meta);
   return <Tooltip.Provider delayDuration={250}>
     <a className="skip-link" href="#workspace-content">跳到工作区</a>
@@ -54,7 +56,7 @@ export default function App() {
       <Sidebar active={tab} onChange={setTab} />
       <main className="workspace-main">
         {meta.error && <div className="runtime-error"><InlineNotice tone="warning">配置选项加载失败：{meta.error}<Button size="sm" onClick={() => void meta.refresh()}>重试</Button></InlineNotice></div>}
-        <Workspace key={expId} expId={expId} tab={tab} meta={meta.data} setExpId={setExpId} />
+        <Workspace key={expId} expId={expId} tab={tab} meta={meta.data} setExpId={setExpId} onConfigureModel={configureModel} />
       </main>
     </div>
   </Tooltip.Provider>;

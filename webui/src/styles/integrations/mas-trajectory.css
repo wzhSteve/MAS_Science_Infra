@@ -1,0 +1,51 @@
+.mas-trajectory { display: flex; flex-direction: column; gap: 12px; min-width: 0; border-top: 1px solid var(--border-subtle); padding-top: 16px; }
+.mas-trace-tabs { display: flex; flex-wrap: wrap; gap: 4px; background: var(--surface-subtle); padding: 3px; border-radius: 7px; align-self: flex-start; }
+.mas-trace-tabs > button { border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); padding: 6px 12px; font-size: 12px; }
+.mas-trace-tabs > button[aria-selected="true"] { color: var(--accent); background: var(--surface); box-shadow: 0 1px 3px #20252b08; }
+.mas-trace-capabilities { border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px 14px; background: var(--canvas); font-size: 12px; }
+.mas-trace-capabilities > summary { cursor: pointer; font-weight: 550; }
+.mas-trace-capabilities[open] > summary { margin-bottom: 12px; }
+.mas-trace-capabilities dl { display: grid; grid-template-columns: 135px minmax(0, 1fr); gap: 8px 12px; margin: 12px 0; }
+.mas-trace-capabilities dt { color: var(--text-secondary); font-size: 11px; }
+.mas-trace-capabilities dd { margin: 0; overflow-wrap: anywhere; font-size: 11px; }
+.mas-trace-dl-row { display: contents; }
+.mas-trace-capabilities h4 { font-size: 12px; margin: 14px 0 8px; }
+.mas-trace-capabilities > details { margin-top: 12px; }
+.mas-trace-snapshot { margin-bottom: 8px; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface); }
+.mas-trace-snapshot > code { font-size: 11px; overflow-wrap: anywhere; }
+.mas-trace-snapshot > div { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 8px; color: var(--text-secondary); font-size: 11px; }
+.mas-trace-execution { border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); margin-bottom: 9px; }
+.mas-trace-execution > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 12px; cursor: pointer; list-style: none; }
+.mas-trace-execution > summary strong { font-size: 12px; }
+.mas-trace-execution > summary span { color: var(--text-secondary); font-size: 11px; margin-left: auto; }
+.mas-trace-execution-body { padding: 0 12px 12px; }
+.mas-trace-execution-body > .field-hint { margin-bottom: 10px; overflow-wrap: anywhere; }
+.mas-trace-event { border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface); margin-bottom: 7px; padding: 8px 10px; }
+.mas-trace-event.has-error { border-left: 3px solid var(--danger); }
+.mas-trace-event-heading { display: flex; align-items: center; gap: 8px; }
+.mas-trace-event-heading > button:first-child { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; text-align: left; border: 0; padding: 3px 0; background: transparent; color: var(--text-primary); cursor: pointer; }
+.mas-trace-event-heading strong { font-size: 12px; font-weight: 550; }
+.mas-trace-event-heading > button:first-child > span { color: var(--text-secondary); font-size: 10px; }
+.mas-trace-event-heading > button:first-child > svg { transform: rotate(-90deg); color: var(--text-secondary); }
+.mas-trace-event-heading > button:first-child > svg.is-open { transform: none; }
+.mas-trace-event-heading > .ui-button { font-size: 10px; padding: 2px 5px; min-height: 24px; }
+.mas-trace-event-caption { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; color: var(--text-secondary); font-size: 10px; margin-top: 5px; overflow-wrap: anywhere; }
+.mas-trace-snippet { color: var(--text-secondary); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 7px; }
+.mas-trace-event-body { padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.mas-trace-event-body .json-details { margin: 0; }
+.mas-trace-event-body pre, .mas-trace-value pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.mas-trace-value { font-size: 11px; margin-top: 7px; }
+.mas-trace-value > summary { cursor: pointer; color: var(--text-secondary); }
+.mas-trace-value > pre { padding: 10px; margin: 8px 0 0; background: var(--canvas); border: 1px solid var(--border-subtle); border-radius: 5px; line-height: 1.7; }
+.mas-trace-message, .mas-trace-tool { margin: 10px 0; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 7px; }
+.mas-trace-message header, .mas-trace-tool header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.mas-trace-message header strong, .mas-trace-tool header strong { font-size: 12px; }
+.mas-trace-message header > span, .mas-trace-tool header > span { color: var(--text-secondary); font-size: 10px; }
+.mas-trace-tool header > .ui-button { margin-left: auto; font-size: 11px; }
+.mas-trace-tool > .field-hint { margin-bottom: 9px; overflow-wrap: anywhere; }
+.mas-trace-tool > .field-error { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+@media (max-width: 640px) {
+  .mas-trace-capabilities dl { grid-template-columns: 105px minmax(0, 1fr); gap: 7px; }
+  .mas-trace-tabs > button { padding: 5px 9px; }
+  .mas-trace-execution-body { padding: 0 8px 8px; }
+}

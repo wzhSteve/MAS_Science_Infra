@@ -38,15 +38,16 @@ const MonitorConnection = memo(function MonitorConnection({ expId, visible }: { 
     aglOnline={!!agl.data?.ok && !agl.error} onRefreshLog={refresh} />;
 });
 
-export const WorkspacePanels = memo(function WorkspacePanels({ active, bundle, meta, onReload, setExpId }: {
+export const WorkspacePanels = memo(function WorkspacePanels({ active, bundle, meta, onReload, setExpId, onConfigureModel }: {
   active: PanelId; bundle: Bundle; meta: MetaResponse | null; onReload: () => Promise<void>; setExpId: (id: string) => void;
+  onConfigureModel: () => void;
 }) {
   const common = { expId: bundle.id, bundle, onReload };
   return <div className={`workspace-content${active === 'mas' ? ' workspace-content--mas' : ''}`} id="workspace-content" tabIndex={-1}>
     {NAVIGATION.map(({ id, label }) => <div key={id} id={`panel-${id}`} hidden={active !== id} role="region" aria-label={`${label} 面板`}>
       {id === 'experiment' && <Experiment {...common} setExpId={setExpId} />}
       {id === 'llm' && <Llm {...common} />}
-      {id === 'mas' && <Mas key={bundle.id} {...common} active={active === 'mas'} renderRlSettings={renderRlSettings} normalizeRl={normalizeRlPayload} />}
+      {id === 'mas' && <Mas key={bundle.id} {...common} active={active === 'mas'} onConfigureModel={onConfigureModel} renderRlSettings={renderRlSettings} normalizeRl={normalizeRlPayload} />}
       {id === 'rl' && <RlConnection bundle={bundle} meta={meta} onReload={onReload} />}
       {id === 'harness' && <Harness {...common} meta={meta} />}
       {id === 'monitor' && <MonitorConnection expId={bundle.id} visible={active === 'monitor'} />}

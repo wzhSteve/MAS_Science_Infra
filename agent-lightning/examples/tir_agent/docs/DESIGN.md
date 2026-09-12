@@ -71,7 +71,7 @@ Daemon 对同一 parquet 行 enqueue `rollout.n` 次；adapter 转 triplet；VER
 本目录近似：
 
 1. 第一波只 enqueue `tir.initial_rollouts`（fast 默认 2，且不超过 `n-1`）条完整轨迹
-2. Agent 在第一次 tool 后把 messages dump 到 `.resume_cache/{rollout_id}.json`，并估计 turn 级熵（有 logprobs 则用 \(-\mathbb{E}\log p\)，否则 tool-call≈1.0 / 纯文本≈0.3）
+2. Agent 在第一次 tool 后保留 messages 前缀，通过 Archive 写入消息快照。当前统一执行路径仅在取得 logprobs 时计算 chosen-token surprisal 代理；缺失时旧 h_* 字段为中性零并标记 `uncertainty_evidence=unavailable_neutral_zero`，不再根据 tool-call / 纯文本伪造熵。旧 `.resume_cache` 只保留读取兼容。
 3. Daemon 若 \(\Delta H\) 超阈且预算未满：再 enqueue 带 `resume_messages` 的任务（`beam_size`）；不足则补全局轨迹
 4. Agent 见 `resume_messages` 则从该前缀继续。**不**把已生成 token 的梯度合并——M 条完整轨迹进 GRPO，共享前缀自然相同 IS → soft 设定
 

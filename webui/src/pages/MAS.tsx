@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Bundle, RlConfig } from '../shared/api/types';
 import { MasGraphEditor, WorkflowBar, RunConsole, useMasDraft, type RlSettingsSlot, type ConsoleTab, type EditorPanel } from '../features/mas';
 import { executableInfo } from '../features/mas/model/workflowGraph';
 import { InlineNotice } from '../shared/components/InlineNotice';
 import { LoadingState } from '../shared/components/LoadingState';
 import { Button } from '../shared/ui/button';
+import { useModelReadiness } from '../features/mas/model/useModelReadiness';
+import { useMasRolloutRun } from '../features/mas/model/useMasRolloutRun';
+import type { TraceFocusRequest } from '../features/mas/types';
 
 export type MASPanelProps = {
   expId: string;
@@ -13,14 +16,23 @@ export type MASPanelProps = {
   normalizeRl: (rl: RlConfig) => RlConfig;
   renderRlSettings?: RlSettingsSlot;
   active?: boolean;
+  onConfigureModel: () => void;
 };
 
 export function MASPanel(props: MASPanelProps) {
+  return <MASWorkspace key={props.expId} {...props} />;
+}
+
+function MASWorkspace(props: MASPanelProps) {
   const draft = useMasDraft(props);
+  const rollout = useMasRolloutRun(props.expId, draft.executeWithSavedWorkflow);
+  const readiness = useModelReadiness(props.expId, props.bundle?.llm.config_revision, props.active ?? true);
   const [panel, setPanel] = useState<EditorPanel>(null);
   const [libraryOpen, setLibraryOpen] = useState(true);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [consoleTab, setConsoleTab] = useState<ConsoleTab>('config');
+  const [traceFocus, setTraceFocus] = useState<TraceFocusRequest | null>(null);
+  const focusSequence = useRef(0);
   const { workflow } = draft;
   const executable = useMemo(() => workflow ? executableInfo(workflow) : { ok: false, reason: '加载中…' }, [workflow]);
   const rlSettings = useMemo(() => props.renderRlSettings?.({
@@ -42,8 +54,11 @@ export function MASPanel(props: MASPanelProps) {
     <MasGraphEditor workflow={workflow} palette={draft.palette} onChange={draft.onWorkflowChange}
       active={props.active ?? true} panel={panel} onPanelChange={setPanel}
       libraryOpen={libraryOpen} onLibraryOpenChange={setLibraryOpen}
+      traceFocus={traceFocus}
       rlSettings={rlSettings} rlDirty={draft.rlDirty} rlNotice={draft.rlNotice} />
-    <RunConsole draft={draft} open={consoleOpen} onOpenChange={setConsoleOpen}
-      tab={consoleTab} onTabChange={setConsoleTab} executable={executable} />
+    <RunConsole draft={draft} rollout={rollout} open={consoleOpen} onOpenChange={setConsoleOpen}
+      tab={consoleTab} onTabChange={setConsoleTab} executable={executable}
+      readiness={readiness} onConfigureModel={props.onConfigureModel}
+      onLocate={target => setTraceFocus({ ...target, token: ++focusSequence.current })} />
   </div>;
 }

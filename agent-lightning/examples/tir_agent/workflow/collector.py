@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from .contracts import Trajectory, TrajectoryBatch
@@ -20,6 +21,8 @@ load_repo_dotenv()
 
 
 def default_reward_fn(traj: Trajectory, task: Dict[str, Any]) -> float:
+    if traj.meta.get("status") == "failed":
+        return -1.0
     gold = str(task.get("answer") or "")
     source = str(task.get("source") or "gsm8k")
     aliases = parse_alias_field(task.get("answers"))
@@ -55,10 +58,12 @@ class Collector:
         n: int = 1,
         archive_root: Optional[str] = None,
         spec_path: Optional[str] = None,
+        llm_config: Optional[LLMConfig] = None,
     ) -> None:
         self.mock = mock
-        self.endpoint = endpoint or os_environ_endpoint()
-        self.model = model or os_environ_model()
+        self.llm_config = llm_config
+        self.endpoint = llm_config.endpoint if llm_config is not None else endpoint or os_environ_endpoint()
+        self.model = llm_config.model if llm_config is not None else model or os_environ_model()
         self.temperature = temperature
         self.max_turns = max_turns
         self.max_tokens = max_tokens
@@ -71,18 +76,22 @@ class Collector:
     def _service(self) -> ExecutionService:
         llm = None
         if not self.mock:
-            import os
+            if self.llm_config is not None:
+                tools = self.llm_config.enabled_tools
+                llm = replace(self.llm_config, enabled_tools=list(self.spec.tools if tools is None else tools))
+            else:
+                import os
 
-            mlen = os.environ.get("TIR_MAX_MODEL_LEN", "").strip()
-            llm = LLMConfig(
-                endpoint=self.endpoint or "",
-                model=self.model,
-                temperature=self.temperature,
-                max_turns=self.max_turns,
-                max_tokens=self.max_tokens,
-                max_model_len=int(mlen) if mlen else None,
-                enabled_tools=list(self.spec.tools),
-            )
+                mlen = os.environ.get("TIR_MAX_MODEL_LEN", "").strip()
+                llm = LLMConfig(
+                    endpoint=self.endpoint or "",
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_turns=self.max_turns,
+                    max_tokens=self.max_tokens,
+                    max_model_len=int(mlen) if mlen else None,
+                    enabled_tools=list(self.spec.tools),
+                )
         return ExecutionService(
             mock=self.mock,
             spec=self.spec,

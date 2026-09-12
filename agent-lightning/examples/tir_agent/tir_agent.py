@@ -11,20 +11,25 @@ import logging
 import os
 import time
 from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict, cast
+from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from algos.arpo_rollout import (
     deserialize_messages,
-    estimate_turn_entropy,
+    extract_token_logprobs,
     obs_hash,
     serialize_messages,
 )
 from algos.rewards import compute_outcome_reward, extract_answer_text, has_answer_format, normalize_qa, parse_alias_field
 from tools.langchain_tools import TOOL_MAP, TOOLS
+from workflow.archive import ArchiveWriteError
+from workflow.contracts import EventKind
+from workflow.recorder import BoundaryRecorder, Redactor, message_records
 
 try:
     from workflow.env_load import load_repo_dotenv
@@ -71,6 +76,19 @@ PYTHON_TOOL_NAMES = {"execute_python"}
 # Tool-call schemas are sent on every OpenAI request but are not in `messages`.
 _TOOL_SCHEMA_TOKENS = 512
 _TOOL_OBS_CHARS = 700
+
+
+def default_system_prompt(enabled_tools: Sequence[str]) -> str:
+    """Describe only tools that the current Agent can actually call."""
+    if set(enabled_tools) == set(TOOL_MAP):
+        return SYSTEM_PROMPT
+    return (
+        "You are a careful assistant. "
+        + ("Available tools: " + ", ".join(enabled_tools) + ". Use them when helpful. "
+           if enabled_tools else "No tools are available. ")
+        + "Use the task and provided context; do not invent observations. "
+        "When finished, reply with <answer> YOUR_ANSWER </answer>."
+    )
 
 
 def estimate_tokens(text: str) -> int:
@@ -191,6 +209,10 @@ class AgentState(TypedDict, total=False):
     consecutive_high: int
     last_entropy: float
     branch_messages: List[Dict[str, Any]]
+    termination_reason: str
+    error: str
+    uncertainty_evidence: str
+    branch_event_id: str
 
 
 def last_assistant_text(messages: List[AnyMessage]) -> Optional[str]:
@@ -204,11 +226,6 @@ def extract_answer_from_messages(messages: List[AnyMessage]) -> Optional[str]:
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
             ans = extract_answer_text(str(getattr(msg, "content", "") or ""))
-            if ans is not None:
-                return ans
-        if isinstance(msg, ToolMessage):
-            content = str(getattr(msg, "content", "") or "")
-            ans = extract_answer_text(content)
             if ans is not None:
                 return ans
     return None
@@ -276,37 +293,71 @@ class TirAgent:
         enabled_tools: Optional[Sequence[str]] = None,
         system_prompt: Optional[str] = None,
         max_model_len: Optional[int] = None,
+        api_key: Optional[str] = None,
+        recorder: Optional[BoundaryRecorder] = None,
+        model_identity: Optional[Dict[str, Any]] = None,
+        sampling_parameters: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.max_turns = max_turns
         self.model_name = model_name
         self.entropy_tokens = entropy_tokens
         self.entropy_threshold = entropy_threshold
         self.max_tokens = int(max_tokens)
+        self.recorder = recorder
+        self.model_identity = model_identity or {"model": model_name}
+        self.redact = Redactor([api_key] if api_key else [])
+        self.last_state: AgentState = {}
+        self.last_model_call_id: Optional[str] = None
         env_len = os.environ.get("TIR_MAX_MODEL_LEN", "").strip()
         self.max_model_len = int(max_model_len or (env_len or 0) or 0) or None
-        self.system_prompt = (system_prompt or "").strip() or SYSTEM_PROMPT
         names = list(enabled_tools) if enabled_tools is not None else [t.name for t in TOOLS]
+        self.system_prompt = (system_prompt or "").strip() or default_system_prompt(names)
         self.tool_map = {n: TOOL_MAP[n] for n in names if n in TOOL_MAP}
+        unknown = set(names) - set(TOOL_MAP)
+        if unknown:
+            raise ValueError(f"Unknown tools: {sorted(unknown)}")
         bound_tools = [self.tool_map[n] for n in names if n in self.tool_map]
+        self.tool_definitions = [convert_to_openai_tool(t) for t in bound_tools]
         extra: Dict[str, Any] = {}
         if request_logprobs:
             extra = {"logprobs": True, "top_logprobs": 1}
         llm_kwargs: Dict[str, Any] = dict(
             model_provider="openai",
             openai_api_base=endpoint,
-            openai_api_key=os.environ.get("OPENAI_API_KEY", "dummy"),
+            openai_api_key=(api_key or "dummy") if api_key is not None else os.environ.get("OPENAI_API_KEY", "dummy"),
             temperature=temperature,
             max_retries=0,
             max_tokens=max_tokens,
         )
         if extra:
             llm_kwargs["model_kwargs"] = extra
-        self.llm = init_chat_model(model_name, **llm_kwargs).bind_tools(bound_tools or TOOLS)
+        sampling = dict(sampling_parameters or {})
+        forbidden = {
+            "api_key", "openai_api_key", "base_url", "openai_api_base", "model", "model_provider",
+            "tools", "functions", "callbacks", "max_retries",
+        }
+        if forbidden.intersection(sampling):
+            raise ValueError("Sampling parameters cannot override model binding")
+        llm_kwargs.update(sampling)
+        # These are the resolved per-run limits, also used by context fitting.
+        llm_kwargs["temperature"] = temperature
+        llm_kwargs["max_tokens"] = max_tokens
+        self.sampling = {**sampling, "temperature": temperature, "max_tokens": max_tokens, **extra}
+        self.llm = init_chat_model(model_name, **llm_kwargs).bind_tools(bound_tools)
         fin_kwargs = dict(llm_kwargs)
         fin_kwargs["temperature"] = min(temperature, 0.3)
         fin_kwargs["max_tokens"] = min(max_tokens, 256)
         fin_kwargs.pop("model_kwargs", None)
+        fin_kwargs.pop("logprobs", None)
+        fin_kwargs.pop("top_logprobs", None)
+        fin_kwargs.pop("tool_choice", None)
+        fin_kwargs.pop("parallel_tool_calls", None)
         self.llm_finalize = init_chat_model(model_name, **fin_kwargs)
+        self.finalize_sampling = {
+            k: v for k, v in self.sampling.items()
+            if k not in {"logprobs", "top_logprobs", "tool_choice", "parallel_tool_calls"}
+        }
+        self.finalize_sampling.update(temperature=fin_kwargs["temperature"], max_tokens=fin_kwargs["max_tokens"])
 
     @classmethod
     def from_spec(
@@ -328,12 +379,13 @@ class TirAgent:
         return cls(
             endpoint=endpoint,
             model_name=model_name,
-            enabled_tools=tools or None,
+            enabled_tools=tools,
             system_prompt=prompt or None,
             **kwargs,
         )
 
     def call_model(self, state: AgentState) -> AgentState:
+        self.last_state = state
         messages = list(state["messages"])
         asked_finalize = bool(state.get("asked_finalize", False))
         num_turns = int(state.get("num_turns", 0))
@@ -347,45 +399,100 @@ class TirAgent:
             max_out = remaining_completion_tokens(
                 messages, max_model_len=int(self.max_model_len), max_tokens=max_out
             )
+        def invoke(effective: List[AnyMessage], limit: int, retry_of: Optional[str] = None) -> Any:
+            call_id = uuid4().hex
+            self.last_model_call_id = call_id
+            sampling = dict(self.finalize_sampling if asked_finalize else self.sampling)
+            sampling["max_tokens"] = limit
+            bound = llm.bind(max_tokens=limit)
+            provider = getattr(bound, "bound", None)
+            build_payload = getattr(provider, "_get_request_payload", None)
+            request = build_payload(effective, **bound.kwargs) if callable(build_payload) else None
+            if request is not None:
+                sampling = {
+                    key: value for key, value in request.items()
+                    if key not in {"messages", "tools", "model", "extra_headers"}
+                }
+            if self.recorder:
+                self.recorder.emit(EventKind.MODEL_CALL, {
+                    "messages": request.get("messages", message_records(effective)) if request else message_records(effective),
+                    "tool_definitions": request.get("tools", []) if request else ([] if asked_finalize else self.tool_definitions),
+                    "sampling_parameters": sampling, "model": self.model_identity,
+                    "request_format": "provider_payload" if request else "langchain_messages",
+                    "retry_of": retry_of, "finalize": asked_finalize,
+                    "context_processing": {
+                        "method": "estimated_tokens_clip_tools_drop_oldest" if self.max_model_len else "none",
+                        "changed": message_records(effective) != message_records(state["messages"]),
+                        "original_message_count": len(state["messages"]),
+                        "effective_message_count": len(effective),
+                        "max_model_len": self.max_model_len,
+                        "token_count_is_estimate": True,
+                    },
+                }, model_call_id=call_id)
+            try:
+                response = bound.invoke(effective)
+            except ArchiveWriteError:
+                raise
+            except Exception as exc:
+                if self.recorder:
+                    self.recorder.emit(EventKind.MODEL_RESULT, {
+                        "status": "failed", "error": self.redact(str(exc)),
+                        "error_code": type(exc).__name__,
+                    }, model_call_id=call_id)
+                raise
+            if self.recorder:
+                metadata = getattr(response, "response_metadata", {}) or {}
+                self.recorder.emit(EventKind.MODEL_RESULT, {
+                    "status": "succeeded", "message": message_records([response])[0],
+                    "finish_reason": metadata.get("finish_reason") or metadata.get("stop_reason"),
+                    "model": metadata.get("model_name") or metadata.get("model"),
+                    "requested_model": self.model_name,
+                    "usage": getattr(response, "usage_metadata", None) or metadata.get("token_usage"),
+                    "logprobs": metadata.get("logprobs") or (getattr(response, "additional_kwargs", {}) or {}).get("logprobs"),
+                }, model_call_id=call_id)
+            return response
+
         try:
-            response = llm.bind(max_tokens=max_out).invoke(messages)
+            response = invoke(messages, max_out)
+        except ArchiveWriteError:
+            raise
         except Exception as e:
             if self.max_model_len and _is_context_error(e):
-                logger.warning("context window exceeded; retrying with truncated history: %s", e)
                 tight = max(256, int(self.max_model_len) // 2)
                 messages = fit_messages_for_context(messages, max_prompt_tokens=tight, tool_max_chars=200)
-                try:
-                    response = llm.bind(max_tokens=64).invoke(messages)
-                except Exception as e2:
-                    logger.error("LLM invoke failed after context retry: %s", e2)
-                    response = AIMessage(content="<answer>None</answer>")
+                response = invoke(messages, 64, self.last_model_call_id)
             else:
-                logger.error("LLM invoke failed: %s", e)
-                response = AIMessage(content="<answer>None</answer>")
+                raise
 
-        h = estimate_turn_entropy(response, max_tokens=self.entropy_tokens)
+        # Legacy h_* fields contain chosen-token surprisal only when observed.
+        # Missing logprobs use a neutral compatibility value, never fabricated entropy.
+        logprobs = extract_token_logprobs(response, max_tokens=self.entropy_tokens)
+        h = -sum(logprobs) / len(logprobs) if logprobs else 0.0
         h_root = float(state.get("h_root") or 0.0)
         h_tool = float(state.get("h_tool") or 0.0)
         last_entropy = float(state.get("last_entropy") or 0.0)
         consecutive_high = int(state.get("consecutive_high") or 0)
         if num_turns == 0:
             h_root = h
-        elif state.get("turn_records"):
+        elif state.get("turn_records") and logprobs:
             h_tool = h if h_tool == 0.0 else 0.5 * h_tool + 0.5 * h
             if (h - last_entropy) > self.entropy_threshold:
                 consecutive_high += 1
             else:
                 consecutive_high = 0
-        return {
+        result = {
             **state,
-            "messages": messages + [response],
+            "messages": list(state["messages"]) + [response],
             "num_turns": num_turns + 1,
             "asked_finalize": asked_finalize,
             "h_root": h_root,
             "h_tool": h_tool,
             "last_entropy": h,
             "consecutive_high": consecutive_high,
+            "uncertainty_evidence": "chosen_token_surprisal_proxy" if logprobs else "unavailable_neutral_zero",
         }
+        self.last_state = result
+        return result
 
     def request_finalize(self, state: AgentState) -> AgentState:
         messages = list(state["messages"]) + [HumanMessage(content=FINALIZE_PROMPT)]
@@ -397,26 +504,54 @@ class TirAgent:
         return {**state, "messages": messages, "asked_finalize": False}
 
     def call_tools(self, state: AgentState) -> AgentState:
+        self.last_state = state
         last = state["messages"][-1]
         tool_messages: List[ToolMessage] = []
         records = list(state.get("turn_records") or [])
         n_search = int(state.get("n_search") or 0)
         n_python = int(state.get("n_python") or 0)
         tool_calls = getattr(last, "tool_calls", None) or []
+        result_event = None
         for call in tool_calls:
             name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
             call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", "")
             args = call.get("args") if isinstance(call, dict) else getattr(call, "args", {})
+            call_id = call_id or uuid4().hex
+            if self.recorder:
+                self.recorder.emit(EventKind.TOOL_CALL, {"name": name, "args": args},
+                                   model_call_id=self.last_model_call_id, tool_call_id=call_id)
+            error = None
             tool_fn = self.tool_map.get(name or "")
             if tool_fn is None:
-                content = f"Error: unknown tool {name}"
+                error = f"Unknown tool {name}"
+                content = f"Error: {error}"
             else:
                 try:
                     content = tool_fn.invoke(args)
+                except ArchiveWriteError:
+                    raise
                 except Exception as e:
-                    content = f"Error invoking tool: {e}"
-            content_s = clip_text(str(content), _TOOL_OBS_CHARS)
-            tool_messages.append(ToolMessage(content=content_s, tool_call_id=call_id or name or "tool"))
+                    error = self.redact(str(e))
+                    content = f"Error invoking tool: {error}"
+            content_s = str(content)
+            if error is None and content_s.lstrip().lower().startswith(
+                ("error", "[error", "traceback", "search_unavailable:")
+            ):
+                error = content_s
+            if self.recorder:
+                result_event = self.recorder.emit(EventKind.TOOL_RESULT, {
+                    "name": name, "content": content_s,
+                    "status": "failed" if error else "succeeded",
+                    "error": error, "recoverable": bool(error),
+                }, model_call_id=self.last_model_call_id, tool_call_id=call_id)
+                if error:
+                    self.recorder.emit(EventKind.ERROR, {
+                        "stage": "tool", "error": error, "recoverable": True,
+                    }, model_call_id=self.last_model_call_id, tool_call_id=call_id)
+            tool_messages.append(ToolMessage(
+                content=content_s, tool_call_id=call_id, name=name,
+                status="error" if error else "success",
+            ))
             tname = str(name or "unknown")
             if tname in SEARCH_TOOL_NAMES:
                 n_search += 1
@@ -430,18 +565,25 @@ class TirAgent:
                     "prefix_message_count": len(state["messages"]) + len(tool_messages),
                 }
             )
+            self.last_state = {
+                **state, "messages": state["messages"] + list(tool_messages),
+                "turn_records": list(records), "n_search": n_search, "n_python": n_python,
+            }
         new_messages = state["messages"] + tool_messages
         branch = list(state.get("branch_messages") or [])
         if tool_messages and not branch:
             branch = serialize_messages(new_messages)
-        return {
+        result = {
             **state,
             "messages": new_messages,
             "turn_records": records,
             "n_search": n_search,
             "n_python": n_python,
             "branch_messages": branch,
+            "branch_event_id": state.get("branch_event_id") or (result_event.event_id if result_event else ""),
         }
+        self.last_state = result
+        return result
 
     def should_continue(self, state: AgentState) -> Literal["tools", "finalize", "react", "end"]:
         """ReAct 路由：tools ⇄ agent；无答案可 finalize；finalize 失败且仍有轮次则 react 续跑。"""
@@ -451,12 +593,22 @@ class TirAgent:
         turns_left = num_turns < self.max_turns
         tool_calls = getattr(last, "tool_calls", None) or []
 
+        metadata = getattr(last, "response_metadata", {}) or {}
+        finish_reason = metadata.get("finish_reason") or metadata.get("stop_reason")
+        if finish_reason in {"length", "max_tokens", "content_filter"}:
+            state["termination_reason"] = "token_limit" if finish_reason != "content_filter" else "content_filter"
+            self.last_state = state
+            return "end"
         # 收口轮次不执行工具；正常 ReAct 轮次优先走 tools。
         if tool_calls and turns_left and not asked_finalize:
             return "tools"
-        if extract_answer_from_messages(state["messages"]) is not None:
+        if not tool_calls and extract_answer_text(str(getattr(last, "content", "") or "")) is not None:
+            state["termination_reason"] = "answer"
+            self.last_state = state
             return "end"
         if not turns_left:
+            state["termination_reason"] = "max_turns"
+            self.last_state = state
             return "end"
         # 模型停手但无答案：先强制收口一次；收口仍失败则回到带工具的 ReAct。
         if not asked_finalize:

@@ -35,6 +35,12 @@ export type GraphEdge = Edge<{
 export type EdgePatch = Partial<Pick<GraphEdge, 'source' | 'target' | 'sourceHandle' | 'targetHandle'>> & { kind?: EdgeKind };
 export type GraphSelection = { kind: 'node' | 'edge'; id: string } | null;
 export type EditorPanel = 'settings' | null;
+export interface TraceFocusRequest {
+  token: number;
+  agentId: string;
+  agentExecutionId?: string;
+  toolName?: string;
+}
 
 export type SelectedGraphNode = {
   id: string;

@@ -12,6 +12,8 @@ import yaml
 from pydantic import BaseModel, Field
 
 from science_infra.control.paths import experiments_root, tir_agent_root
+from science_infra.control.llm_config import endpoint_issue, public_endpoint, resolve_llm_config
+from science_infra.env import parse_env_file
 
 VALID_ALGOS = ("grpo", "arpo", "aepo", "igpo", "gigpo")
 HARNESS_PLUGINS = (
@@ -206,6 +208,16 @@ def list_experiments() -> List[str]:
     return out
 
 
+def load_llm_section(exp_id: str) -> Dict[str, Any]:
+    """Read model configuration without loading RL or compiling a workflow."""
+    root = exp_dir(exp_id)
+    if not (root / "experiment.yaml").is_file():
+        raise ValueError("实验不存在，请先创建或选择一个实验。")
+    raw = _read_yaml(root / "experiment.yaml")
+    meta = ExperimentMeta.model_validate(raw.get("experiment") or raw)
+    return _read_yaml(root / meta.refs.get("llm", "llm.yaml"))
+
+
 def load_bundle(exp_id: str) -> Dict[str, Any]:
     root = ensure_experiment(exp_id)
     meta_raw = _read_yaml(root / "experiment.yaml")
@@ -215,13 +227,17 @@ def load_bundle(exp_id: str) -> Dict[str, Any]:
     workflow = _read_yaml(root / meta.refs.get("workflow", "workflow.yaml"))
     rl = _read_yaml(root / meta.refs.get("rl", "rl.yaml"))
     harness = _read_yaml(root / meta.refs.get("harness", "harness.yaml"))
-    # Never expose raw API keys; only whether set in env / sidecar
+    model_summary = resolve_llm_config(exp_id, llm=llm).public()
+    # Keep saved form values distinct from effective service defaults.
     llm = dict(llm)
     llm.pop("api_key", None)
-    llm["api_key_set"] = bool(
-        __import__("os").environ.get("OPENAI_API_KEY")
-        or (root / ".secrets.env").is_file()
-    )
+    llm["base_url"] = public_endpoint(str(llm.get("base_url") or ""))
+    for field in ("api_key_set", "credential_source", "config_revision"):
+        llm[field] = model_summary[field]
+    if isinstance(workflow.get("llm"), dict):
+        workflow["llm"] = dict(workflow["llm"])
+        workflow["llm"].pop("api_key", None)
+        workflow["llm"]["base_url"] = public_endpoint(str(workflow["llm"].get("base_url") or ""))
     return {
         "id": meta.id,
         "meta": meta.model_dump(),
@@ -248,7 +264,23 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
     elif section == "llm":
         clean = dict(data)
         api_key = clean.pop("api_key", None)
-        clean.pop("api_key_set", None)
+        for field in ("api_key_set", "credential_source", "config_revision"):
+            clean.pop(field, None)
+        if clean.get("kind", "api") not in ("api", "local", "rl_endpoint"):
+            raise ValueError("请选择有效的模型模式。")
+        for field in ("base_url", "model"):
+            if field in clean:
+                if not isinstance(clean[field], str):
+                    raise ValueError(f"{field} 必须是字符串。")
+                clean[field] = clean[field].strip()
+        if clean.get("base_url"):
+            issue = endpoint_issue(clean["base_url"])
+            if issue:
+                raise ValueError(issue)
+        if api_key is not None and not isinstance(api_key, str):
+            raise ValueError("API Key 必须是字符串。")
+        if isinstance(api_key, str) and any(c in api_key for c in ('\r', '\n', '\x00', '"')):
+            raise ValueError("API Key 包含无法保存的字符。")
         _write_yaml(root / meta.refs.get("llm", "llm.yaml"), clean)
         if isinstance(api_key, str) and api_key.strip() and not api_key.startswith("••"):
             _write_secret(root, "OPENAI_API_KEY", api_key.strip())
@@ -262,14 +294,15 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
         }
         _write_yaml(wf_path, wf)
     elif section == "workflow":
-        _write_yaml(root / meta.refs.get("workflow", "workflow.yaml"), data)
-        # Keep llm.yaml kind in sync if workflow carries llm
-        if isinstance(data.get("llm"), dict):
-            llm = _read_yaml(root / meta.refs.get("llm", "llm.yaml"))
-            llm["kind"] = data["llm"].get("kind", llm.get("kind", "api"))
-            llm["model"] = data["llm"].get("model", llm.get("model", ""))
-            llm["base_url"] = data["llm"].get("base_url", llm.get("base_url", ""))
-            _write_yaml(root / meta.refs.get("llm", "llm.yaml"), llm)
+        # LLM settings are saved separately; a stale canvas must not overwrite them.
+        llm = _read_yaml(root / meta.refs.get("llm", "llm.yaml"))
+        workflow = dict(data)
+        workflow["llm"] = {
+            "kind": llm.get("kind", "api"),
+            "model": llm.get("model", ""),
+            "base_url": llm.get("base_url") or "",
+        }
+        _write_yaml(root / meta.refs.get("workflow", "workflow.yaml"), workflow)
     elif section == "rl":
         _write_yaml(root / meta.refs.get("rl", "rl.yaml"), data)
     elif section == "harness":
@@ -281,12 +314,7 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
 
 def _write_secret(root: Path, key: str, value: str) -> None:
     path = root / ".secrets.env"
-    existing: Dict[str, str] = {}
-    if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.strip().startswith("#"):
-                k, _, v = line.partition("=")
-                existing[k.strip()] = v.strip().strip('"')
+    existing = parse_env_file(path)
     existing[key] = value
     lines = [f'{k}="{v}"' for k, v in existing.items()]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -294,15 +322,7 @@ def _write_secret(root: Path, key: str, value: str) -> None:
 
 
 def load_secrets_env(exp_id: str) -> Dict[str, str]:
-    path = exp_dir(exp_id) / ".secrets.env"
-    out: Dict[str, str] = {}
-    if not path.is_file():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if "=" in line and not line.strip().startswith("#"):
-            k, _, v = line.partition("=")
-            out[k.strip()] = v.strip().strip('"')
-    return out
+    return parse_env_file(exp_dir(exp_id) / ".secrets.env")
 
 
 def artifacts_dir(exp_id: str) -> Path:

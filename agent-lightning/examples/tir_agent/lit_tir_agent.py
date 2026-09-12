@@ -10,11 +10,10 @@ from typing import Any, Dict, List, Optional, cast
 import agentlightning as agl
 
 from tir_agent import ig_deltas_from_messages
-from workflow.archive import dump_resume_with_archive, register_archive, Archive
+from workflow.archive import dump_resume_with_archive
 from workflow.collector import default_reward_fn
 from workflow.env_load import load_repo_dotenv
-from workflow.memory import MemoryStore
-from workflow.runtime import LLMConfig, TirRunner, apply_verifier_feedback, episode_to_trajectory, run_episode
+from workflow.runtime import ExecutionService, LLMConfig
 from workflow.spec import load_spec
 
 load_repo_dotenv()
@@ -24,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
-    """Training wrapper: shared run_episode + canonical RewardFn + emit_*."""
+    """Training wrapper: shared MAS execution + canonical RewardFn + emit_*."""
 
     def __init__(
         self,
@@ -60,18 +59,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
         resume_parent = str(task.get("resume_parent_id") or "")
         task_run = dict(task)
         task_run["_rollout_id"] = rollout_id
-
-        if not task_run.get("resume_messages") and task_run.get("resume_from"):
-            try:
-                from workflow.archive import branch_point_to_resume_task_fields
-                from workflow.contracts import BranchPoint
-
-                raw = task_run.get("resume_from")
-                bp = raw if isinstance(raw, BranchPoint) else BranchPoint.model_validate(raw)
-                task_run.update(branch_point_to_resume_task_fields(bp))
-                resume_parent = str(task_run.get("resume_parent_id") or resume_parent)
-            except Exception as e:
-                logger.warning("[Rollout] resume_from resolve failed: %s", e)
+        task_run["_attempt_id"] = rollout.attempt.attempt_id
 
         if rollout.mode == "train":
             temperature = float(llm.sampling_parameters.get("temperature", 0.7))
@@ -88,6 +76,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
         cfg = LLMConfig(
             endpoint=endpoint,
             model=llm.model,
+            source="rl_endpoint",
             temperature=temperature,
             max_turns=self.max_turns,
             max_tokens=self.max_tokens,
@@ -95,19 +84,21 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             request_logprobs=request_logprobs,
             enabled_tools=list(self.spec.tools),
             langchain_callbacks=[handler] if handler else None,
+            sampling_parameters=dict(llm.sampling_parameters),
         )
         logger.info("[Rollout %s] source=%s q=%s", rollout_id, source, question[:180])
-        arch = register_archive(Archive())
-        mem = MemoryStore()
-        raw = run_episode(task_run, cfg, arch, spec=self.spec, memory=mem)
-        raw = apply_verifier_feedback(task_run, raw, cfg, arch, self.spec, mem, TirRunner())
-        traj = episode_to_trajectory(
-            task_run, raw, arch, collector="lit_tir_agent", spec=self.spec, memory=mem
-        )
+        service = ExecutionService(spec=self.spec, llm=cfg, run_id=f"{rollout_id}:{rollout.attempt.attempt_id}")
+        traj = service.run(task_run)
+        raw = service.last_raw
+        arch = service.last_archive
+        assert raw is not None and arch is not None
+        traj.meta["collector"] = "lit_tir_agent"
+        resume_parent = str(traj.task.get("resume_parent_id") or resume_parent)
         if self.multi_tool_bonus != 0.1:
             # still canonical formula; bonus is an argument of RewardFn via traj fields
             pass
         reward = float(default_reward_fn(traj, task_run))
+        traj.final_reward = reward
         n_search = traj.n_search
         n_python = traj.n_python
         format_ok = traj.format_ok
@@ -142,21 +133,19 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             "aepo",
         )
         if dump_ok and not raw.error:
-            try:
-                dumped = dump_resume_with_archive(
-                    rollout_id,
-                    {
-                        "messages": raw.branch_messages or raw.messages,
-                        "h_root": raw.h_root,
-                        "h_tool": raw.h_tool,
-                        "consecutive_high": raw.consecutive_high,
-                    },
-                    archive=arch,
-                )
-                archive_id = str(dumped.get("archive_id") or "")
-                snapshot_id = str(dumped.get("snapshot_id") or "")
-            except Exception as e:
-                logger.warning("[Rollout %s] dump_resume failed: %s", rollout_id, e)
+            dumped = dump_resume_with_archive(
+                rollout_id,
+                {
+                    "messages": raw.branch_messages or raw.messages,
+                    "h_root": raw.h_root,
+                    "h_tool": raw.h_tool,
+                    "consecutive_high": raw.consecutive_high,
+                    "uncertainty_evidence": raw.uncertainty_evidence,
+                },
+                archive=arch,
+            )
+            archive_id = str(dumped.get("archive_id") or "")
+            snapshot_id = str(dumped.get("snapshot_id") or "")
         try:
             agl.emit_annotation(
                 {
@@ -172,6 +161,12 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     "tir.resume_parent_id": resume_parent,
                     "tir.archive_id": archive_id,
                     "tir.snapshot_id": snapshot_id,
+                    "tir.trajectory_id": traj.trajectory_id,
+                    "tir.run_id": traj.meta["run_id"],
+                    "tir.status": traj.meta["status"],
+                    "tir.termination_reason": traj.meta["termination_reason"],
+                    "tir.trace_status": traj.meta["trace_status"],
+                    "tir.uncertainty_evidence": raw.uncertainty_evidence,
                 }
             )
         except Exception as e:

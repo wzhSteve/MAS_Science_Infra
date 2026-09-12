@@ -69,6 +69,8 @@ export interface LlmConfig extends Config {
   port?: number;
   gpu_memory_utilization?: number;
   api_key_set?: boolean;
+  credential_source?: 'experiment' | 'service' | 'none';
+  config_revision?: string;
 }
 
 export interface Bundle {
@@ -115,10 +117,50 @@ export interface GpuResponse {
 
 export interface HealthResponse {
   ok: boolean;
+  status: 'reachable' | 'authentication_failed' | 'rate_limited' | 'unsupported' | 'network_error'
+    | 'timeout' | 'server_error' | 'invalid_response' | 'configuration_error' | 'request_failed';
+  message: string;
   error?: string;
   status_code?: number;
-  models?: unknown;
-  url?: string;
+  models: string[];
+  url: string;
+  checked_at: string;
+  config_revision: string;
+  probe_type: 'models';
+  inference_verified: false;
+  tool_calling_verified: false;
+}
+
+export interface ReadinessIssue {
+  code: string;
+  message: string;
+  hint?: string;
+}
+
+export interface DependencyReadiness {
+  available: boolean;
+  missing: string[];
+  error: string | null;
+  hint: string;
+}
+
+export interface ModelReadinessResponse {
+  experiment_id: string;
+  checked_at: string;
+  ready: boolean;
+  model: {
+    kind: string;
+    model: string;
+    base_url: string;
+    api_key_set: boolean;
+    credential_source: 'experiment' | 'service' | 'none';
+    config_revision: string;
+  };
+  blocking_issues: ReadinessIssue[];
+  warnings: ReadinessIssue[];
+  dependencies: { live: DependencyReadiness; parquet: DependencyReadiness };
+  capabilities: { tool_calling: 'unknown'; token_ids: 'unknown'; logprobs: 'unknown'; policy_version: 'unknown' };
+  probe: HealthResponse | null;
 }
 
 export interface AglHealth {
@@ -183,6 +225,57 @@ export interface CollectBody {
   source?: string;
   sequential?: boolean;
 }
+export type RolloutExecution = 'mock' | 'live';
+export interface RolloutRunRequest {
+  workflow: WorkflowSpec;
+  task: { id?: string; question: string };
+  execution: RolloutExecution;
+}
+export interface RolloutRunSummary {
+  run_id: string;
+  trajectory_id?: string | null;
+  status: 'running' | 'succeeded' | 'failed' | 'interrupted';
+  execution: RolloutExecution;
+  started_at: string;
+  finished_at?: string | null;
+  model: { source: string; name: string; policy_version: string | null } | null;
+  final_answer: string | null;
+  termination_reason: string | null;
+  format_ok: boolean | null;
+  model_call_count: number;
+  tool_call_count: number;
+  trace_status: 'complete' | 'partial' | 'unavailable';
+  error?: { stage: string; code: string; message: string } | null;
+}
+export interface RolloutTrajectory extends Config {
+  trajectory_id?: string;
+  events?: unknown[];
+  meta?: Config;
+}
+export interface RolloutRunContext {
+  run: RolloutRunSummary;
+  workflow: WorkflowSpec;
+  task: { id: string; question: string };
+  model_binding?: Config | null;
+  redaction_applied?: boolean;
+}
+export interface TrajectoryPage { offset: number; total: number; next_offset: number | null }
+export interface RolloutTrajectoryResponse extends RolloutRunContext {
+  trajectory: RolloutTrajectory;
+  preview?: boolean;
+  event_page?: TrajectoryPage;
+  message_page?: TrajectoryPage;
+  metadata_truncated?: boolean;
+  messages_truncated?: boolean;
+  snapshots?: Array<{ snapshot_id: string; coverage: Record<string, boolean> | null; error?: string | null }>;
+}
+export interface RolloutHistoryItem {
+  run_id: string;
+  run: RolloutRunSummary | null;
+  question_preview: string;
+  record_error: string | null;
+}
+export interface RolloutHistoryPage { items: RolloutHistoryItem[]; next_cursor: string | null }
 export interface ScienceEvent {
   type: string;
   experiment_id: string;

@@ -222,10 +222,10 @@ code
 流程：
 
 1. **第一波**：`_async_set_up` 临时把 `train_rollout_n` 降为 `tir.initial_rollouts`（默认 2，且 ≤ `n-1`），跑完整轨迹。
-2. Agent 在第一次 tool 后把 messages 序列化进 `branch_messages`，结束时 `dump_resume(rollout_id, {messages, h_root, h_tool, consecutive_high})`。
-3. **熵估计**（`estimate_turn_entropy`）：
+2. Agent 在第一次 tool 后把 messages 序列化进 `branch_messages`，通过 Archive 保存消息前缀及 h_* 兼容字段；不保存任意图恢复状态。
+3. **不确定性兼容指标**（统一执行路径不再调用有固定回退值的旧 `estimate_turn_entropy`）：
    - 若 AIMessage 带 logprobs：用前 `entropy_tokens`（默认 8）个 chosen-token 的 `-mean log p`；
-   - 否则启发式：有 `tool_calls` → 1.0，纯文本 → 0.3。
+   - 缺失 logprobs 时保留中性零，并记录 `uncertainty_evidence=unavailable_neutral_zero`。上述 chosen-token surprisal 只是近似指标，不是词表分布熵；原始 provider logprobs 单独保存。
 4. **第二波** `_enqueue_tree_branches`：
    - `ΔH = h_tool - h_root`；
    - ARPO：`p = branch_probability + entropy_weight * ΔH`，与 `entropy_threshold` 比较；
@@ -252,7 +252,7 @@ sequenceDiagram
 | 论文 / 官方 | tir 实际 |
 |---|---|
 | decode 中途或轮次边界 **同序列** 前缀 fork | 第二波新 rollout；消息级 resume，非 token 级共享 |
-| 工具后前 k token 的 **top-k 词表熵** | turn 级 `-mean log p` 或固定启发式 |
+| 工具后前 k token 的 **top-k 词表熵** | 有证据时使用 chosen-token surprisal 代理；缺失时明确标记，不伪造熵 |
 | vLLM 内核 / partial rollout 省掉重复生成前缀 | 不改 vLLM；前缀可能被重新喂给 API |
 | soft GRPO：共享前缀同一条 response 里 IS 相同 | M 条完整轨迹各自进 GRPO；「soft」仅概念近似 |
 | fork 可发生在每一次 tool 后的 active 边界 | 主要用 **首次 tool 后** dump 的前缀做分支 |
@@ -350,9 +350,9 @@ sequenceDiagram
 | 变量 | 作用 |
 |---|---|
 | `TIR_ALGO` | 与 `--algo` 一致时影响是否 dump resume 等；训练主路径以 Hydra `tir_algo` 为准 |
-| `TIR_REQUEST_LOGPROBS` | `1/true` 时请求 logprobs，改善熵估计 |
+| `TIR_REQUEST_LOGPROBS` | `1/true` 时请求 logprobs，保留原始证据并计算兼容代理值 |
 | `TIR_DUMP_RESUME` | 强制 dump resume；`arpo`/`aepo` 时默认会 dump |
-| `TIR_RESUME_DIR` | resume 缓存目录，默认 `tir_agent/.resume_cache` |
+| `TIR_ARCHIVE_DIR` / `TIR_RESUME_DIR` | Archive 写入目录 / 旧 resume 缓存只读兼容目录 |
 | `TIR_OFFLINE_SEARCH` | 离线检索占位 |
 
 ### 7.3 数据与奖励（tir）
