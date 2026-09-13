@@ -4,7 +4,7 @@ import { DraftRegistryContext, type DraftStatus } from '../../../shared/hooks/us
 const EMPTY: readonly DraftStatus[] = [];
 const emptySnapshot = () => EMPTY;
 const emptySubscribe = () => () => {};
-const RESOURCES = new Set(['llm', 'rl', 'harness']);
+const RESOURCES = new Set(['llm', 'rl', 'harness', 'model-binding-inference', 'model-binding-training']);
 
 export function useSettingsStatus() {
   const registry = useContext(DraftRegistryContext);

@@ -6,13 +6,15 @@ import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { Section } from '../../../shared/components/Section';
 import { LogPanel } from '../../../shared/components/LogPanel';
 import { useAction } from '../../../shared/hooks/useAction';
-import { LLMPanel } from '../../llm/components/LLMPanel';
+import { InferenceSettings } from './InferenceSettings';
 import { HarnessPanel } from '../../harness/components/HarnessPanel';
 import { RlTrainingActions } from '../../rl/components/RlTrainingActions';
 import { useAgl, useRuntimeCommands, useTraining } from '../../../app/providers/RuntimeProvider';
 import { SETTINGS_SECTIONS, type SettingsSection } from '../model/sections';
-import { SettingsStatus, useSettingsStatus } from './SettingsStatus';
+import { useSettingsStatus } from './SettingsStatus';
 import { TrainingSettings } from './TrainingSettings';
+import type { ResourceCategory } from '../../../app/navigation';
+import type { ModelResourceType } from '../../resources/api';
 
 function RetainedSettings({ visible, children }: { visible: boolean; children: ReactNode }) {
   const [visited, setVisited] = useState(visible);
@@ -28,15 +30,17 @@ const TrainingRuntime = memo(function TrainingRuntime({ onStart, pending }: {
   const { stopTrain } = useRuntimeCommands();
   const [logsOpen, setLogsOpen] = useState(false);
   const refresh = useAction();
-  const workflowDirty = useSettingsStatus().some(item => item.resource === 'workflow' && item.dirty);
+  const statuses = useSettingsStatus();
+  const workflowDirty = statuses.some(item => item.resource === 'workflow' && item.dirty);
+  const bindingPending = statuses.some(item => item.resource === 'model-binding-training' && (item.dirty || item.busy));
   return <>
     {workflowDirty && <InlineNotice tone="warning">画布设计尚未保存。训练使用服务端已保存的 Workflow；如需使用新设计，请先点击顶部“保存设计”。</InlineNotice>}
-    <p className="field-hint">这里沿用现有训练启动流程，不提供多配置原子快照。调试模型不等于可训练策略。</p>
+    {bindingPending && <InlineNotice tone="warning">训练模型来源绑定尚未保存，请先保存绑定后再启动训练。</InlineNotice>}
     {training.error && <InlineNotice tone="warning">训练状态读取失败：{training.error}
       <Button size="sm" onClick={() => void training.refresh()}>重试状态</Button>
     </InlineNotice>}
     <RlTrainingActions trainRunId={training.data?.runId ?? null} trainRunning={training.data?.running ?? false}
-      aglOnline={Boolean(agl.data?.ok && !agl.error)} pending={pending} onStart={onStart} onStop={stopTrain} />
+      aglOnline={Boolean(agl.data?.ok && !agl.error)} pending={bindingPending ? 'binding' : pending} onStart={onStart} onStop={stopTrain} />
     <details className="experiment-settings-logs" open={logsOpen} onToggle={event => setLogsOpen(event.currentTarget.open)}>
       <summary>查看训练日志</summary>
       {logsOpen && <LogPanel title="当前 / 最近训练日志" log={training.data?.log || ''} actions={
@@ -55,6 +59,8 @@ const renderTrainingRuntime = ({ active, ...props }: { onStart: () => void; pend
 const TrainingConnection = memo(function TrainingConnection(props: {
   expId: string; bundle: Bundle; meta: MetaResponse | null; onReload: () => void;
   active: boolean; section: 'training' | 'data' | 'environment';
+  onManageModels: () => void; suggestedResourceId?: string;
+  onSuggestionApplied?: () => void;
 }) {
   const { startTrain } = useRuntimeCommands();
   return <TrainingSettings {...props} onStartTrain={startTrain} renderRuntime={renderTrainingRuntime} />;
@@ -65,7 +71,6 @@ function EnvironmentStatus({ readiness, error }: {
 }) {
   const agl = useAgl();
   return <Section title="执行条件">
-    <p className="field-hint">调试依赖与训练服务分开检查，以下状态不会自动启动服务。</p>
     {error && <InlineNotice tone="warning">调试条件暂时无法读取：{error}</InlineNotice>}
     {readiness ? <>
       <dl className="experiment-settings-facts">
@@ -87,19 +92,21 @@ function EnvironmentStatus({ readiness, error }: {
 
 export const ExperimentSettings = memo(function ExperimentSettings({
   bundle, meta, onReload, open, active, section, onSectionChange, onClose, onCollect, onDemo,
-  readiness, readinessError,
+  readiness, readinessError, onResources, selectedResource, suggestedPurpose, onSuggestionApplied,
 }: {
   bundle: Bundle; meta: MetaResponse | null; onReload: () => void;
   open: boolean; active: boolean; section: SettingsSection; onSectionChange: (section: SettingsSection) => void;
   onClose: () => void; onCollect: () => void; onDemo: () => void; readiness: ModelReadinessResponse | null; readinessError: string | null;
+  onResources: (category: ResourceCategory) => void;
+  selectedResource?: string; suggestedPurpose?: ModelResourceType;
+  onSuggestionApplied?: () => void;
 }) {
   const visible = open && active;
   const tabs = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (visible) tabs.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
   }, [visible]);
-  const configureModel = useCallback(() => onSectionChange('model'), [onSectionChange]);
-  const current = SETTINGS_SECTIONS.find(item => item.id === section) || SETTINGS_SECTIONS[0];
+  const manageModels = useCallback(() => onResources('models'), [onResources]);
   const modelVisible = visible && (section === 'model' || section === 'environment');
   const trainingVisible = visible && (section === 'training' || section === 'data' || section === 'environment');
   const trainingSection = section === 'data' || section === 'environment' ? section : 'training';
@@ -130,26 +137,30 @@ export const ExperimentSettings = memo(function ExperimentSettings({
     </div>
     <div className="mas-panel-body experiment-settings-body" role="tabpanel" id="settings-section-content"
       aria-labelledby={`settings-tab-${section}`}>
-      <div className="experiment-settings-intro"><p>{current.description}</p><SettingsStatus resource={current.resource} /></div>
-      {section === 'data' && <Section title="独立数据集采集" description="采集参数与训练参数分开，沿用原示例 / parquet 预览和采集能力。">
+      {section === 'data' && <Button size="sm" variant="ghost"
+        onClick={() => onResources('datasets')}>
+        管理数据
+      </Button>}
+      {section === 'data' && <Section title="数据集采集">
         <Button size="sm" onClick={onCollect}>打开数据集采集</Button>
       </Section>}
       <RetainedSettings visible={modelVisible}>
-        <LLMPanel expId={bundle.id} bundle={bundle} onReload={onReload} embedded
-          view={section === 'environment' ? 'environment' : 'connection'} onConfigureModel={configureModel} />
+        <InferenceSettings bundle={bundle} onReload={onReload} active={modelVisible} onManage={manageModels}
+          view={section === 'environment' ? 'environment' : 'connection'}
+          suggestedId={suggestedPurpose === 'inference' ? selectedResource : undefined} onSuggestionApplied={onSuggestionApplied} />
       </RetainedSettings>
       <RetainedSettings visible={trainingVisible}>
         <TrainingConnection expId={bundle.id} bundle={bundle} meta={meta} onReload={onReload}
-          section={trainingSection} active={trainingVisible} />
+          section={trainingSection} active={trainingVisible} onManageModels={manageModels}
+          suggestedResourceId={suggestedPurpose === 'training' ? selectedResource : undefined} onSuggestionApplied={onSuggestionApplied} />
       </RetainedSettings>
       <RetainedSettings visible={visible && section === 'diagnostics'}>
         <HarnessPanel expId={bundle.id} bundle={bundle} meta={meta} onReload={onReload} embedded />
       </RetainedSettings>
       {visible && section === 'environment' && <EnvironmentStatus readiness={readiness} error={readinessError} />}
-      {section === 'environment' && <Section title="开发与演示" description="模拟执行只演示 Workflow 和记录结构，不调用真实模型，不验证推理能力。">
+      {section === 'environment' && <Section title="开发与演示">
         <Button size="sm" onClick={onDemo}>打开模拟演示 · Mock</Button>
       </Section>}
     </div>
-    <div className="mas-panel-footnote">分组显式保存，不自动运行。数据、训练和训练环境共用一份训练配置；顶部“保存设计”仅保存 Workflow。</div>
   </aside>;
 });

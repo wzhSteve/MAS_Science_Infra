@@ -1,0 +1,6 @@
+@layer components {
+  .model-binding-search { display: flex; align-items: center; gap: 6px; margin: 14px 0; }
+  .model-binding-search .ui-input { flex: 1; min-width: 0; }
+  .model-binding-pages { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 10px; }
+  .model-binding-summary { background: var(--surface-subtle); padding: 10px 12px; border-radius: 6px; margin-top: 12px; font-size: 12px; overflow-wrap: anywhere; }
+}

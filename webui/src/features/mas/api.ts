@@ -32,7 +32,7 @@ export const masApi = {
   palette: (signal?: AbortSignal) => request<Palette>('/api/mas/palette', { signal }),
   collect: (id: string, body: CollectBody) =>
     request<CollectResponse>(`/api/mas/collect?${experimentQuery(id)}`, { method: 'POST', body: JSON.stringify(body) }),
-  sampleData: (body: { parquet?: string; data_n?: number; source?: string }) =>
+  sampleData: (body: { parquet?: string; data_n?: number; source?: string }, signal?: AbortSignal) =>
     request<SampleDataResponse>(
-      '/api/mas/sample-data', { method: 'POST', body: JSON.stringify(body) }),
+      '/api/mas/sample-data', { method: 'POST', body: JSON.stringify(body), signal }),
 };

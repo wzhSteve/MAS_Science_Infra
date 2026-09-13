@@ -17,7 +17,7 @@ type Props = {
 
 export const RlTrainingActions = memo(function RlTrainingActions({ trainRunId, trainRunning, aglOnline, pending, onStart, onStop }: Props) {
   const stop = useAction();
-  return <Section title="训练运行" description="先保存 RL 配置，再确认启动训练。取消确认不会撤销已保存的配置。"
+  return <Section title="训练运行"
     actions={<StatusBadge tone={trainRunning ? 'info' : 'neutral'}>{trainRunning ? 'running' : 'idle'}</StatusBadge>}>
     {trainRunId && <p className="field-hint">run=<span className="mono break-all">{trainRunId}</span></p>}
     <ActionBar>

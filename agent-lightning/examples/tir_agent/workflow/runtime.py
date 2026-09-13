@@ -36,11 +36,15 @@ class LLMConfig:
     policy_version: Optional[str] = None
     tokenizer_id: Optional[str] = None
     sampling_parameters: Dict[str, Any] = field(default_factory=dict)
+    resource_id: Optional[str] = None
+    resource_revision: Optional[int] = None
+    resource_name: Optional[str] = None
 
     def identity(self) -> ModelIdentity:
         return ModelIdentity(
             source=self.source, model=self.model,
             policy_version=self.policy_version, tokenizer_id=self.tokenizer_id,
+            resource_id=self.resource_id, resource_revision=self.resource_revision, resource_name=self.resource_name,
         )
 
     def public_error(self, error: BaseException) -> str:

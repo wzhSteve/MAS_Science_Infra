@@ -1,4 +1,12 @@
 import { Boxes, FlaskConical, Cpu, Activity, Network, ScanLine } from 'lucide-react';
+import type { SettingsSection } from '../features/settings/model/sections';
+
+export type ResourceCategory = 'models' | 'datasets';
+export interface ResourceRoute {
+  kind: 'resources';
+  category: ResourceCategory;
+  experimentId?: string;
+}
 
 export const NAVIGATION = [
   { id: 'experiment', label: 'Experiment', description: '实验配置', icon: FlaskConical },
@@ -18,18 +26,22 @@ export interface WorkspaceRoute {
   kind: 'workspace';
   experimentId: string;
   panel: PanelId;
+  settings?: SettingsSection;
+  selectedResource?: string;
 }
-export type AppRoute = { kind: 'home' } | WorkspaceRoute | { kind: 'not-found' };
+export type AppRoute = { kind: 'home' } | WorkspaceRoute | ResourceRoute | { kind: 'not-found' };
 
 export const HOME_HASH = '#/experiments';
 
-export function workspaceRoute(experimentId: string, panel: PanelId = 'mas'): WorkspaceRoute {
-  return { kind: 'workspace', experimentId, panel };
+export function workspaceRoute(experimentId: string, panel: PanelId = 'mas', settings?: SettingsSection): WorkspaceRoute {
+  return { kind: 'workspace', experimentId, panel, ...(settings ? { settings } : {}) };
 }
 
 export function routeHash(route: Exclude<AppRoute, { kind: 'not-found' }>): string {
   if (route.kind === 'home') return HOME_HASH;
+  if (route.kind === 'resources') return `#/resources/${route.category}${route.experimentId ? `?experiment=${encodeURIComponent(route.experimentId)}` : ''}`;
   const base = `${HOME_HASH}/${encodeURIComponent(route.experimentId)}`;
+  if (route.settings) return `${base}/workspace/settings/${route.settings}${route.selectedResource ? `?select=${encodeURIComponent(route.selectedResource)}` : ''}`;
   return route.panel === 'mas' ? `${base}/workspace` : `${base}/panels/${route.panel}`;
 }
 
@@ -38,7 +50,13 @@ function isPanel(value: string): value is PanelId {
 }
 
 export function parseRoute(hash: string): AppRoute {
-  const path = hash.replace(/^#/, '').replace(/\/+$/, '');
+  const [rawPath, query = ''] = hash.replace(/^#/, '').split('?');
+  const path = rawPath.replace(/\/+$/, '');
+  if (path === '/resources/models' || path === '/resources/datasets') {
+    const id = new URLSearchParams(query).get('experiment') || undefined;
+    if (id && !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return { kind: 'not-found' };
+    return { kind: 'resources', category: path.endsWith('/models') ? 'models' : 'datasets', experimentId: id };
+  }
   if (!path || path === '/' || path === '/experiments') return { kind: 'home' };
   const legacy = path.replace(/^\//, '');
   if (isPanel(legacy)) return workspaceRoute('demo', legacy);
@@ -51,6 +69,14 @@ export function parseRoute(hash: string): AppRoute {
     return { kind: 'not-found' };
   }
   if (parts.length === 4 && parts[3] === 'workspace') return workspaceRoute(experimentId);
+  if (parts.length === 6 && parts[3] === 'workspace' && parts[4] === 'settings') {
+    const section = parts[5];
+    if (section === 'model' || section === 'data' || section === 'training' || section === 'environment' || section === 'diagnostics') {
+      const selectedResource = new URLSearchParams(query).get('select') || undefined;
+      if (selectedResource && !/^[A-Za-z0-9_-]{1,128}$/.test(selectedResource)) return { kind: 'not-found' };
+      return { ...workspaceRoute(experimentId, 'mas', section), ...(selectedResource ? { selectedResource } : {}) };
+    }
+  }
   if (parts.length === 5 && parts[3] === 'panels' && isPanel(parts[4])) return workspaceRoute(experimentId, parts[4]);
   return { kind: 'not-found' };
 }

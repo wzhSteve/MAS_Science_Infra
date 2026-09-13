@@ -21,12 +21,14 @@ from science_infra.control.experiments import (
     ensure_experiment,
     exp_dir,
     load_bundle,
+    load_llm_section,
     workflow_executable,
     write_json,
 )
 from science_infra.control.paths import tir_agent_root
 from science_infra.control.process_manager import PROCS
-from science_infra.control.llm_config import resolve_llm_config
+from science_infra.control.llm_config import resolve_llm_config, resolve_legacy_llm_config, resource_llm_config
+from science_infra.control.model_resources import ResourceError, resolve_binding
 from science_infra.control.readiness import probe_llm, require_live, require_parquet
 from science_infra.control.readiness import ensure_workflow_path as _ensure_tir_on_path
 
@@ -44,15 +46,28 @@ async def llm_health(
 
 
 def start_local_llm(exp_id: str, *, stop_if_running: bool = True) -> Dict[str, Any]:
-    bundle = load_bundle(exp_id)
-    llm = bundle["llm"]
+    ensure_experiment(exp_id)
+    resource = resolve_binding(exp_id, "inference")
+    llm = resource.data["config"] if resource else load_llm_section(exp_id)
+    effective = resource_llm_config(resource) if resource else resolve_legacy_llm_config(exp_id, llm=llm)
     if llm.get("kind") != "local":
         raise ValueError("llm.kind must be 'local' to start vLLM")
-    model_path = str(llm.get("model_path") or llm.get("model") or "").strip()
+    model_path = str((llm.get("model_path") if resource else llm.get("model_path") or llm.get("model")) or "").strip()
     if not model_path:
         raise ValueError("llm.model_path required for local start")
     port = int(llm.get("port") or 8000)
     gpu_mem = float(llm.get("gpu_memory_utilization") or 0.45)
+    base_url = f"http://127.0.0.1:{port}/v1"
+    if resource:
+        from urllib.parse import urlsplit
+
+        endpoint = urlsplit(effective.base_url)
+        if (endpoint.scheme != "http" or endpoint.hostname not in ("127.0.0.1", "localhost")
+                or (endpoint.port or 80) != port or endpoint.path.rstrip("/") != "/v1"):
+            raise ResourceError("本地启动要求资源端点为 http://127.0.0.1:<port>/v1（或 localhost），请先编辑资源；启动不会改写共享端点。", 409)
+        base_url = effective.base_url
+    if stop_if_running and PROCS.active("train"):
+        raise RuntimeError("train is running; stop train or confirm GPU conflict before starting local LLM")
     vllm = shutil.which("vllm")
     if vllm:
         argv = [
@@ -77,25 +92,25 @@ def start_local_llm(exp_id: str, *, stop_if_running: bool = True) -> Dict[str, A
             "--gpu-memory-utilization",
             str(gpu_mem),
         ]
-    base_url = f"http://127.0.0.1:{port}/v1"
-    # Persist endpoint back
-    from science_infra.control.experiments import save_section
+    if resource:
+        argv.extend(["--served-model-name", effective.model])
+    else:
+        from science_infra.control.experiments import save_section
 
-    llm2 = dict(llm)
-    llm2["base_url"] = base_url
-    if not llm2.get("model"):
-        llm2["model"] = model_path
-    save_section(exp_id, "llm", llm2)
-
-    if stop_if_running and PROCS.active("train"):
-        raise RuntimeError("train is running; stop train or confirm GPU conflict before starting local LLM")
+        llm2 = dict(llm)
+        llm2["base_url"] = base_url
+        if not llm2.get("model"):
+            llm2["model"] = model_path
+        save_section(exp_id, "llm", llm2)
 
     mp = PROCS.start(
         kind="llm",
         experiment_id=exp_id,
         argv=argv,
         cwd=tir_agent_root(),
-        meta={"base_url": base_url, "model_path": model_path, "port": port},
+        env={"VLLM_API_KEY": effective.api_key} if resource else None,
+        meta={"base_url": base_url, "model_path": model_path, "port": port,
+              "model_binding": effective.public()},
         replace=True,
     )
     BUS.publish(exp_id, "llm_status", {"state": "starting", "run_id": mp.run_id, "base_url": base_url})
@@ -428,6 +443,8 @@ def run_collect(
             model=model_config.model,
             api_key=model_config.api_key,
             source=model_config.kind,
+            resource_id=model_config.resource_id, resource_revision=model_config.resource_revision,
+            resource_name=model_config.resource_name,
         ),
         n=1,
         spec_path=spec_path,
@@ -471,6 +488,10 @@ def run_collect(
         batch.meta = dict(batch.meta or {})
         batch.meta.update(data_meta)
 
+    if not mock:
+        batch.meta = {**(batch.meta or {}), "model_binding": model_config.public()}
+        for trajectory in batch.trajectories:
+            trajectory.meta = {**(trajectory.meta or {}), "model_binding": model_config.public()}
     signal = batch_to_train_signal(batch, algo=algo or str(bundle["rl"].get("algo") or "grpo"))
     payload = {
         "batch": batch.model_dump(mode="json"),
@@ -653,6 +674,19 @@ def start_train(
     ensure_experiment(exp_id)
     bundle = load_bundle(exp_id)
     rl = bundle["rl"]
+    training_resource = resolve_binding(exp_id, "training")
+    inference_config = resolve_llm_config(exp_id)
+    model_path = (
+        training_resource.data["config"]["model_path"] if training_resource else
+        rl.get("model_path") or (rl.get("actor_rollout_ref") or {}).get("model", {}).get("path")
+    )
+    training_source = {
+        "source": "resource" if training_resource else "legacy",
+        "model_path": model_path,
+        "resource_id": training_resource.data["id"] if training_resource else None,
+        "resource_revision": training_resource.data["revision"] if training_resource else None,
+        "resource_name": training_resource.data["name"] if training_resource else None,
+    }
     gpu_info = list_gpus()
     ids = list((rl.get("devices") or {}).get("ids") or [0])
     ids = [int(x) for x in ids]
@@ -676,7 +710,7 @@ def start_train(
         else:
             raise RuntimeError("local LLM running; pass stop_llm=true or confirm_gpu=true")
 
-    rl_yaml = exp_dir(exp_id) / "rl.yaml"
+    rl_yaml = exp_dir(exp_id) / bundle["meta"]["refs"].get("rl", "rl.yaml")
     train_script = tir_agent_root() / "train_tir_agent.py"
     argv = [
         sys.executable,
@@ -689,7 +723,6 @@ def start_train(
     ]
     if rl.get("n_runners") is not None:
         argv.extend(["--n-runners", str(int(rl["n_runners"]))])
-    model_path = rl.get("model_path") or (rl.get("actor_rollout_ref") or {}).get("model", {}).get("path")
     if model_path:
         argv.extend(["--model", str(model_path)])
 
@@ -705,7 +738,7 @@ def start_train(
     except Exception:
         pass
 
-    env = _llm_env(exp_id, bundle["llm"])
+    env = inference_config.subprocess_env()
     env["PYTHONPATH"] = str(tir_agent_root()) + os.pathsep + env.get("PYTHONPATH", "")
     env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in ids)
     env["VLLM_USE_V1"] = env.get("VLLM_USE_V1") or "1"
@@ -723,6 +756,8 @@ def start_train(
             "cuda_visible_devices": env["CUDA_VISIBLE_DEVICES"],
             "n_gpus": len(ids),
             "downgrade": note,
+            "training_source": training_source,
+            "model_binding": inference_config.public(),
         },
         replace=True,
     )
@@ -734,6 +769,7 @@ def start_train(
         "n_gpus": len(ids),
         "profile": profile,
         "note": note,
+        "training_source": training_source,
     }
 
 

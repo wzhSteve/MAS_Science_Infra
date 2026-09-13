@@ -1,6 +1,7 @@
 # Local secrets / machine config
 .env
 .secrets.env
+model_resources.sqlite3*
 !.env.example
 
 # Browser runtime profiles
@@ -29,4 +30,3 @@ agent-lightning/docs
 /agent-lightning/examples/ARPO/ARPO/rl_datasets/
 /agent-lightning/examples/CD_TAA/solver_cache/
 model.safetensors
-

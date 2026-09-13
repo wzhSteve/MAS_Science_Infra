@@ -21,11 +21,12 @@ type Props = {
   onPrefill: () => void;
   initiallyAdvanced?: boolean;
   showSaveAction?: boolean;
+  modelBound?: boolean;
 };
 
 const HYDRA_GROUPS = ['Actor', 'Rollout', 'Data', 'Trainer'];
 
-export const RlSettingsForm = memo(function RlSettingsForm({ rl, meta, dirty, pending, onPatch, onSave, onRecommend, onPrefill, initiallyAdvanced = false, showSaveAction = true }: Props) {
+export const RlSettingsForm = memo(function RlSettingsForm({ rl, meta, dirty, pending, onPatch, onSave, onRecommend, onPrefill, initiallyAdvanced = false, showSaveAction = true, modelBound = false }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(initiallyAdvanced);
   const advancedId = useId();
   return <Section title="训练参数" actions={<StatusBadge tone={dirty ? 'warning' : 'neutral'}>{dirty ? '未保存' : '已载入配置'}</StatusBadge>}>
@@ -47,7 +48,7 @@ export const RlSettingsForm = memo(function RlSettingsForm({ rl, meta, dirty, pe
       <FormField label="并行采集进程（n_runners）">
         <Input type="number" min={1} value={rl.n_runners ?? 1} onChange={(event) => onPatch({ ...rl, n_runners: Number(event.target.value) })} />
       </FormField>
-      <FormField label="model_path"><Input value={rl.model_path || ''} onChange={(event) => onPatch({ ...rl, model_path: event.target.value })} /></FormField>
+      {!modelBound && <FormField label="model_path"><Input value={rl.model_path || ''} onChange={(event) => onPatch({ ...rl, model_path: event.target.value })} /></FormField>}
     </div>
     <ActionBar>
       <Button loading={pending === 'recommend'} disabled={pending !== null} onClick={onRecommend}>按当前机器推荐</Button>

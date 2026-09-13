@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { HOME_HASH, parseRoute, routeHash, type AppRoute, type WorkspaceRoute } from './navigation';
+import { HOME_HASH, parseRoute, routeHash, type AppRoute, type ResourceRoute, type WorkspaceRoute } from './navigation';
 import { useConfirmExperimentLeave } from './providers/NavigationGuard';
 
 interface Entry { hash: string; index: number; route: AppRoute }
-interface NavigationState { route: AppRoute; workspace: WorkspaceRoute | null }
+interface NavigationState { route: AppRoute; workspace: WorkspaceRoute | null; resources: ResourceRoute | null }
 interface Traversal { target: Entry; phase: 'restore' | 'confirm' | 'apply' }
 
 function historyIndex(): number | null {
@@ -34,7 +34,9 @@ export function useHashNavigation() {
   const [initial] = useState(initialEntry);
   const entry = useRef(initial);
   const workspace = useRef<WorkspaceRoute | null>(initial.route.kind === 'workspace' ? initial.route : null);
-  const [state, setState] = useState<NavigationState>({ route: initial.route, workspace: workspace.current });
+  const [state, setState] = useState<NavigationState>({
+    route: initial.route, workspace: workspace.current, resources: initial.route.kind === 'resources' ? initial.route : null,
+  });
   const mounted = useRef(true);
   const navigating = useRef(false);
   const traversal = useRef<Traversal | null>(null);
@@ -43,7 +45,9 @@ export function useHashNavigation() {
   const commit = useCallback((next: Entry) => {
     entry.current = next;
     if (next.route.kind === 'workspace') workspace.current = next.route;
-    setState({ route: next.route, workspace: workspace.current });
+    setState(previous => ({
+      route: next.route, workspace: workspace.current, resources: next.route.kind === 'resources' ? next.route : previous.resources,
+    }));
   }, []);
 
   const navigate = useCallback(async (route: Exclude<AppRoute, { kind: 'not-found' }>) => {

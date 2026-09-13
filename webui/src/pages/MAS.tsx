@@ -9,6 +9,7 @@ import { useModelReadiness } from '../features/mas/model/useModelReadiness';
 import type { TraceFocusRequest } from '../features/mas/types';
 import { ExperimentSettings } from '../features/settings/components/ExperimentSettings';
 import type { SettingsSection } from '../features/settings/model/sections';
+import type { ResourceCategory } from '../app/navigation';
 
 export type MASPanelProps = {
   expId: string;
@@ -18,6 +19,9 @@ export type MASPanelProps = {
   requestedSettings: SettingsSection | null;
   active?: boolean;
   onWorkspace: () => void;
+  onResources: (category: ResourceCategory) => void;
+  onSettings: (section: SettingsSection) => void;
+  selectedResource?: string;
 };
 
 export function MASPanel(props: MASPanelProps) {
@@ -54,13 +58,22 @@ function MASWorkspace(props: MASPanelProps) {
     settingsTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSettingsSection(section);
     setPanel('settings');
-  }, []);
+    props.onSettings(section);
+  }, [props.onSettings]);
+  const changeSettingsSection = useCallback((section: SettingsSection) => {
+    setSettingsSection(section);
+    props.onSettings(section);
+  }, [props.onSettings]);
   const closeSettings = useCallback(() => {
     onPanelChange(null);
     const target = settingsTrigger.current?.isConnected ? settingsTrigger.current : document.getElementById('mas-settings-trigger');
     target?.focus({ preventScroll: true });
   }, [onPanelChange]);
   const configureModel = useCallback(() => openSettings('model'), [openSettings]);
+  const modelResources = useCallback(() => props.onResources('models'), [props.onResources]);
+  const consumeResourceSelection = useCallback(() => {
+    props.onSettings(props.requestedSettings || 'model');
+  }, [props.onSettings, props.requestedSettings]);
   const openCollect = useCallback(() => {
     onPanelChange(null);
     setConsoleMode('collect');
@@ -89,9 +102,10 @@ function MASWorkspace(props: MASPanelProps) {
   const { workflow } = draft;
   const executable = useMemo(() => workflow ? executableInfo(workflow) : { ok: false, reason: '加载中…' }, [workflow]);
   const settings = useMemo(() => props.bundle && <ExperimentSettings bundle={props.bundle} meta={props.meta} onReload={props.onReload}
-    open={panel === 'settings'} active={props.active ?? true} section={settingsSection} onSectionChange={setSettingsSection}
-    onClose={closeSettings} onCollect={openCollect} onDemo={openDemo} readiness={readiness.data} readinessError={readiness.error} />,
-  [props.bundle, props.meta, props.onReload, props.active, panel, settingsSection, closeSettings, openCollect, openDemo, readiness.data, readiness.error]);
+    open={panel === 'settings'} active={props.active ?? true} section={settingsSection} onSectionChange={changeSettingsSection}
+    onClose={closeSettings} onCollect={openCollect} onDemo={openDemo} onResources={props.onResources} readiness={readiness.data} readinessError={readiness.error}
+    selectedResource={props.selectedResource} suggestedPurpose={props.requestedSettings === 'model' ? 'inference' : 'training'} onSuggestionApplied={consumeResourceSelection} />,
+  [props.bundle, props.meta, props.onReload, props.active, props.onResources, props.selectedResource, props.requestedSettings, consumeResourceSelection, panel, settingsSection, changeSettingsSection, closeSettings, openCollect, openDemo, readiness.data, readiness.error]);
   const locate = useCallback((target: Omit<TraceFocusRequest, 'token'>) => {
     setTraceFocus({ ...target, token: ++focusSequence.current });
   }, []);
@@ -112,7 +126,7 @@ function MASWorkspace(props: MASPanelProps) {
       active={props.active ?? true} panel={panel} onPanelChange={onPanelChange}
       libraryOpen={libraryOpen} onLibraryOpenChange={setLibraryOpen}
       traceFocus={traceFocus}
-      settingsContent={settings} />
+      settingsContent={settings} onModelResources={modelResources} />
     <RunConsole draft={draft} experimentId={props.expId} active={props.active ?? true} open={consoleOpen} onOpenChange={setConsoleOpen}
       tab={consoleTab} onTabChange={setConsoleTab} executable={executable}
       readiness={readiness} onConfigureModel={configureModel}

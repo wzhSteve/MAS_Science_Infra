@@ -70,6 +70,9 @@ class ModelIdentity(BaseModel):
     model: str
     policy_version: Optional[str] = None
     tokenizer_id: Optional[str] = None
+    resource_id: Optional[str] = None
+    resource_revision: Optional[int] = None
+    resource_name: Optional[str] = None
     capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
 
     model_config = {"extra": "forbid"}

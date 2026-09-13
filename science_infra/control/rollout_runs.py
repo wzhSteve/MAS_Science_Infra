@@ -312,6 +312,8 @@ def run_rollout(
                     llm = LLMConfig(
                         endpoint=config.base_url, model=config.model,
                         api_key=config.api_key, source=config.kind,
+                        resource_id=config.resource_id, resource_revision=config.resource_revision,
+                        resource_name=config.resource_name,
                     )
                 stage = "runtime"
                 from workflow.runtime import ExecutionService

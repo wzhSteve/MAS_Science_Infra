@@ -56,7 +56,7 @@ function HarnessSettings({ expId, bundle, meta, onReload, embedded = false }: Pr
 
   return <div className={`page-stack ${embedded ? 'settings-embedded' : 'settings-page'}`}>
     {!embedded && <PageHeader title="Harness" eyebrow="诊断插件" description="选择诊断插件，并对最近一次 Collect 的结果运行诊断。" />}
-    <Section title="检查规则" description="仅诊断当前实验最近一次数据集采集，不是单题 Rollout 的自动评估。"
+    <Section title="检查规则" description={embedded ? undefined : '仅诊断当前实验最近一次数据集采集，不是单题 Rollout 的自动评估。'}
       actions={<StatusBadge tone={dirty ? 'warning' : 'neutral'}>{pending === 'save' ? '保存中' : dirty ? '未保存' : '已保存配置'}</StatusBadge>}>
       {!meta && <p className="field-hint">尚未取得插件列表，请等待加载或通过页面上方的提示重试。</p>}
       <div className="grid gap-3 sm:grid-cols-2">
@@ -85,11 +85,11 @@ function HarnessSettings({ expId, bundle, meta, onReload, embedded = false }: Pr
             if (mounted.current) setHypotheses(result.hypotheses || []);
             return `diagnose n=${result.n}`;
           });
-        }}>保存并诊断最近 Collect</Button>
+        }} title="保存检查规则后，诊断当前实验最近一次数据集采集">保存并诊断最近采集</Button>
       </ActionBar>
       {notice && <InlineNotice tone={notice.tone}>{notice.message}</InlineNotice>}
     </Section>
-    <Section title="诊断结果" description="最近一次成功诊断返回的 hypotheses。">
+    <Section title="诊断结果">
       {hypotheses === null ? <EmptyState title="尚未执行诊断">选择插件后，保存并诊断最近 Collect。</EmptyState> :
         hypotheses.length === 0 ? <EmptyState title="没有 hypotheses">本次诊断未产生假设。</EmptyState> :
           <DataTable aria-label="Harness hypotheses">

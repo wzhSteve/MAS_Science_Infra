@@ -9,7 +9,7 @@ import { Textarea } from '../../../shared/ui/textarea';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { FormField } from '../../../shared/components/FormField';
 
-export const NodeInspector = memo(function NodeInspector({ selected, palette, entryId, onPatch, onEntry, onDelete, onClose }: {
+export const NodeInspector = memo(function NodeInspector({ selected, palette, entryId, onPatch, onEntry, onDelete, onClose, onModelResources }: {
   selected: SelectedGraphNode;
   palette: Palette;
   entryId: string;
@@ -17,6 +17,7 @@ export const NodeInspector = memo(function NodeInspector({ selected, palette, en
   onEntry: (id: string) => void;
   onDelete: () => void;
   onClose: () => void;
+  onModelResources: () => void;
 }) {
   const isTool = selected.type === 'tool';
   const Icon = isTool ? Wrench : Bot;
@@ -41,6 +42,11 @@ export const NodeInspector = memo(function NodeInspector({ selected, palette, en
             <Input value={(selected.data.skills || []).join(', ')} onChange={(e) =>
               onPatch({ skills: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} />
           </FormField>
+        </div>
+        <div className="mas-property-section">
+          <h3>模型绑定</h3>
+          <p className="field-hint">继承实验默认推理模型。Agent 是协作角色，不是独立加载的一份权重；逐节点模型覆盖暂未开放。</p>
+          <Button size="sm" variant="ghost" onClick={onModelResources}>查看实验模型资源</Button>
         </div>
         <fieldset className="mas-property-section">
           <legend>可调用工具</legend>

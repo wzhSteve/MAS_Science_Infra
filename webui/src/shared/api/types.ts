@@ -69,8 +69,10 @@ export interface LlmConfig extends Config {
   port?: number;
   gpu_memory_utilization?: number;
   api_key_set?: boolean;
-  credential_source?: 'experiment' | 'service' | 'none';
+  credential_source?: 'experiment' | 'resource' | 'service' | 'none';
   config_revision?: string;
+  resource_id?: string | null;
+  resource_revision?: number | null;
 }
 
 export interface Bundle {
@@ -153,7 +155,9 @@ export interface ModelReadinessResponse {
     model: string;
     base_url: string;
     api_key_set: boolean;
-    credential_source: 'experiment' | 'service' | 'none';
+    credential_source: 'experiment' | 'resource' | 'service' | 'none';
+    resource_id?: string | null;
+    resource_revision?: number | null;
     config_revision: string;
   };
   blocking_issues: ReadinessIssue[];

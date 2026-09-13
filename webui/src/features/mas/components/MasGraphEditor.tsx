@@ -25,10 +25,11 @@ type Props = {
   libraryOpen: boolean;
   onLibraryOpenChange: (open: boolean) => void;
   settingsContent: ReactNode;
+  onModelResources: () => void;
   traceFocus?: TraceFocusRequest | null;
 };
 
-function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelChange, libraryOpen, onLibraryOpenChange, settingsContent, traceFocus }: Props) {
+function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelChange, libraryOpen, onLibraryOpenChange, settingsContent, onModelResources, traceFocus }: Props) {
   const graph = useGraphEditor(workflow, onChange, palette);
   const flow = useReactFlow<GraphNode, GraphEdge>();
   const root = useRef<HTMLDivElement>(null);
@@ -252,6 +253,7 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
       }} />}
     {settingsContent}
     {panel === null && graph.selected ? <NodeInspector selected={graph.selected} palette={palette} entryId={workflow.entry_agent || 'hub'}
+        onModelResources={onModelResources}
         onPatch={graph.updateSelected} onEntry={graph.setEntry} onDelete={graph.deleteSelected} onClose={closePanels} />
       : panel === null && selectedEdge ? <EdgeInspector key={selectedEdge.id} edge={selectedEdge} nodes={graph.nodes}
         rules={graph.rules} topology={workflow.topology}

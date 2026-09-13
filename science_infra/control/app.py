@@ -8,7 +8,9 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -28,6 +30,8 @@ from science_infra.control.process_manager import PROCS
 from science_infra.control import services
 from science_infra.control.readiness import model_readiness
 from science_infra.control import rollout_runs
+from science_infra.control.model_resource_api import router as model_resource_router
+from science_infra.control.model_resources import ResourceError
 
 
 class CreateExperimentBody(BaseModel):
@@ -106,6 +110,18 @@ def create_app() -> FastAPI:
         yield
 
     app = FastAPI(title="Science Control Plane", version="0.1.0", lifespan=lifespan)
+    # Must precede the legacy /{experiment_id}/{section} PUT route.
+    app.include_router(model_resource_router)
+
+    @app.exception_handler(RequestValidationError)
+    async def safe_resource_validation(request: Request, error: RequestValidationError):
+        if request.url.path.startswith("/api/model-resources") or "/model-bindings" in request.url.path:
+            return JSONResponse(status_code=400, content={"detail": "请求参数格式无效，请检查字段和修订号。"})
+        return await request_validation_exception_handler(request, error)
+
+    @app.exception_handler(ResourceError)
+    async def resource_error(_request: Request, error: ResourceError):
+        return JSONResponse(status_code=error.status, content={"detail": str(error)})
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -209,6 +225,8 @@ def create_app() -> FastAPI:
     def put_workflow(exp_id: str, body: SectionBody) -> Dict[str, Any]:
         try:
             return save_section(exp_id, "workflow", body.data)
+        except ResourceError:
+            raise
         except Exception as e:
             raise HTTPException(400, str(e)) from e
 
@@ -218,6 +236,8 @@ def create_app() -> FastAPI:
             raise HTTPException(404, f"unknown section {section}")
         try:
             return save_section(exp_id, section, body.data)
+        except ResourceError:
+            raise
         except Exception as e:
             raise HTTPException(400, str(e)) from e
 
@@ -231,6 +251,8 @@ def create_app() -> FastAPI:
             return await services.llm_health(
                 body.base_url, body.api_key, experiment_id=experiment_id, model=body.model, kind=body.kind,
             )
+        except ResourceError:
+            raise
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
@@ -238,6 +260,8 @@ def create_app() -> FastAPI:
     def mas_readiness(experiment_id: str = Query("demo")) -> Dict[str, Any]:
         try:
             return model_readiness(experiment_id)
+        except ResourceError:
+            raise
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
@@ -245,6 +269,8 @@ def create_app() -> FastAPI:
     def llm_start(experiment_id: str = Query("demo")) -> Dict[str, Any]:
         try:
             return services.start_local_llm(experiment_id)
+        except ResourceError:
+            raise
         except Exception as e:
             raise HTTPException(400, str(e)) from e
 
@@ -281,6 +307,8 @@ def create_app() -> FastAPI:
                 source=body.source,
                 sequential=body.sequential,
             )
+        except ResourceError:
+            raise
         except Exception as e:
             raise HTTPException(400, str(e)) from e
 
@@ -401,6 +429,8 @@ def create_app() -> FastAPI:
                 stop_llm=body.stop_llm,
                 confirm_gpu=body.confirm_gpu,
             )
+        except ResourceError:
+            raise
         except Exception as e:
             raise HTTPException(400, str(e)) from e
 

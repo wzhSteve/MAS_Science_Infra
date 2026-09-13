@@ -6,7 +6,7 @@ import { StatusBadge } from '../../../shared/components/StatusBadge';
 import { DownloadText } from '../../../shared/components/DownloadText';
 
 const kinds: Record<string, string> = { api: '远程 API', local: '本地模型服务', rl_endpoint: '训练注入' };
-const credentials = { experiment: '实验密钥', service: '服务默认密钥', none: '未提供密钥' };
+const credentials = { experiment: '实验密钥', resource: '个人模型资源密钥', service: '服务默认密钥', none: '未提供密钥' };
 
 export const ModelReadiness = memo(function ModelReadiness({ readiness, onConfigureModel, includeData = false }: {
   readiness: ModelReadinessState; onConfigureModel: () => void; includeData?: boolean;

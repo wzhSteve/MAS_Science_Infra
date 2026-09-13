@@ -12,8 +12,9 @@ import yaml
 from pydantic import BaseModel, Field
 
 from science_infra.control.paths import experiments_root, tir_agent_root
-from science_infra.control.llm_config import endpoint_issue, public_endpoint, resolve_llm_config
+from science_infra.control.llm_config import endpoint_issue, public_endpoint, resolve_legacy_llm_config, resource_llm_config
 from science_infra.env import parse_env_file
+from science_infra.control.model_resources import ResourceError, binding_context, transaction
 
 VALID_ALGOS = ("grpo", "arpo", "aepo", "igpo", "gigpo")
 HARNESS_PLUGINS = (
@@ -227,12 +228,27 @@ def load_bundle(exp_id: str) -> Dict[str, Any]:
     workflow = _read_yaml(root / meta.refs.get("workflow", "workflow.yaml"))
     rl = _read_yaml(root / meta.refs.get("rl", "rl.yaml"))
     harness = _read_yaml(root / meta.refs.get("harness", "harness.yaml"))
-    model_summary = resolve_llm_config(exp_id, llm=llm).public()
+    bindings, resource = binding_context(exp_id)
+    if bindings["inference"].get("error"):
+        model_summary = {
+            "kind": "api", "model": "", "base_url": "", "api_key_set": False,
+            "credential_source": "none", "config_revision": "",
+            "resource_id": bindings["inference"]["resource_id"], "resource_revision": None,
+            "resource_name": None, "binding_error": bindings["inference"]["error"],
+        }
+    else:
+        model_summary = (resource_llm_config(resource) if resource else resolve_legacy_llm_config(exp_id, llm=llm)).public()
     # Keep saved form values distinct from effective service defaults.
     llm = dict(llm)
     llm.pop("api_key", None)
     llm["base_url"] = public_endpoint(str(llm.get("base_url") or ""))
-    for field in ("api_key_set", "credential_source", "config_revision"):
+    if bindings["inference"]["resource_id"] is not None:
+        bound = bindings["inference"].get("resource")
+        llm = dict(bound["config"]) if bound else {"kind": "api", "model": "", "base_url": ""}
+        if "binding_error" in model_summary:
+            llm["binding_error"] = model_summary["binding_error"]
+        workflow["llm"] = {field: model_summary[field] for field in ("kind", "model", "base_url")}
+    for field in ("api_key_set", "credential_source", "config_revision", "resource_id", "resource_revision", "resource_name"):
         llm[field] = model_summary[field]
     if isinstance(workflow.get("llm"), dict):
         workflow["llm"] = dict(workflow["llm"])
@@ -247,10 +263,24 @@ def load_bundle(exp_id: str) -> Dict[str, Any]:
         "harness": harness,
         "path": str(root),
         "executable": workflow_executable(workflow),
+        "model_bindings": bindings,
     }
 
 
 def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    ensure_experiment(exp_id)
+    # Serialize legacy writes with binding changes and explicit migration. No resource
+    # can become authoritative halfway through a legacy credential/config write.
+    with transaction(write=True) as connection:
+        if section.lower().strip() == "llm" and connection.execute(
+            "SELECT 1 FROM model_bindings WHERE experiment_id = ? AND purpose = 'inference'", (exp_id,),
+        ).fetchone():
+            raise ResourceError("当前实验已绑定模型资源，请编辑资源或显式解除绑定。", 409)
+        _save_section(exp_id, section, data)
+    return load_bundle(exp_id)
+
+
+def _save_section(exp_id: str, section: str, data: Dict[str, Any]) -> None:
     root = ensure_experiment(exp_id)
     meta_raw = _read_yaml(root / "experiment.yaml")
     exp = meta_raw.get("experiment") or meta_raw
@@ -264,7 +294,7 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
     elif section == "llm":
         clean = dict(data)
         api_key = clean.pop("api_key", None)
-        for field in ("api_key_set", "credential_source", "config_revision"):
+        for field in ("api_key_set", "credential_source", "config_revision", "resource_id", "resource_revision", "resource_name", "binding_error"):
             clean.pop(field, None)
         if clean.get("kind", "api") not in ("api", "local", "rl_endpoint"):
             raise ValueError("请选择有效的模型模式。")
@@ -302,6 +332,8 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
             "model": llm.get("model", ""),
             "base_url": llm.get("base_url") or "",
         }
+        # Keep original inline fallback on disk; bound values are mirrored only on read.
+        # The binding remains authoritative even if a stale canvas submits old fields.
         _write_yaml(root / meta.refs.get("workflow", "workflow.yaml"), workflow)
     elif section == "rl":
         _write_yaml(root / meta.refs.get("rl", "rl.yaml"), data)
@@ -309,7 +341,6 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
         _write_yaml(root / meta.refs.get("harness", "harness.yaml"), data)
     else:
         raise ValueError(f"unknown section: {section}")
-    return load_bundle(exp_id)
 
 
 def _write_secret(root: Path, key: str, value: str) -> None:

@@ -19,7 +19,7 @@ _SERVICE_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 _SERVICE_BASE = (os.environ.get("OPENAI_API_BASE") or os.environ.get("OPENAI_BASE_URL") or "").strip()
 _SERVICE_MODEL = (os.environ.get("OPENAI_MODEL") or os.environ.get("MODEL") or "").strip()
 _REVISION_KEY = secrets.token_bytes(32)
-CredentialSource = Literal["request", "experiment", "service", "none"]
+CredentialSource = Literal["request", "experiment", "resource", "service", "none"]
 
 
 def public_endpoint(base_url: str) -> str:
@@ -74,12 +74,16 @@ class EffectiveLlmConfig:
     base_url: str = field(repr=False)
     api_key: str = field(repr=False)
     credential_source: CredentialSource
+    resource_id: Optional[str] = None
+    resource_revision: Optional[int] = None
+    resource_name: Optional[str] = None
 
     @property
     def revision(self) -> str:
         # HMAC avoids exposing a guessable hash of the user's API key.
         payload = json.dumps(
-            [self.kind, self.model, self.base_url, self.api_key, self.credential_source],
+            [self.kind, self.model, self.base_url, self.api_key, self.credential_source,
+             self.resource_id, self.resource_revision],
             ensure_ascii=False,
         ).encode("utf-8")
         return hmac.new(_REVISION_KEY, payload, hashlib.sha256).hexdigest()
@@ -92,6 +96,9 @@ class EffectiveLlmConfig:
             "api_key_set": bool(self.api_key),
             "credential_source": self.credential_source,
             "config_revision": self.revision,
+            "resource_id": self.resource_id,
+            "resource_revision": self.resource_revision,
+            "resource_name": self.resource_name,
         }
 
     def issues(self, *, require_model: bool = True) -> list[dict[str, str]]:
@@ -123,6 +130,50 @@ class EffectiveLlmConfig:
 
 
 def resolve_llm_config(
+    exp_id: str,
+    *,
+    llm: Optional[Mapping[str, Any]] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    kind: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> EffectiveLlmConfig:
+    from .model_resources import ResourceError, resolve_binding
+
+    resource = resolve_binding(exp_id, "inference")
+    if resource is not None:
+        effective = resource_llm_config(resource, api_key=api_key)
+        for field_name, value in (("base_url", base_url), ("model", model), ("kind", kind)):
+            if value is not None and value.strip().rstrip("/") != getattr(effective, field_name).rstrip("/"):
+                raise ResourceError("当前实验使用模型资源，请修改资源或显式解除绑定，不能覆盖资源配置。", 409)
+        return effective
+    return resolve_legacy_llm_config(exp_id, llm=llm, base_url=base_url, model=model, kind=kind, api_key=api_key)
+
+
+def resource_llm_config(resource: Any, *, api_key: Optional[str] = None) -> EffectiveLlmConfig:
+    from .model_resources import ResourceError
+
+    data = resource.data
+    if data["type"] != "inference":
+        raise ResourceError("训练模型来源不能用于推理或连接检查。")
+    mode = data["credential_mode"]
+    if api_key is not None and api_key.strip():
+        key, source = api_key.strip(), "request"
+    elif mode == "saved":
+        key, source = resource.api_key, "resource" if resource.api_key else "none"
+    elif mode == "service":
+        key, source = _SERVICE_KEY, "service" if _SERVICE_KEY else "none"
+    else:
+        key, source = "", "none"
+    config = data["config"]
+    return EffectiveLlmConfig(
+        kind=config.get("kind", "api"), model=config["model"], base_url=config["base_url"],
+        api_key=key, credential_source=source,
+        resource_id=data["id"], resource_revision=data["revision"], resource_name=data["name"],
+    )
+
+
+def resolve_legacy_llm_config(
     exp_id: str,
     *,
     llm: Optional[Mapping[str, Any]] = None,

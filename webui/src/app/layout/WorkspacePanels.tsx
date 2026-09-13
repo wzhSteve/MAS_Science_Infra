@@ -4,7 +4,8 @@ import { ExperimentPanel } from '../../pages/Experiment';
 import { MASPanel } from '../../pages/MAS';
 import { MonitorPanel } from '../../pages/Monitor';
 import { useAgl, useMonitor, useTraining } from '../providers/RuntimeProvider';
-import { isCanvasPanel, type PanelId } from '../navigation';
+import { isCanvasPanel, type PanelId, type ResourceCategory } from '../navigation';
+import type { SettingsSection } from '../../features/settings/model/sections';
 
 const Experiment = memo(ExperimentPanel);
 const Mas = memo(MASPanel);
@@ -29,16 +30,20 @@ const MonitorConnection = memo(function MonitorConnection({ expId, visible }: { 
     aglOnline={!!agl.data?.ok && !agl.error} onRefreshLog={refresh} />;
 });
 
-export const WorkspacePanels = memo(function WorkspacePanels({ active, visible, bundle, meta, onReload, setExpId, onWorkspace }: {
+export const WorkspacePanels = memo(function WorkspacePanels({ active, visible, bundle, meta, onReload, setExpId, onWorkspace, settings, onResources, onSettings, selectedResource }: {
   active: PanelId; visible: boolean; bundle: Bundle; meta: MetaResponse | null; onReload: () => Promise<void>; setExpId: (id: string) => void;
   onWorkspace: () => void;
+  settings?: SettingsSection; onResources: (category: ResourceCategory) => void;
+  onSettings: (section: SettingsSection) => void;
+  selectedResource?: string;
 }) {
   const common = { expId: bundle.id, bundle, onReload };
   const canvas = isCanvasPanel(active);
-  const requestedSettings = active === 'llm' ? 'model' : active === 'rl' ? 'training' : active === 'harness' ? 'diagnostics' : null;
+  const requestedSettings = settings || (active === 'llm' ? 'model' : active === 'rl' ? 'training' : active === 'harness' ? 'diagnostics' : null);
   return <div className={`workspace-content${canvas ? ' workspace-content--mas' : ''}`} id="workspace-content" tabIndex={-1}>
     <RetainedPanel id="mas" label="MAS" active={visible && canvas}>
-      <Mas key={bundle.id} {...common} meta={meta} active={visible && canvas} requestedSettings={requestedSettings} onWorkspace={onWorkspace} />
+      <Mas key={bundle.id} {...common} meta={meta} active={visible && canvas} requestedSettings={requestedSettings}
+        onWorkspace={onWorkspace} onResources={onResources} onSettings={onSettings} selectedResource={selectedResource} />
     </RetainedPanel>
     <RetainedPanel id="experiment" label="实验配置" active={visible && active === 'experiment'}>
       <Experiment {...common} setExpId={setExpId} />
