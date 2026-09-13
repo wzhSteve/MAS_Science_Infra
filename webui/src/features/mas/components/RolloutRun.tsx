@@ -1,9 +1,10 @@
 import { memo, useMemo, useEffect, lazy, Suspense } from 'react';
-import { Play, FileJson } from 'lucide-react';
+import { Play, FileJson, Clock3 } from 'lucide-react';
 import { Button } from '../../../shared/ui/button';
 import { Textarea } from '../../../shared/ui/textarea';
 import { FormField } from '../../../shared/components/FormField';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
+import { StatusBadge } from '../../../shared/components/StatusBadge';
 import { rolloutStatusLabel, type MasRolloutRun } from '../model/useMasRolloutRun';
 import type { ModelReadinessState } from '../model/useModelReadiness';
 import { useRolloutHistory } from '../model/useRolloutHistory';
@@ -38,15 +39,19 @@ export function RolloutConfig({ rollout, pending, executable, readiness, onShowR
         <Textarea rows={4} required value={rollout.question} onChange={event => rollout.setQuestion(event.target.value)}
           placeholder="希望这个 Workflow 完成什么任务？" />
       </FormField>
-      <p className="debug-cost-hint">{rollout.execution === 'live' ? '真实调用当前模型及工具，可能产生费用。'
-        : '模拟演示 · 不调用真实模型，不验证推理或工具能力。'}</p>
-      {liveError && <p className="field-hint">请先处理上方的模型连接与执行条件。</p>}
       {!executable.ok && <InlineNotice tone="danger">{executable.reason}</InlineNotice>}
-      <div className="mas-run-submit">
-        <Button type="submit" size="sm" variant="primary" disabled={blocked} loading={rollout.running}>
-          <Play size={13} aria-hidden="true" />{rollout.running ? '执行中' : rollout.execution === 'live' ? '发送调试' : '运行模拟演示'}
-        </Button>
-        <span>先保存 Workflow，再执行同一份快照；保存失败不执行。</span>
+      <div className="mas-rollout-composer-footer">
+        <div className="mas-rollout-composer-notes">
+          <p className="debug-cost-hint">{rollout.execution === 'live' ? '真实调用当前模型及工具，可能产生费用。'
+            : '模拟演示 · 不调用真实模型，不验证推理或工具能力。'}</p>
+          {liveError && <p className="field-hint">请先处理上方的模型连接与执行条件。</p>}
+        </div>
+        <div className="mas-run-submit">
+          <Button type="submit" size="sm" variant="primary" disabled={blocked} loading={rollout.running}>
+            <Play size={13} aria-hidden="true" />{rollout.running ? '执行中' : rollout.execution === 'live' ? '发送调试' : '运行模拟演示'}
+          </Button>
+          <span>先保存 Workflow，再执行同一份快照；保存失败不执行。</span>
+        </div>
       </div>
     </form>
   </div>;
@@ -84,35 +89,75 @@ export const RolloutResults = memo(function RolloutResults({ rollout, workflowCh
     ? (Date.parse(summary.finished_at) - Date.parse(summary.started_at)) / 1000 : null;
   return <div className="mas-run-results mas-rollout-results">
     <RolloutHistory history={history} currentRunId={rollout.attempt?.summary?.run_id} openRequest={historyRequest} active={active} />
-    <div className={`debug-result-identity${historical ? ' is-historical' : ''}`}>
-      <strong>{historical ? '当前查看：历史记录' : '当前查看：本次结果'}</strong>
-      {summary && <><time>{new Date(summary.started_at).toLocaleString()}</time><code>{summary.run_id}</code></>}
-      {historical && <Button size="sm" onClick={() => void history.select(null)}>返回本次结果</Button>}
-    </div>
     {history.loading && <p className="mas-console-empty" role="status">正在读取历史运行…</p>}
     {history.error && <InlineNotice tone="danger">{history.error}
       <Button size="sm" onClick={() => void history.select(history.selectedId)}>重试读取</Button>
     </InlineNotice>}
     {!run && !history.loading && !history.error && <div className="mas-console-empty">输入一个任务，采集一次 Rollout，或选择已有的运行记录。</div>}
     {run && <>
-    <div className="mas-result-summary">
-      <strong>{historical ? '历史运行 · ' : ''}{rolloutStatusLabel[run.status]}</strong>
-      <span>{run.execution === 'mock' ? '模拟执行 · Mock' : '真实推理 · Live'}</span>
-      {elapsed !== null && Number.isFinite(elapsed) && elapsed >= 0 && <span>总耗时 {elapsed.toFixed(2)} 秒</span>}
-      {elapsed === null && run.endedAt && <span>本页耗时（含保存）{((run.endedAt - run.startedAt) / 1000).toFixed(2)} 秒</span>}
-    </div>
-    <p className="field-hint">结果绑定运行时快照，不会覆盖当前画布{changed ? '；当前配置与快照不一致，定位仅按已有实体标识进行' : ''}。</p>
-    <details className="mas-rollout-task"><summary>本次提交的任务</summary><p>{run.question}</p></details>
-    <div><Button size="sm" variant="ghost" onClick={() => { rollout.setQuestion(run.question); onUseQuestion(); }}>使用此问题</Button>
-      <span className="field-hint">只填充问题；再次运行使用当前 Workflow 和模型配置。</span></div>
-    {run.error && <RunErrorDetails message={run.error} unknown={run.status === 'unknown'} />}
-    {!historical && rollout.running && <p className="field-hint">等待同步请求返回；关闭控制台不会取消执行，也不会自动重发。</p>}
-    {summary && <>
-      {summary.error && <RunErrorDetails message={summary.error.message} stage={summary.error.stage} code={summary.error.code} />}
-      {summary.final_answer ? <section className="mas-rollout-answer">
-        <h3>{summary.status === 'succeeded' ? '最终答案' : '终止前保留的答案'}</h3><p>{summary.final_answer}</p>
-      </section> : !summary.error && <p className="field-hint">尚无最终答案，已有的部分记录可通过轨迹入口查看。</p>}
-      <details className="mas-rollout-task"><summary>运行身份、模型与记录状态</summary>
+    <header className="mas-result-header">
+      <div className="mas-result-heading">
+        <strong>{historical ? '历史运行' : '本次运行'}</strong>
+        <StatusBadge tone={run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'danger'
+          : run.status === 'interrupted' || run.status === 'unknown' ? 'warning' : 'info'}>
+          {rolloutStatusLabel[run.status]}
+        </StatusBadge>
+        <span className="mas-result-execution">{run.execution === 'mock' ? '模拟执行 · Mock' : '真实推理 · Live'}</span>
+      </div>
+      <div className="mas-result-metrics">
+        <time>{new Date(run.startedAt).toLocaleString()}</time>
+        {elapsed !== null && Number.isFinite(elapsed) && elapsed >= 0 && <span><Clock3 size={13} aria-hidden="true" />总耗时 <b>{elapsed.toFixed(2)} 秒</b></span>}
+        {elapsed === null && run.endedAt && <span><Clock3 size={13} aria-hidden="true" />本页耗时（含保存）<b>{((run.endedAt - run.startedAt) / 1000).toFixed(2)} 秒</b></span>}
+      </div>
+    </header>
+    <ol className="mas-result-timeline">
+      <li className="mas-result-step">
+        <span className="mas-result-step-marker" aria-hidden="true">01</span>
+        <section className="mas-result-card">
+          <header className="mas-result-card-heading">
+            <h3>本次提交的任务</h3>
+            <Button size="sm" variant="ghost" onClick={() => { rollout.setQuestion(run.question); onUseQuestion(); }}>使用此问题</Button>
+          </header>
+          <div className="mas-result-card-body"><p className="mas-result-text">{run.question}</p></div>
+        </section>
+      </li>
+      <li className="mas-result-step">
+        <span className="mas-result-step-marker" aria-hidden="true">02</span>
+        <section className="mas-result-card mas-result-card--answer">
+          <header className="mas-result-card-heading">
+            <h3>{summary?.final_answer && summary.status !== 'succeeded' ? '终止前保留的答案' : '最终答案'}</h3>
+          </header>
+          <div className="mas-result-card-body">
+            {run.error && <RunErrorDetails message={run.error} unknown={run.status === 'unknown'} />}
+            {summary?.error && <RunErrorDetails message={summary.error.message} stage={summary.error.stage} code={summary.error.code} />}
+            {summary?.final_answer ? <p className="mas-result-text">{summary.final_answer}</p>
+              : <p className="mas-result-placeholder" role="status">{!historical && rollout.running ? '正在执行，等待答案…' : '暂无最终答案'}</p>}
+          </div>
+        </section>
+      </li>
+      {summary && <li className="mas-result-step">
+        <span className="mas-result-step-marker" aria-hidden="true">03</span>
+        <section className="mas-result-card">
+          <header className="mas-result-card-heading">
+            <h3>Agent 执行过程</h3>
+            <Button size="sm" onClick={() => void readTrajectory()} loading={traceLoading}
+              disabled={traceLoading || !summary.trajectory_id}>
+              <FileJson size={14} aria-hidden="true" />{traceError ? '重试读取过程' : data ? '刷新 Agent 过程' : '查看 Agent 输入输出'}
+            </Button>
+          </header>
+          <div className="mas-result-card-body">
+            {traceError && <InlineNotice tone="warning">轨迹读取失败：{traceError}</InlineNotice>}
+            {data ? <Suspense fallback={<p className="mas-result-placeholder" role="status">正在加载轨迹视图…</p>}>
+              <TrajectoryDetails key={data.run.run_id} data={data} experimentId={rollout.experimentId} onLocate={onLocate} active={active} />
+            </Suspense> : !traceError && <p className="mas-result-placeholder" role="status">
+              {traceLoading ? '正在读取执行过程…' : summary.trajectory_id ? '点击「查看 Agent 输入输出」展开执行过程。' : '未生成过程记录'}
+            </p>}
+          </div>
+        </section>
+      </li>}
+    </ol>
+    {summary && <div className="mas-result-secondary">
+      <details className="mas-result-record"><summary>运行身份、模型与记录状态</summary>
       <dl className="mas-rollout-facts">
         <div><dt>Run ID</dt><dd><code>{summary.run_id}</code></dd></div>
         <div><dt>Trajectory ID</dt><dd><code>{summary.trajectory_id || '未生成'}</code></dd></div>
@@ -122,22 +167,12 @@ export const RolloutResults = memo(function RolloutResults({ rollout, workflowCh
         <div><dt>格式检查</dt><dd>{summary.format_ok === null ? '未判定' : summary.format_ok ? '通过' : '未通过'}</dd></div>
         <div><dt>终止原因</dt><dd>{summary.termination_reason ?? '未返回'}</dd></div>
         <div><dt>轨迹记录</dt><dd>{traceLabels[summary.trace_status]}</dd></div>
+        <div><dt>奖励评估</dt><dd>未执行</dd></div>
+        {changed && <div><dt>Workflow</dt><dd>运行快照与当前草稿不同</dd></div>}
       </dl>
       </details>
-      <p className="field-hint">本次未进行奖励评估；记录完整不等于答案正确或满足全部训练要求。</p>
-      <div className="mas-rollout-trace">
-        <Button size="sm" onClick={() => void readTrajectory()} loading={traceLoading}
-          disabled={traceLoading || !summary.trajectory_id}>
-          <FileJson size={14} aria-hidden="true" />{traceError ? '重试读取过程' : data ? '刷新 Agent 过程' : '查看 Agent 输入输出'}
-        </Button>
-        <span className="field-hint">仅读取已有记录，不重新执行模型。</span>
-      </div>
-      {traceError && <InlineNotice tone="warning">轨迹读取失败：{traceError}。不改变已知的运行结果，可重试读取。</InlineNotice>}
-      {data && <Suspense fallback={<p className="field-hint">正在加载轨迹视图…</p>}>
-        <TrajectoryDetails key={data.run.run_id} data={data} experimentId={rollout.experimentId} onLocate={onLocate} active={active} />
-      </Suspense>}
       <RolloutExport key={summary.run_id} experimentId={rollout.experimentId} runId={summary.run_id} />
-    </>}
+    </div>}
     </>}
   </div>;
 }, (previous, next) => previous.active === next.active

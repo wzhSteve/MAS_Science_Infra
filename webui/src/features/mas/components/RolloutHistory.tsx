@@ -20,7 +20,6 @@ export function RolloutHistory({ history, currentRunId, openRequest = 0, active 
     {open && <section className="mas-history-menu" aria-label="最近运行记录">
       <div className="mas-history-heading"><strong>当前实验的运行</strong>
         <Button size="sm" variant="ghost" disabled={history.listLoading} aria-label="刷新运行列表" onClick={() => void history.load()}><RefreshCw size={13} /></Button></div>
-      <p className="field-hint">只查看记录，不改变画布或模型配置。</p>
       {history.items.map(item => <button type="button" key={item.run_id} className="mas-history-item"
         disabled={!item.run} aria-current={history.selectedId === item.run_id ? 'true' : undefined}
         onClick={() => { void history.select(item.run_id); setOpen(false); }}>

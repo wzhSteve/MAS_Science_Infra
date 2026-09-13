@@ -102,9 +102,9 @@ function AgentOverview({ data, experimentId, onLocate, active = true }: Props) {
     }
   };
   return <section className="agent-run-overview" aria-label="Agent 输入输出" hidden={!active}>
-    <h3>Agent 执行过程</h3>
-    <p className="field-hint">按 Agent 展示任务交接与输出，同一 Agent 多次执行分别列出。系统提示词、记忆、工具参数等详情仅在下载的记录中查看。</p>
-    {active && groups.map((group, index) => <AgentCard key={group.key} group={group} index={index} onLocate={onLocate} />)}
+    {active && groups.length > 0 && <ol className="agent-run-timeline">
+      {groups.map((group, index) => <li key={group.key}><AgentCard group={group} index={index} onLocate={onLocate} /></li>)}
+    </ol>}
     {!groups.length && <p className="mas-console-empty">已加载记录中没有可确认归属的 Agent 片段，请加载后续记录或下载完整 JSON。</p>}
     {nextOffset !== null && <div className="agent-run-more">
       <p className="field-hint">过程尚未全部加载，部分 Agent 的输入输出可能在后续记录中。</p>

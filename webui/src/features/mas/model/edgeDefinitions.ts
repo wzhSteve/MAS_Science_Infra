@@ -20,22 +20,22 @@ const definitions: Record<EdgeKind, EdgeDefinition> = {
   tool_call: {
     family: 'tool', title: '工具调用', label: '按需调用', icon: Wrench,
     description: '向 Agent 提供工具能力，由 Agent 自行决定是否调用。',
-    color: '#8291a5', width: 1.5, dash: '6 5', directional: false,
+    color: '#8291a5', width: 1.8, dash: '1 6', directional: false,
   },
   message: {
     family: 'agent', title: '传递信息', label: '传递信息', icon: MessageSquare,
     description: '将上游输出交给下游 Agent，当前不是广播。',
-    color: '#6986aa', width: 1.5, directional: true,
+    color: '#6986aa', width: 2, directional: true,
   },
   route: {
     family: 'agent', title: '任务路由', label: '任务路由', icon: Route,
     description: '指定后续任务处理的 Agent，当前不是条件分支。',
-    color: '#506fc2', width: 2, directional: true,
+    color: '#506fc2', width: 2.8, directional: true,
   },
   feedback: {
     family: 'agent', title: '反馈', label: '反馈', icon: CornerDownLeft,
     description: '由验证方根据结果决定是否返回处理。',
-    color: '#a57d39', width: 1.5, dash: '3 3', directional: true,
+    color: '#a57d39', width: 2, dash: '8 5 1 5', directional: true,
   },
 };
 

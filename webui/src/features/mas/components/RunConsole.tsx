@@ -125,8 +125,9 @@ export const RunConsole = memo(function RunConsole({ draft, experimentId, active
       </button>
       <span className={`mas-console-summary${failed ? ' is-error' : ''}`} role="status">
         {hasRun && <StatusIcon size={13} className={running ? 'animate-spin' : undefined} aria-hidden="true" />}
-        {summary}
-        {single && draft.running ? ' · 数据集采集中' : mode !== 'rollout' && live.running ? ' · 真实调试执行中' : mode !== 'demo' && demo.running ? ' · 模拟演示执行中' : ''}
+        <span className="mas-console-summary-text">{summary}
+          {single && draft.running ? ' · 数据集采集中' : mode !== 'rollout' && live.running ? ' · 真实调试执行中' : mode !== 'demo' && demo.running ? ' · 模拟演示执行中' : ''}
+        </span>
       </span>
       <Button size="sm" variant="ghost" aria-label="打开运行配置" title="运行配置"
         onClick={() => { onOpenChange(true); onTabChange('config'); }}><Settings2 size={14} /></Button>
@@ -187,7 +188,6 @@ export const RunConsole = memo(function RunConsole({ draft, experimentId, active
         {visible && tab === 'results' && logs.length > 0 && <div className="debug-log-download">
           <DownloadText text={logText} filename={`${single ? rollout.attempt?.summary?.run_id || mode : 'collect'}-operations.log`}
             label="下载本页操作日志" />
-          <span className="field-hint">保存和请求状态仅供排错；模型及工具原文见完整 JSON。</span>
         </div>}
       </div>
     </div>

@@ -1,26 +1,28 @@
-.mas-run-console { position: relative; display: flex; flex-direction: column; flex: 0 0 36px; min-height: 36px; min-width: 0; background: var(--surface); border-top: 1px solid var(--border-subtle); z-index: 20; }
-.mas-run-console.is-open { flex-basis: var(--console-height); max-height: 65%; }
-.mas-console-header { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 14px; }
-.mas-console-toggle { display: flex; align-items: center; gap: 7px; padding: 5px 0; background: transparent; border: 0; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.mas-run-console { position: relative; display: flex; flex-direction: column; flex: 0 0 36px; min-height: 36px; min-width: 0; background: var(--surface); border-top: 1px solid var(--border-subtle); z-index: 20; container: mas-console / inline-size; --console-gutter: clamp(16px, 1.25vw, 32px); }
+.mas-run-console.is-open { flex-basis: var(--console-height); max-height: 65%; box-shadow: 0 -4px 18px #20252b05; }
+.mas-console-header { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 var(--console-gutter); }
+.mas-console-toggle { display: flex; flex: none; align-items: center; gap: 7px; padding: 5px 0; background: transparent; border: 0; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
 .mas-console-toggle strong { font-weight: 550; color: var(--text-primary); }
-.mas-console-summary { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mas-console-summary { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 11px; }
+.mas-console-summary-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mas-console-summary.is-error { color: var(--danger); }
-.mas-console-header > .ui-button { min-height: 26px; padding: 3px 5px; }
+.mas-console-header > .ui-button { flex: none; min-height: 26px; padding: 3px 5px; }
 .mas-console-resize { position: absolute; top: -4px; left: 0; right: 0; height: 7px; cursor: ns-resize; touch-action: none; z-index: 2; }
 .mas-console-resize::after { content: ''; position: absolute; height: 2px; width: 34px; border-radius: 2px; background: var(--border-subtle); left: calc(50% - 17px); top: 2px; }
 .mas-console-resize:hover::after, .mas-console-resize:focus-visible::after { background: var(--accent); width: 60px; left: calc(50% - 30px); }
 .mas-console-content { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
-.mas-console-tabs { display: flex; align-items: center; gap: 18px; flex-shrink: 0; padding: 0 20px; border-bottom: 1px solid var(--border-subtle); }
+.mas-console-tabs { display: flex; align-items: center; gap: 20px; flex-shrink: 0; padding: 0 var(--console-gutter); border-bottom: 1px solid var(--border-subtle); }
 .mas-console-tabs > button { display: flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 8px 1px; background: transparent; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 .mas-console-tabs > button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .mas-tab-count { padding: 0 5px; border-radius: 4px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 10px; font-variant-numeric: tabular-nums; }
-.mas-run-version { margin-left: auto; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
-.mas-console-body { flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px 20px; scrollbar-width: thin; }
+.mas-run-version { margin-left: auto; min-width: 0; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
+.mas-console-body { flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px var(--console-gutter) 20px; scrollbar-width: thin; scrollbar-gutter: stable; }
+.mas-console-body > div:not([hidden]) { min-width: 0; }
 .mas-console-empty { padding: 22px 0; color: var(--text-secondary); font-size: 12px; }
-.mas-run-config { display: flex; flex-direction: column; gap: 18px; max-width: 1200px; }
-.mas-model-readiness { display: grid; gap: 8px; max-width: 1200px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--border-subtle); font-size: 12px; min-width: 0; }
+.mas-run-config { display: flex; flex-direction: column; gap: 18px; width: 100%; min-width: 0; }
+.mas-model-readiness { display: grid; gap: 10px; width: 100%; margin-bottom: 14px; padding: 12px 16px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-subtle); font-size: 12px; min-width: 0; }
 .mas-model-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
-.mas-model-summary > strong { overflow-wrap: anywhere; font-weight: 550; }
+.mas-model-summary > strong { min-width: 0; overflow-wrap: anywhere; font-weight: 550; }
 .mas-model-summary > span:not(.status-badge) { color: var(--text-secondary); }
 .mas-model-summary > .ui-button:first-of-type { margin-left: auto; }
 .mas-model-details { color: var(--text-secondary); font-size: 11px; line-height: 1.7; }
@@ -30,8 +32,8 @@
 .mas-model-details dl > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; }
 .mas-model-details dd { margin: 0; }
 .mas-model-dependency strong { color: var(--text-primary); font-weight: 550; }
-.mas-run-config > form { display: flex; flex-direction: column; gap: 12px; }
-.mas-run-fields { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 18px; }
+.mas-run-config > form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.mas-run-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 18px; }
 .mas-run-fields .form-field { align-content: start; }
 .mas-run-fields .ui-input, .mas-run-fields .ui-select { font-size: 12px; }
 .mas-run-path { grid-column: span 2; }
@@ -39,7 +41,7 @@
 .mas-run-advanced summary { cursor: pointer; width: fit-content; }
 .mas-run-advanced .form-field { margin-top: 12px; max-width: 400px; }
 .mas-run-submit { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.mas-run-submit > span { font-size: 11px; color: var(--text-secondary); margin-left: 4px; }
+.mas-run-submit > span { min-width: 0; overflow-wrap: anywhere; font-size: 11px; color: var(--text-secondary); margin-left: 4px; }
 .mas-data-preview { border-top: 1px solid var(--border-subtle); padding-top: 14px; }
 .mas-data-preview h3, .mas-run-log h3 { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 600; margin: 0 0 10px; }
 .mas-data-preview h3 > span, .mas-run-log h3 > span { color: var(--text-secondary); font-size: 10px; font-weight: 400; }
@@ -64,8 +66,8 @@
 .mas-answer p { white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 7px; line-height: 1.7; }
 .mas-result-path { font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .mas-result-path code { margin-left: 8px; }
-.mas-console-error { padding: 8px 20px 0; max-height: 100px; overflow: auto; flex-shrink: 0; }
-.mas-run-hint { padding: 8px 20px 0; font-size: 11px; color: var(--text-secondary); }
+.mas-console-error { padding: 8px var(--console-gutter) 0; max-height: 100px; overflow: auto; flex-shrink: 0; }
+.mas-run-hint { flex: none; padding: 8px var(--console-gutter) 0; font-size: 11px; color: var(--text-secondary); }
 .mas-run-log { display: grid; gap: 22px; }
 .mas-run-log section { min-width: 0; }
 .mas-run-log ol { padding: 0; margin: 10px 0 0; list-style: none; }
@@ -77,8 +79,15 @@
 .mas-console-modes button { border: 0; border-radius: 4px; padding: 5px 12px; color: var(--text-secondary); background: transparent; font-size: 11px; }
 .mas-console-modes button[aria-pressed="true"] { background: var(--surface); color: var(--accent); font-weight: 600; }
 .mas-console-modes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.mas-rollout-config { max-width: 1000px; }
-.mas-rollout-config textarea { font-size: 12px; line-height: 1.7; resize: vertical; min-height: 84px; }
+.mas-rollout-config > form { gap: 14px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface); }
+.mas-rollout-config textarea { width: 100%; font-family: var(--font-ui); font-size: 13px; line-height: 1.8; resize: vertical; min-height: clamp(112px, 12vh, 180px); padding: 12px 14px; border-radius: 7px; }
+.mas-rollout-composer-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.mas-rollout-composer-notes { flex: 1 1 280px; min-width: 0; display: grid; gap: 4px; }
+.mas-rollout-composer-notes .debug-cost-hint { margin: 0; font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.mas-rollout-composer-notes .field-hint { font-size: 11px; }
+.mas-rollout-composer-footer .mas-run-submit { flex: 0 1 360px; min-width: 0; margin-left: auto; flex-direction: column; align-items: flex-end; gap: 6px; }
+.mas-rollout-composer-footer .mas-run-submit > span { margin: 0; text-align: right; line-height: 1.6; }
+.mas-rollout-composer-footer .mas-run-submit > .ui-button { min-height: 32px; padding-inline: 18px; }
 .mas-rollout-execution { max-width: 300px; }
 .mas-rollout-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 24px; margin: 0; padding: 14px; background: var(--surface-subtle); border: 1px solid var(--border-subtle); border-radius: 7px; font-size: 12px; }
 .mas-rollout-facts > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; align-items: baseline; }
@@ -93,6 +102,42 @@
 .mas-rollout-trace { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .mas-rollout-results .json-details { min-width: 0; }
 .mas-rollout-results .json-details pre { overflow: auto; max-height: 420px; }
+.mas-rollout-results { gap: 18px; }
+.mas-result-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; padding: 14px 18px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-subtle); }
+.mas-result-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.mas-result-heading > strong { font-size: 14px; font-weight: 600; }
+.mas-result-execution { padding-left: 12px; border-left: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 11px; }
+.mas-result-metrics { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; color: var(--text-secondary); font-size: 11px; }
+.mas-result-metrics > span { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.mas-result-metrics b { color: var(--text-primary); font-weight: 550; font-variant-numeric: tabular-nums; }
+.mas-result-timeline { display: flex; flex-direction: column; gap: 18px; margin: 0; padding: 0; list-style: none; }
+.mas-result-step { position: relative; min-width: 0; padding-left: 48px; }
+.mas-result-step:not(:last-child)::after { content: ''; position: absolute; left: 15px; top: 40px; bottom: -26px; width: 1px; background: var(--border-subtle); }
+.mas-result-step-marker { position: absolute; top: 10px; left: 0; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #cbd9ed; border-radius: 50%; background: var(--accent-subtle); color: var(--accent); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mas-result-card { min-width: 0; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.mas-result-card--answer { border-color: #cbd9ed; box-shadow: 0 2px 8px #245db506; }
+.mas-result-card-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; min-height: 52px; padding: 12px 18px; background: var(--surface-subtle); border-bottom: 1px solid var(--border-subtle); }
+.mas-result-card-heading > h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.mas-result-card--answer > .mas-result-card-heading { background: var(--accent-subtle); }
+.mas-result-card-heading > .ui-button { margin-left: auto; }
+.mas-result-card-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 18px 20px; }
+.mas-result-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.85; color: var(--text-primary); }
+.mas-result-placeholder { margin: 0; padding: 4px 0; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.mas-result-secondary { display: flex; flex-direction: column; gap: 12px; min-width: 0; margin-left: 48px; }
+.mas-result-record { min-width: 0; border: 1px solid var(--border-subtle); border-radius: 8px; font-size: 12px; color: var(--text-secondary); }
+.mas-result-record > summary { padding: 12px 16px; cursor: pointer; }
+.mas-result-record[open] > summary { border-bottom: 1px solid var(--border-subtle); }
+.mas-result-record .mas-rollout-facts { border: 0; border-radius: 0 0 8px 8px; background: var(--surface); }
+.mas-result-record dd { color: var(--text-primary); }
+.mas-result-secondary .mas-rollout-export { padding-top: 0; border-top: 0; }
+.mas-result-card .agent-run-overview { margin-top: 0; }
+.agent-run-timeline { display: flex; flex-direction: column; gap: 14px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.agent-run-timeline > li { position: relative; min-width: 0; padding-left: 22px; }
+.agent-run-timeline > li::before { content: ''; position: absolute; left: 0; top: 20px; width: 8px; height: 8px; border-radius: 50%; background: var(--surface); border: 2px solid var(--accent); }
+.agent-run-timeline > li:not(:last-child)::after { content: ''; position: absolute; top: 32px; bottom: -30px; left: 3px; width: 1px; background: var(--border-subtle); }
+.agent-run-timeline .agent-run-card > header { background: var(--surface-subtle); }
+.agent-run-timeline .agent-run-icon { width: 28px; height: 28px; border-radius: 6px; background: var(--accent-subtle); }
+.agent-run-timeline .agent-run-io h4 { font-weight: 600; color: var(--text-primary); }
 .mas-history { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; position: relative; }
 .mas-history-menu { width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--canvas); }
 .mas-history-heading { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
@@ -106,19 +151,51 @@
 .mas-trace-location { position: absolute; z-index: 12; bottom: 58px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #bfd1eb; border-radius: 7px; background: var(--surface); color: var(--text-secondary); font-size: 11px; max-width: min(520px, calc(100% - 32px)); box-shadow: 0 2px 10px #20252b0a; }
 .mas-trace-location > span { overflow-wrap: anywhere; }
 .mas-trace-location > button { flex: none; }
-@media (max-width: 760px) {
+.mas-run-console .debug-mode-banner, .mas-run-console .debug-current-attempt { flex: none; min-width: 0; padding-inline: var(--console-gutter); }
+.mas-run-console .debug-mode-banner { flex-wrap: wrap; }
+.mas-run-console .debug-mode-banner > span, .mas-run-console .debug-current-attempt > code { min-width: 0; overflow-wrap: anywhere; }
+@container mas-console (max-width: 760px) {
   .mas-console-header { padding: 0 10px; gap: 8px; }
   .mas-console-tabs { padding: 0 12px; gap: 16px; }
   .mas-console-body { padding: 12px; }
+  .mas-model-readiness { padding: 10px 12px; }
+  .mas-model-summary { gap: 6px 10px; }
+  .mas-model-summary > .ui-button:first-of-type { margin-left: 0; }
+  .mas-rollout-config > form { padding: 12px; }
+  .mas-rollout-composer-footer { align-items: stretch; gap: 12px; }
+  .mas-rollout-composer-notes, .mas-rollout-composer-footer .mas-run-submit { flex-basis: 100%; }
+  .mas-rollout-composer-footer .mas-run-submit { align-items: flex-start; margin-left: 0; }
+  .mas-rollout-composer-footer .mas-run-submit > span { text-align: left; }
   .mas-console-modes { margin-inline: 12px; }
   .mas-rollout-facts { grid-template-columns: minmax(0, 1fr); }
   .mas-run-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .mas-run-version { display: none; }
+  .mas-console-tabs { flex-wrap: wrap; row-gap: 0; }
+  .mas-run-version { flex-basis: 100%; margin-left: 0; padding: 4px 0 8px; white-space: normal; overflow-wrap: anywhere; }
+  .mas-run-console .debug-mode-banner, .mas-run-console .debug-current-attempt { padding-inline: 12px; }
   .mas-run-results th:first-child { width: 20%; }
   .mas-run-results th:nth-child(3), .mas-run-results th:nth-child(4) { width: 17%; }
+  .mas-result-header { align-items: flex-start; padding: 12px; }
+  .mas-result-step { padding-left: 36px; }
+  .mas-result-step-marker { width: 26px; height: 26px; top: 14px; font-size: 10px; }
+  .mas-result-step:not(:last-child)::after { left: 12px; top: 44px; }
+  .mas-result-card-heading { padding: 12px; }
+  .mas-result-card-body { padding: 14px; }
+  .mas-result-secondary { margin-left: 36px; }
+  .mas-result-card .agent-run-io { grid-template-columns: minmax(0, 1fr); }
+  .mas-result-card .agent-run-io > section + section { border-left: 0; border-top: 1px solid var(--border-subtle); }
 }
-@media (max-width: 440px) {
+@container mas-console (max-width: 440px) {
   .mas-run-fields { grid-template-columns: minmax(0, 1fr); }
   .mas-run-path { grid-column: auto; }
   .mas-console-summary { font-size: 10px; }
+  .mas-rollout-composer-footer .mas-run-submit > .ui-button { width: 100%; }
+  .mas-rollout-facts > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .mas-history-item { flex-wrap: wrap; gap: 6px 10px; }
+  .mas-history-item > span:first-child { flex-basis: 100%; }
+  .mas-result-heading { gap: 8px; }
+  .mas-result-execution { flex-basis: 100%; padding-left: 0; border-left: 0; }
+  .mas-result-card-heading { align-items: flex-start; }
+  .mas-result-card-heading > .ui-button { margin-left: 0; }
+  .mas-result-text { font-size: 13px; }
+  .agent-run-timeline > li { padding-left: 16px; }
 }

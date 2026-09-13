@@ -89,14 +89,17 @@
 .mas-handle.is-available .mas-handle-dot { border-color: var(--accent); box-shadow: 0 0 0 3px #245db510; }
 .mas-handle.is-unavailable .mas-handle-dot { opacity: .35; }
 .mas-workbench .mas-node.is-related { border-color: #7e9bc3; box-shadow: 0 0 0 3px #245db510; }
-.mas-edge-halo { stroke: var(--accent); stroke-width: 7px; opacity: 0; }
-.mas-flow-edge.is-selected .mas-edge-halo { opacity: .15; }
-.react-flow__edge:hover .mas-edge-halo { opacity: .1; }
+.mas-edge-line, .mas-edge-underlay, .mas-edge-halo { stroke-linecap: round; stroke-linejoin: round; }
+.mas-edge-underlay { stroke: var(--canvas); stroke-width: calc(var(--edge-width) + 6px); }
+.mas-edge-halo { stroke: var(--edge-color); stroke-width: calc(var(--edge-width) + 4px); opacity: .07; transition: opacity .16s ease, stroke-width .16s ease; }
+.mas-workbench .react-flow__edge:hover .mas-edge-halo { stroke-width: calc(var(--edge-width) + 6px); opacity: .16; }
+.mas-workbench .mas-flow-edge.is-selected .mas-edge-halo, .mas-workbench .react-flow__edge:focus-visible .mas-edge-halo { stroke-width: calc(var(--edge-width) + 8px); opacity: .23; }
+.mas-flow-edge.has-issue .mas-edge-halo { opacity: .14; }
 .mas-edge-label { position: absolute; display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid #e0e5ed; border-radius: 5px; background: var(--surface); color: var(--edge-color); font-family: var(--font-ui); font-size: 11px; line-height: 16px; white-space: nowrap; pointer-events: all; box-shadow: 0 1px 3px #20252b05; cursor: pointer; }
 .mas-edge-label:hover { border-color: var(--edge-color); }
 .mas-edge-label.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px #245db514; }
 .mas-edge-label.has-issue { background: var(--danger-subtle); border-color: #e8baba; }
-.mas-connection-preview > path { stroke: var(--accent); }
+.mas-connection-preview > path { stroke: var(--accent); stroke-width: 2px; stroke-dasharray: 5 6; stroke-linecap: round; }
 .mas-connection-preview > circle { fill: var(--surface); stroke: var(--accent); }
 .mas-connection-preview.is-invalid > path, .mas-connection-preview.is-invalid > circle { stroke: var(--danger); }
 .mas-connection-hint { width: fit-content; max-width: 240px; padding: 6px 9px; border: 1px solid #cbd9ed; border-radius: 6px; background: var(--surface); color: var(--text-secondary); font-size: 11px; line-height: 1.5; box-shadow: 0 2px 8px #20252b08; }
