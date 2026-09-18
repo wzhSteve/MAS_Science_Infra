@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -117,6 +118,13 @@ def create_app() -> FastAPI:
         import httpx
 
         origin = services.AGL_ORIGIN
+        # SPA routes need built dashboard assets; otherwise Store returns bare FastAPI 404 JSON.
+        if (
+            request.method in ("GET", "HEAD")
+            and services.is_agl_spa_path(origin_path)
+            and not services.agl_dashboard_built()
+        ):
+            raise HTTPException(502, services.agl_spa_missing_message())
         dest = f"{origin}/{origin_path.lstrip('/')}" if origin_path else f"{origin}/"
         if request.url.query:
             dest = f"{dest}?{request.url.query}"
@@ -128,6 +136,13 @@ def create_app() -> FastAPI:
                 r = await client.request(request.method, dest, headers=headers, content=body or None)
         except Exception as e:
             raise HTTPException(502, f"AGL dashboard unavailable ({origin}): {e}") from e
+        if (
+            r.status_code == 404
+            and request.method in ("GET", "HEAD")
+            and services.is_agl_spa_path(origin_path)
+            and not services.agl_dashboard_built()
+        ):
+            raise HTTPException(502, services.agl_spa_missing_message())
         ct = r.headers.get("content-type") or ""
         payload = services.rewrite_agl_payload(r.content, ct)
         out_headers = {
@@ -198,6 +213,25 @@ def create_app() -> FastAPI:
     @app.get("/api/mas/palette")
     def palette() -> Dict[str, Any]:
         return services.mas_palette()
+
+    @app.get("/api/mas/rollout-trees")
+    def rollout_trees(experiment_id: str = Query("demo")) -> Dict[str, Any]:
+        """Read-only scan of mas/.local_expansion/*.json → list of RolloutTree payloads."""
+        import json
+        from science_infra.control.paths import tir_agent_root
+
+        exp_dir = tir_agent_root() / ".local_expansion"
+        trees: List[Dict[str, Any]] = []
+        if exp_dir.is_dir():
+            for f in sorted(exp_dir.glob("*.json")):
+                try:
+                    payload = json.loads(f.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                tree = payload.get("tree")
+                if isinstance(tree, dict):
+                    trees.append({"file": f.name, "tree": tree})
+        return {"experiment_id": experiment_id, "n": len(trees), "trees": trees}
 
     @app.post("/api/llm/health")
     async def llm_health(body: LlmHealthBody, experiment_id: str = Query("demo")) -> Dict[str, Any]:
@@ -296,7 +330,37 @@ def create_app() -> FastAPI:
     @app.get("/api/events")
     async def events(experiment_id: str = Query("demo")) -> StreamingResponse:
         async def gen():
+            # P3: tail active train/collect subprocess stdout for marked
+            # rollout-tree frames and republish them as SSE `rollout_tree` events.
+            tail_state = {"offset": 0, "run_id": ""}
+
+            def _drain_tree_frames() -> None:
+                mp = PROCS.active("train") or PROCS.active("collect")
+                if mp is None or mp.experiment_id != experiment_id:
+                    return
+                if str(mp.run_id) != tail_state["run_id"]:
+                    tail_state["run_id"] = str(mp.run_id)
+                    tail_state["offset"] = 0
+                try:
+                    with open(mp.log_path, "r", encoding="utf-8", errors="replace") as f:
+                        f.seek(tail_state["offset"])
+                        chunk = f.read()
+                        tail_state["offset"] = f.tell()
+                except Exception:
+                    return
+                for line in chunk.splitlines():
+                    line = line.strip()
+                    if not line.startswith('{"__rollout_tree_event__"'):
+                        continue
+                    try:
+                        frame = json.loads(line)
+                        payload = frame.get("__rollout_tree_event__") or {}
+                    except Exception:
+                        continue
+                    BUS.publish(experiment_id, "rollout_tree", payload)
+
             async for payload in BUS.subscribe(experiment_id):
+                _drain_tree_frames()
                 yield format_sse(payload)
 
         return StreamingResponse(gen(), media_type="text/event-stream")

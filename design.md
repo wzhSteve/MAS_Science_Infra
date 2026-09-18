@@ -50,7 +50,7 @@ reward不上升等
 
 ## Phase 0 / 初版本（单 Agent / 对齐 tir_agent）
 
-> **实现位置（2026-09）**：编排与数据层在 `agent-lightning/examples/tir_agent/workflow/`；训练仍走 `LitTirAgent` + `algos/` + AGL/VERL。薄 CLI 在本仓 `science_infra.ui.cli`。对照分析见 [docs/infra-gap-analysis.md](docs/infra-gap-analysis.md)。
+> **实现位置（2026-09）**：编排与数据层在 `mas/workflow/`；训练仍走 `LitTirAgent` + `algos/` + AGL/VERL。薄 CLI 在本仓 `science_infra.ui.cli`。对照分析见 [docs/infra-gap-analysis.md](docs/infra-gap-analysis.md)。
 
 第一期**不实现多智能体**。默认拓扑 `specs/hub_react.yaml`（单 hub ReAct：`web_search` + `wikipedia_search` + `execute_python`）。`ExecutionService` 默认 adapter 为 LangGraph `TirAgent`。
 
@@ -70,7 +70,7 @@ reward不上升等
 pip install -e .
 science-infra collect --mock --n 2 --out /tmp/traj_batch.json
 # 或
-cd agent-lightning/examples/tir_agent
+cd mas
 PYTHONPATH=. python scripts/check_workflow_deps.py
 PYTHONPATH=. python scripts/collect_rollouts.py --mock --n 2 --out /tmp/traj_batch.json
 ```

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, type Bundle } from '../api/client';
 import MasGraphEditor from '../features/graph/MasGraphEditor';
 import type { WorkflowSpec } from '../features/graph/workflowGraph';
+import RolloutSamplingPanel from '../features/sampling/RolloutSamplingPanel';
 
 type Props = { expId: string; bundle: Bundle | null; onReload: () => void };
 
@@ -13,6 +14,7 @@ export function MASPanel({ expId, bundle, onReload }: Props) {
     roles: [],
     tools: [],
     edge_kinds: [],
+    sampling_modes: ['grpo_n', 'arpo', 'aepo', 'appo', 'rae'],
     templates: [],
   });
   const [msg, setMsg] = useState('');
@@ -152,6 +154,14 @@ export function MASPanel({ expId, bundle, onReload }: Props) {
           }}
           onRlSave={saveRl}
         />
+        <RolloutSamplingPanel
+          workflow={wf}
+          samplingModes={palette.sampling_modes}
+          onChange={(next) => {
+            setWf(next);
+            setWfDirty(true);
+          }}
+        />
         <div className="row" style={{ marginTop: 12 }}>
           <button type="button" className="primary" onClick={save} disabled={busy}>
             保存 workflow.yaml
@@ -224,21 +234,29 @@ export function MASPanel({ expId, bundle, onReload }: Props) {
           <table style={{ marginTop: 12 }}>
             <thead>
               <tr>
+                <th>group</th>
+                <th>idx</th>
                 <th>id</th>
                 <th>answer</th>
                 <th>reward</th>
+                <th>branch</th>
                 <th>tool</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={String(r.id)}>
-                  <td>{r.id}</td>
-                  <td>{String(r.answer ?? '')}</td>
-                  <td>{r.reward ?? ''}</td>
-                  <td>{r.tool ? '✓' : '✗'}</td>
-                </tr>
-              ))}
+              {[...rows]
+                .sort((a, b) => String(a.group_id || a.id).localeCompare(String(b.group_id || b.id)))
+                .map((r, i) => (
+                  <tr key={`${r.group_id || r.id}-${r.sample_index ?? i}`}>
+                    <td>{r.group_id ?? r.id}</td>
+                    <td>{r.sample_index ?? ''}</td>
+                    <td>{r.id}</td>
+                    <td>{String(r.answer ?? '')}</td>
+                    <td>{r.reward ?? ''}</td>
+                    <td>{r.is_branch ? '✓' : ''}</td>
+                    <td>{r.tool ? '✓' : '✗'}</td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         ) : null}

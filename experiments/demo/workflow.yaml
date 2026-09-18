@@ -29,3 +29,23 @@ agents:
   - execute_python
   trainable: true
 edges: []
+sampling:
+  sites:
+  - id: site_after_turn_hub
+    enabled: true
+    anchor:
+      kind: after_agent_turn
+      agent_id: hub
+      tool_id: null
+      edge_id: null
+    when: first
+    gate:
+      type: entropy_delta
+      params: {}
+    fork:
+      beam_size: 2
+      share_observation: true
+      resume_mode: messages
+    reward:
+      scheme: scalar_grpo
+    priority: 10

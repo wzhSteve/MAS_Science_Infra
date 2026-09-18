@@ -16,7 +16,22 @@ def experiments_root() -> Path:
 
 
 def tir_agent_root() -> Path:
-    return repo_root() / "agent-lightning" / "examples" / "tir_agent"
+    """MAS layer root (formerly agent-lightning/examples/tir_agent)."""
+    return repo_root() / "mas"
+
+
+def mas_root() -> Path:
+    return tir_agent_root()
+
+
+def rl_root() -> Path:
+    """Thin RL hooks package (reward / loss / algo overlays)."""
+    return repo_root() / "rl"
+
+
+def repo_data_dir() -> Path:
+    """Canonical parquet dataset root: ``MAS_Science_Infra/data``."""
+    return repo_root() / "data"
 
 
 def webui_dist() -> Path:

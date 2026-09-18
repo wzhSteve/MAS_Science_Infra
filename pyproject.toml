@@ -48,6 +48,6 @@ include = ["science_infra*"]
 package = true
 
 [tool.pytest.ini_options]
-testpaths = ["agent-lightning/examples/tir_agent/tests"]
-pythonpath = [".", "agent-lightning/examples/tir_agent"]
+testpaths = ["mas/tests"]
+pythonpath = [".", "mas"]
 addopts = "-q"

@@ -13,14 +13,23 @@ import {
 import '@xyflow/react/dist/style.css';
 import AgentNode from './AgentNode';
 import ToolNode from './ToolNode';
+import RouterNode from './RouterNode';
 import {
   executableInfo,
   flowToWorkflow,
   workflowToFlow,
   type WorkflowSpec,
 } from './workflowGraph';
+import {
+  GATE_TYPES,
+  deriveBranchCandidates,
+  findSiteForCandidate,
+  upsertSiteFromCandidate,
+  type BranchCandidate,
+  type BranchSiteConfig,
+} from './branchSites';
 
-const nodeTypes = { agent: AgentNode, tool: ToolNode };
+const nodeTypes = { agent: AgentNode, tool: ToolNode, router: RouterNode };
 
 type Palette = {
   skills?: string[];
@@ -46,10 +55,30 @@ export default function MasGraphEditor({ workflow, palette, onChange, rl, onRlPa
   const [selected, setSelected] = useState<Node | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [edgeKind, setEdgeKind] = useState('message');
+  const [branchCand, setBranchCand] = useState<BranchCandidate | null>(null);
+
+  const sites = useMemo(
+    () => ((workflow.sampling?.sites || []) as BranchSiteConfig[]),
+    [JSON.stringify(workflow.sampling?.sites || [])],
+  );
+  const candidates = useMemo(() => deriveBranchCandidates(workflow), [workflow]);
 
   useEffect(() => {
     const { nodes: n, edges: e } = workflowToFlow(workflow);
-    setNodes(n);
+    const enabledByNode: Record<string, string> = {};
+    for (const c of deriveBranchCandidates(workflow)) {
+      const s = findSiteForCandidate(sites, c);
+      if (s?.enabled) enabledByNode[c.nodeId] = s.gate?.type || 'on';
+    }
+    const decorated = n.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        branchEnabled: !!enabledByNode[node.id],
+        branchGate: enabledByNode[node.id],
+      },
+    }));
+    setNodes(decorated);
     setEdges(e);
   }, [
     workflow.topology,
@@ -57,7 +86,18 @@ export default function MasGraphEditor({ workflow, palette, onChange, rl, onRlPa
     JSON.stringify(workflow.agents),
     JSON.stringify(workflow.hub),
     JSON.stringify(workflow.edges),
+    JSON.stringify(workflow.sampling?.sites || []),
   ]);
+
+  const patchSites = (nextSites: BranchSiteConfig[]) => {
+    onChange({
+      ...workflow,
+      sampling: {
+        ...(workflow.sampling || {}),
+        sites: nextSites as any,
+      },
+    });
+  };
 
   const emit = useCallback(
     (ns: Node[], es: typeof edges) => {
@@ -403,6 +443,141 @@ export default function MasGraphEditor({ workflow, palette, onChange, rl, onRlPa
               ) : null}
             </>
           )}
+
+          <details style={{ marginTop: 16 }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 650 }}>
+              Branch Rollout 站点（Advanced）
+            </summary>
+            <p className="muted">
+              主交互请用下方「Rollout Sampling」轨迹小窗；此处为完整候选列表同步视图。
+            </p>
+          <div style={{ maxHeight: 220, overflow: 'auto' }}>
+            {candidates.map((c) => {
+              const site = findSiteForCandidate(sites, c);
+              const on = !!site?.enabled;
+              return (
+                <div
+                  key={c.id}
+                  className="row"
+                  style={{
+                    justifyContent: 'space-between',
+                    marginBottom: 6,
+                    padding: 6,
+                    border: branchCand?.id === c.id ? '1px solid #0969da' : '1px solid #d0d7de',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => setBranchCand(c)}
+                >
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        patchSites(
+                          upsertSiteFromCandidate(sites, c, {
+                            enabled: e.target.checked,
+                            gate: {
+                              type: site?.gate?.type || c.recommendedGate,
+                              params: site?.gate?.params || {},
+                            },
+                          }),
+                        );
+                      }}
+                    />
+                    <span>
+                      {c.label} <span className="muted">({c.recommendedGate})</span>
+                    </span>
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+          {branchCand ? (
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>选中站点：{branchCand.label}</label>
+              <select
+                value={findSiteForCandidate(sites, branchCand)?.gate?.type || branchCand.recommendedGate}
+                onChange={(e) =>
+                  patchSites(
+                    upsertSiteFromCandidate(sites, branchCand, {
+                      enabled: true,
+                      gate: {
+                        type: e.target.value,
+                        params: findSiteForCandidate(sites, branchCand)?.gate?.params || {},
+                      },
+                    }),
+                  )
+                }
+              >
+                {GATE_TYPES.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
+              <label style={{ marginTop: 8 }}>reward.scheme</label>
+              <select
+                value={findSiteForCandidate(sites, branchCand)?.reward?.scheme || 'scalar_grpo'}
+                onChange={(e) =>
+                  patchSites(
+                    upsertSiteFromCandidate(sites, branchCand, {
+                      enabled: true,
+                      reward: {
+                        ...(findSiteForCandidate(sites, branchCand)?.reward || {}),
+                        scheme: e.target.value,
+                      },
+                    }),
+                  )
+                }
+              >
+                <option value="scalar_grpo">scalar_grpo (R0)</option>
+                <option value="rae_adjudicate">rae_adjudicate (R1)</option>
+              </select>
+              <label style={{ marginTop: 8 }}>fork.beam_size</label>
+              <input
+                type="number"
+                min={1}
+                value={Number(findSiteForCandidate(sites, branchCand)?.fork?.beam_size ?? 2)}
+                onChange={(e) =>
+                  patchSites(
+                    upsertSiteFromCandidate(sites, branchCand, {
+                      enabled: true,
+                      fork: {
+                        ...(findSiteForCandidate(sites, branchCand)?.fork || {}),
+                        beam_size: Number(e.target.value),
+                        share_observation: true,
+                      },
+                    }),
+                  )
+                }
+              />
+              <label style={{ marginTop: 8 }}>fork.resume_mode</label>
+              <select
+                value={String(findSiteForCandidate(sites, branchCand)?.fork?.resume_mode || 'messages')}
+                onChange={(e) =>
+                  patchSites(
+                    upsertSiteFromCandidate(sites, branchCand, {
+                      enabled: true,
+                      fork: {
+                        ...(findSiteForCandidate(sites, branchCand)?.fork || {}),
+                        resume_mode: e.target.value,
+                        share_observation: true,
+                      },
+                    }),
+                  )
+                }
+              >
+                <option value="messages">messages</option>
+                <option value="token_prefix">token_prefix (Advanced)</option>
+              </select>
+            </div>
+          ) : null}
+          <p className="muted">
+            已启用 {sites.filter((s) => s.enabled).length} / {candidates.length} 候选
+          </p>
+          </details>
           <p className="muted" style={{ marginTop: 12 }}>
             图序列化为 WorkflowSpec YAML。连线 kind：tool_call / route / message / feedback。
           </p>

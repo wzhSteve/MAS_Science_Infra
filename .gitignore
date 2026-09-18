@@ -29,3 +29,12 @@ agent-lightning/docs
 /agent-lightning/examples/ARPO/ARPO/rl_datasets/
 /agent-lightning/examples/CD_TAA/solver_cache/
 model.safetensors
+
+# Local model weights / vendored repos (too large for GitHub)
+/LLM/
+/RL_Rep/
+/tensorboard_log/
+/mas/tensorboard_log/
+/mas/data/
+agentops.log
+/mas/agentops.log

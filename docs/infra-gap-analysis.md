@@ -1,7 +1,7 @@
 # MAS Research Infra：design.md 与 agent-lightning 联合分析
 
 **日期**：2026-09-06  
-**范围**：以 [design.md](../design.md) 四层为产品真源，以 [agent-lightning](../agent-lightning)（含 `examples/tir_agent`）为落地真源。  
+**范围**：以 [design.md](../design.md) 四层为产品真源，以 [agent-lightning](../agent-lightning)（含 `mas`）为落地真源。  
 **非范围**：不吸收 [MAS_INF/ENGINEERING_SPEC.md](/root/autodl-tmp/MAS_INF/ENGINEERING_SPEC.md) 为合同；仅借用其「AGL 是 backend、不要自研 PPO、Event 与 Trajectory 分层」三条边界。  
 **本轮不改训练代码**；下文「如何改」是改造规格，供后续工作包使用。
 
@@ -16,7 +16,7 @@
 - RL 主路径已经能跑：LangGraph 单 hub ReAct -> `LitTirAgent` -> Agent-Lightning `Trainer`/`VERL` -> 五套 GRPO 族算法挂钩。
 - design.md 要的 **Framework / Runtime 分层、格式化跨层合同、层独立、Harness 插件、UI** 大部分未落地。
 - [pyproject.toml](../pyproject.toml) 声明的 `science_infra` 包和 `science-infra` CLI **不存在**；Phase 0 表格里的「已实现」是过时陈述。
-- 正确策略：**不 fork `agentlightning/` 核心**；把 science 契约先在 `examples/tir_agent/workflow/` 长成，稳定后再抽包。TIR 图作为默认 Runtime adapter，而不是产品 Runtime。
+- 正确策略：**不 fork `agentlightning/` 核心**；把 science 契约先在 `mas/workflow/` 长成，稳定后再抽包。TIR 图作为默认 Runtime adapter，而不是产品 Runtime。
 
 ---
 
@@ -84,10 +84,10 @@ design.md 要求 RL 层从三个结构抽象，精简用户修改面：rollout /
 
 | design.md 钩子 | AGL / tir 落点 | 用户今天实际改哪里 |
 |----------------|----------------|-------------------|
-| rollout 采样 | `AgentModeDaemon` enqueue；ARPO/AEPO 在 `TirAgentModeDaemon._enqueue_tree_branches` 二次 enqueue | [`algos/daemon.py`](../agent-lightning/examples/tir_agent/algos/daemon.py) |
-| reward | `LitTirAgent` 内 `compute_outcome_reward` + `agl.emit_reward`；adapter 把 span 收成 `Triplet.reward` | [`algos/rewards.py`](../agent-lightning/examples/tir_agent/algos/rewards.py) + [`lit_tir_agent.py`](../agent-lightning/examples/tir_agent/lit_tir_agent.py) |
-| advantage | Hydra `algorithm.adv_estimator` **永远是 `grpo`**（关 Critic）；真实算法名在 `algorithm.tir_algo`；`TirAgentLightningTrainer` 在 `compute_advantage` 处替换 | [`algos/trainer.py`](../agent-lightning/examples/tir_agent/algos/trainer.py) + [`algos/advantage.py`](../agent-lightning/examples/tir_agent/algos/advantage.py) |
-| loss | 未单独挂钩；走 VERL PPO clip（`clip_ratio_low/high` 等在 Hydra config） | [`train_tir_agent.py`](../agent-lightning/examples/tir_agent/train_tir_agent.py) 的 `RL_TRAINING_CONFIG` |
+| rollout 采样 | `AgentModeDaemon` enqueue；ARPO/AEPO 在 `TirAgentModeDaemon._enqueue_tree_branches` 二次 enqueue | [`algos/daemon.py`](../mas/algos/daemon.py) |
+| reward | `LitTirAgent` 内 `compute_outcome_reward` + `agl.emit_reward`；adapter 把 span 收成 `Triplet.reward` | [`algos/rewards.py`](../mas/algos/rewards.py) + [`lit_tir_agent.py`](../mas/lit_tir_agent.py) |
+| advantage | Hydra `algorithm.adv_estimator` **永远是 `grpo`**（关 Critic）；真实算法名在 `algorithm.tir_algo`；`TirAgentLightningTrainer` 在 `compute_advantage` 处替换 | [`algos/trainer.py`](../mas/algos/trainer.py) + [`algos/advantage.py`](../mas/algos/advantage.py) |
+| loss | 未单独挂钩；走 VERL PPO clip（`clip_ratio_low/high` 等在 Hydra config） | [`train_tir_agent.py`](../mas/train_tir_agent.py) 的 `RL_TRAINING_CONFIG` |
 
 这已经满足「基于 AGL/verl 修改、不 fork 官方 veRL 仓库」。**缺口不在 AGL，而在 MAS 契约没有接到这三钩子上。**
 
@@ -116,18 +116,18 @@ trainer = agl.Trainer(n_runners=..., algorithm=algorithm)
 trainer.fit(LitTirAgent(), train_data, val_data)
 ```
 
-GRPO 甚至不用自定义 class：`agl.VERL(config)` 即可（[`train_tir_agent.py`](../agent-lightning/examples/tir_agent/train_tir_agent.py) `tir_algo == "grpo"` 分支）。
+GRPO 甚至不用自定义 class：`agl.VERL(config)` 即可（[`train_tir_agent.py`](../mas/train_tir_agent.py) `tir_algo == "grpo"` 分支）。
 
 ---
 
 ## 3. tir_agent 落地图
 
-代码主线在 `agent-lightning/examples/tir_agent/`。这是 **示例目录承担了 infra 职责**，所以层边界必然发糊。
+代码主线在 `mas/`。这是 **示例目录承担了 infra 职责**，所以层边界必然发糊。
 
 ### 3.1 文件职责
 
 ```text
-examples/tir_agent/
+mas/
   tir_agent.py          LangGraph ReAct 图（MAS 构建的「Runtime 实现」，无 AGL import）
   lit_tir_agent.py      LitAgent 包装：跑图 + emit_reward/annotation（RL 入口）
   python_tool.py        数学沙箱（禁 import、timeout、result=）
@@ -151,7 +151,7 @@ examples/tir_agent/
   mas_agent.py / train_mas_agent.py / MAS_structagent/   平行多智能体栈
 ```
 
-算法对照与论文差距见 [examples/tir_agent/docs/DESIGN.md](../agent-lightning/examples/tir_agent/docs/DESIGN.md)，本文不重复论文细节。
+算法对照与论文差距见 [mas/docs/DESIGN.md](../mas/docs/DESIGN.md)，本文不重复论文细节。
 
 ### 3.2 两条执行路径（核心结构问题）
 
@@ -301,7 +301,7 @@ design.md 已点名这两个概念，代码未落地。
 Phase 0 最小字段：
 
 ```yaml
-# 建议路径：examples/tir_agent/specs/hub_react.yaml
+# 建议路径：mas/specs/hub_react.yaml
 schema_version: "0.1.0"
 topology: hub_react          # preset；不是公理
 hub:
@@ -404,7 +404,7 @@ live spans -> Triplet / DataProto                 （AGL 内部，不进 science
 
 推荐分两步：
 
-1. **现在（P0–P2）**：契约与 Collector/Archive/Reward **继续长在** `examples/tir_agent/workflow/`。训练代码继续在 `algos/`、`lit_tir_agent.py`。用 `check_workflow_deps.py` 守住「workflow 不 import AGL」。
+1. **现在（P0–P2）**：契约与 Collector/Archive/Reward **继续长在** `mas/workflow/`。训练代码继续在 `algos/`、`lit_tir_agent.py`。用 `check_workflow_deps.py` 守住「workflow 不 import AGL」。
 2. **稳定后（P3+）**：把 `workflow/` + `algos/rewards.py` 的纯函数抽到 `Agent_Science_Infra/science_infra/{schema,runtime,data,rl,harness,cli}`，tir_agent 变成「LangGraph adapter + 训练入口」示例。抽包标准：合同 JSON round-trip 稳定、collect 与 train 共用 RewardFn、TrainSignal 已被 overlay 消费。
 
 ```text
@@ -416,7 +416,7 @@ science_infra/
   rl/              overlay: TrainSignal -> Hydra；不 import DataProto
   harness/         Diagnoser registry
   ui/              CLI 传参
-examples/tir_agent/   TirAgent 图、algos 挂钩、LitTirAgent、MAS_structagent 过渡
+mas/   TirAgent 图、algos 挂钩、LitTirAgent、MAS_structagent 过渡
 agentlightning/       只读依赖，不改核心
 ```
 
@@ -454,21 +454,21 @@ agentlightning/       只读依赖，不改核心
 ### 5.2 已基本具备（保持，少动）
 
 **单 hub ReAct + 三工具**  
-[`tir_agent.py`](../agent-lightning/examples/tir_agent/tir_agent.py) 图：`agent <-> tools`，无答案则 `finalize`，再失败则 `react`。工具：DuckDuckGo HTML、Wikipedia REST、math_gsm 风格 Python 沙箱。无网可用 `TIR_OFFLINE_SEARCH=1`。  
+[`tir_agent.py`](../mas/tir_agent.py) 图：`agent <-> tools`，无答案则 `finalize`，再失败则 `react`。工具：DuckDuckGo HTML、Wikipedia REST、math_gsm 风格 Python 沙箱。无网可用 `TIR_OFFLINE_SEARCH=1`。  
 **不要改**：把工具内摘要 LLM 加回来（会污染 credit）。
 
 **无 VERL mock collect**  
-[`scripts/collect_rollouts.py`](../agent-lightning/examples/tir_agent/scripts/collect_rollouts.py) + [`collector.py`](../agent-lightning/examples/tir_agent/workflow/collector.py)。`--mock` 不加载 agentlightning（脚本会警告若被导入）。  
+[`scripts/collect_rollouts.py`](../mas/scripts/collect_rollouts.py) + [`collector.py`](../mas/workflow/collector.py)。`--mock` 不加载 agentlightning（脚本会警告若被导入）。  
 改完后这条必须仍为绿：
 
 ```bash
-cd agent-lightning/examples/tir_agent
+cd mas
 PYTHONPATH=. python scripts/check_workflow_deps.py
 PYTHONPATH=. python scripts/collect_rollouts.py --mock --n 2 --out /tmp/traj.json
 ```
 
 **Archive ↔ ARPO**  
-[`archive.py`](../agent-lightning/examples/tir_agent/workflow/archive.py) 的 `dump_resume_with_archive` / `load_resume_messages`；daemon 二次 enqueue 写入 `resume_messages` 与可选 `resume_from`。语义已覆盖 design.md「RL 从历史状态再采样」。
+[`archive.py`](../mas/workflow/archive.py) 的 `dump_resume_with_archive` / `load_resume_messages`；daemon 二次 enqueue 写入 `resume_messages` 与可选 `resume_from`。语义已覆盖 design.md「RL 从历史状态再采样」。
 
 **Outcome reward 与五算法**  
 奖励与 advantage 的论文差距见 tir `DESIGN.md`。infra 不要把这些公式搬进 schema。
@@ -702,7 +702,7 @@ specs/hub_react.yaml 新增
 
 ## 9. 附录：现有命令对照（以代码为准）
 
-在 `agent-lightning/examples/tir_agent`：
+在 `mas`：
 
 ```bash
 # MAS 数据层，不占训练 GPU（仓库根目录）

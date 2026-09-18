@@ -13,6 +13,8 @@
 #   ./run.sh live         # 等同 live-api
 #   ./run.sh ui           # 启动 Science Control UI（uv .venv + webui）
 #   ./run.sh ui-test      # 探测 GPU/RL 控制 API（可 start/stop 训练子进程）
+#   ./run.sh branch-ui-test  # Branch rollout sites/Collect（可选 --train）
+#   ./run.sh traj-test       # Rollout Sampling trajectoryGraph vitest
 #
 # 配置: Agent_Science_Infra/.env（见 .env.example）
 # Python: 必须用本仓库 uv .venv（scripts/setup_uv_env.sh），禁止依赖 miniconda base
@@ -21,7 +23,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TIR="${ROOT}/agent-lightning/examples/tir_agent"
+TIR="${ROOT}/mas"
 VENV_PY="${ROOT}/.venv/bin/python"
 OUT="${ROOT}/artifacts/run_smoke"
 TRAJ="${OUT}/traj.json"
@@ -413,7 +415,7 @@ Agent_Science_Infra / run.sh — 功能测试说明
 ==========================================
 
 用法
-  ./run.sh [smoke|tests|all|live-vllm|live-api|live-api-data|live|train|ui|ui-test|help]
+  ./run.sh [smoke|tests|all|live-vllm|live-api|live-api-data|live|train|ui|ui-test|branch-ui-test|traj-test|arpo-train-test|feature-test|help]
   ./run.sh train [fast|a800|a800_2gpu] [--gpu 0] [--n-runners 1] [--algo grpo] [--rl-yaml PATH]
   ./run.sh ui [--host 0.0.0.0] [--port 8787] [--rebuild|--no-build] [--daemon|--stop]
   默认: smoke
@@ -423,6 +425,7 @@ Agent_Science_Infra / run.sh — 功能测试说明
   smoke         无 GPU 冒烟：doctor → 层依赖 → mock 采集 → diagnose → HTML
   tests         跑 tir_agent unittest（stage1–11）
   all           smoke + tests
+  feature-test  功能分组测试：按功能域单测（--list 看全部域；详见下方章节）
   live-vllm     本地 vLLM 驱动 TirAgent：LLM → tool → 答案 → reward
   live-api      .env / OPENAI_* API 驱动 TirAgent（单条演示题）
   live-api-data 从 data/*.parquet 抽样经 API 跑 TirAgent（默认 5 条 gsm8k）
@@ -506,7 +509,7 @@ smoke / tests / train
   a800_2gpu 在可见卡 < 2 时拒绝。缺 parquet 时提示 scripts/prepare_data.sh。
 
 ────────────────────────────────────────
-ui / ui-test
+ui / ui-test / branch-ui-test / traj-test
 ────────────────────────────────────────
 
   总命令（用仓库 uv .venv，不要用 miniconda）:
@@ -524,6 +527,63 @@ ui / ui-test
     ./run.sh ui-test
     ./run.sh ui-test --no-train
     UI_PORT=8787 ./run.sh ui-test
+
+  Branch rollout 验收（sites + Collect；可选短训扫 expansion）:
+
+    ./run.sh branch-ui-test
+    ./run.sh branch-ui-test --train
+    ./run.sh branch-ui-test --algo rae --train
+    ./run.sh branch-ui-test --pev-fixture
+    手册: docs/BRANCH_ROLLOUT_UI_TEST.md / docs/ROLLOUT_SAMPLING_UI_TEST.md
+
+  Rollout Sampling 轨迹推导单测（vitest，无需 UI）:
+
+    ./run.sh traj-test
+    手册: docs/ROLLOUT_SAMPLING_UI_TEST.md
+
+  ARPO 训练验收（10 轮采样/reward/loss 断言，训练结束后恢复 YAML）:
+
+    ./run.sh arpo-train-test
+    ./run.sh arpo-train-test --steps 10 --timeout 900
+    ./run.sh arpo-train-test --negative    # 追加 n_branch=0 负例
+    手册: docs/ARPO_TRAIN_TEST.md (Phase 4) / docs/MAS_AGENT_FRAMEWORK_TEST.md
+
+────────────────────────────────────────
+feature-test — 按功能域测试（推荐日常用）
+────────────────────────────────────────
+
+  把 146 个单测 + 前端 vitest + 冒烟拆成 16 个功能域，可单测一个功能，
+  也可 --all 全量。每个域独立输出 PASS/FAIL + 耗时，结尾汇总矩阵。
+
+  查看全部功能域:
+
+    ./run.sh feature-test --list
+
+  测单个功能（示例）:
+
+    ./run.sh feature-test mas-core          # MAS 基础层（spec/compiler/红线/采集）
+    ./run.sh feature-test agent-framework   # agent 化（registry/router/memory/PEV）
+    ./run.sh feature-test branch            # 分支采样（gates/RAE/active set）
+    ./run.sh feature-test rollout-tree      # RolloutTree 契约
+    ./run.sh feature-test schema03          # schema 0.3 sugar/tool-agent
+    ./run.sh feature-test daemon            # Daemon expansion enqueue
+    ./run.sh feature-test realtime         # 实时 Harness（JSONL/SSE）
+    ./run.sh feature-test frontend          # 前端 vitest（轨迹 + router 节点）
+    ./run.sh feature-test smoke             # 无 GPU 冒烟（等价 ./run.sh smoke）
+
+  测多个功能:
+
+    ./run.sh feature-test mas-core rl harness
+
+  全量（全部单测域 + frontend，不含 smoke）:
+
+    ./run.sh feature-test --all
+
+  全部功能域一览（--list 输出）:
+    mas-core rl harness branch rollout-tree agent-framework schema03
+    daemon realtime cli control-ui gpu-compiler verifier e2e frontend smoke
+
+  手册: docs/MAS_AGENT_FRAMEWORK_TEST.md (§2 测试矩阵)
 
 EOF
 }
@@ -565,7 +625,7 @@ cmd_smoke() {
 }
 
 cmd_tests() {
-  [[ -d "${TIR}" ]] || die "找不到 tir_agent: ${TIR}"
+  [[ -d "${TIR}" ]] || die "找不到 mas/: ${TIR}"
   ensure_cli
   step 1 1 "unittest — test_infra_v1.py discover stage1–11"
   echo "说明: MAS / RL overlay / Harness / CLI / verifier / e2e / UI 回归。"
@@ -758,7 +818,7 @@ cmd_live() {
 }
 
 cmd_train() {
-  [[ -d "${TIR}" ]] || die "找不到 tir_agent: ${TIR}"
+  [[ -d "${TIR}" ]] || die "找不到 mas/: ${TIR}"
   ensure_cli
   local py
   py="$(resolve_python)"
@@ -817,6 +877,8 @@ cmd_train() {
         ;;
     esac
   done
+
+  ensure_agl_dashboard 0
 
   if ! "${py}" -c "import agentlightning" 2>/dev/null; then
     die "train 需要 agentlightning（在 uv .venv 中）。示例:
@@ -909,7 +971,8 @@ print(n.get('n') or d.get('rollout_per_gpu') or '')
   fi
   (
     cd "${TIR}"
-    export PYTHONPATH="${TIR}${PYTHONPATH:+:${PYTHONPATH}}"
+    export PYTHONPATH="${ROOT}:${TIR}${PYTHONPATH:+:${PYTHONPATH}}"
+    export VLLM_USE_V1="${VLLM_USE_V1:-1}"
     run_cmd "${py}" "${argv[@]}"
   )
   echo
@@ -931,6 +994,24 @@ ensure_webui() {
     fi
     run_cmd npm run build
   )
+}
+
+ensure_agl_dashboard() {
+  local rebuild="${1:-0}"
+  local index="${ROOT}/agent-lightning/agentlightning/dashboard/index.html"
+  if [[ "${rebuild}" != "1" && -f "${index}" ]]; then
+    return 0
+  fi
+  command -v npm >/dev/null 2>&1 || die "AGL Metrics 需要构建 dashboard（未找到 npm）: cd agent-lightning/dashboard && npm install && npm run build"
+  step 1 1 "AGL dashboard npm run build"
+  (
+    cd "${ROOT}/agent-lightning/dashboard"
+    if [[ ! -d node_modules ]]; then
+      run_cmd npm install
+    fi
+    run_cmd npm run build
+  )
+  [[ -f "${index}" ]] || die "AGL dashboard 构建失败，缺少 ${index}"
 }
 
 ui_health_ok() {
@@ -1019,8 +1100,11 @@ cmd_ui() {
 
   if [[ "${nobuild}" != "1" ]]; then
     ensure_webui "${rebuild}"
+    ensure_agl_dashboard "${rebuild}"
   elif [[ ! -f "${ROOT}/webui/dist/index.html" ]]; then
     die "未找到 webui/dist。请去掉 --no-build，或先: cd webui && npm run build"
+  elif [[ ! -f "${ROOT}/agent-lightning/agentlightning/dashboard/index.html" ]]; then
+    die "未找到 AGL dashboard。请去掉 --no-build，或先: cd agent-lightning/dashboard && npm install && npm run build"
   fi
 
   local py
@@ -1129,6 +1213,152 @@ cmd_ui_test() {
   fi
 }
 
+cmd_traj_test() {
+  ensure_cli
+  local webui="${ROOT}/webui"
+  if [[ ! -f "${webui}/package.json" ]]; then
+    die "缺少 webui/package.json"
+  fi
+  if [[ ! -d "${webui}/node_modules/vitest" ]]; then
+    step 1 2 "npm install (webui，补 vitest)"
+    (cd "${webui}" && npm install) || die "webui npm install 失败"
+  fi
+  step 1 1 "vitest trajectoryGraph (test:traj)"
+  if ! (cd "${webui}" && npm run test:traj); then
+    die "traj-test 失败"
+  fi
+  echo
+  echo "${GREEN}${BOLD}traj-test OK${NC}"
+  echo "  手册: docs/ROLLOUT_SAMPLING_UI_TEST.md"
+}
+
+cmd_branch_ui_test() {
+  ensure_cli
+  local port="${UI_PORT:-8787}"
+  local started=0
+  local extra=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port)
+        port="${2:-}"
+        shift 2
+        ;;
+      --port=*)
+        port="${1#*=}"
+        shift
+        ;;
+      *)
+        extra+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  local py
+  py="$(resolve_python)"
+  if [[ ! -x "${py}" ]]; then
+    die "需要 uv .venv: ${VENV_PY}"
+  fi
+
+  if ! ui_health_ok "${port}"; then
+    echo "UI 未在 :${port} 运行，先后台启动…"
+    cmd_ui --port "${port}" --daemon
+    started=1
+  fi
+
+  step 1 1 "scripts/branch_rollout_ui_test.py  (uv .venv)"
+  local check_args=(--base "http://127.0.0.1:${port}" --experiment arpo_e2e)
+  if [[ ${#extra[@]} -gt 0 ]]; then
+    check_args+=("${extra[@]}")
+  fi
+  if ! run_cmd "${py}" "${ROOT}/scripts/branch_rollout_ui_test.py" "${check_args[@]}"; then
+    if [[ "${started}" == "1" ]]; then
+      echo "${YELLOW}检查失败；后台 UI 仍在跑。停掉: ./run.sh ui --stop${NC}"
+    fi
+    die "branch-ui-test 失败"
+  fi
+  echo
+  echo "${GREEN}${BOLD}branch-ui-test OK${NC}"
+  echo "  手册: docs/BRANCH_ROLLOUT_UI_TEST.md / docs/ROLLOUT_SAMPLING_UI_TEST.md"
+  echo "  UI: http://127.0.0.1:${port}/"
+  if [[ "${started}" == "1" ]]; then
+    echo "  本次拉起的后台服务未关闭。停掉: ./run.sh ui --stop"
+  fi
+}
+
+cmd_arpo_train_test() {
+  ensure_cli
+  local port="${UI_PORT:-8787}"
+  local started=0
+  local extra=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port)
+        port="${2:-}"
+        shift 2
+        ;;
+      --port=*)
+        port="${1#*=}"
+        shift
+        ;;
+      *)
+        extra+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  local py
+  py="$(resolve_python)"
+  if [[ ! -x "${py}" ]]; then
+    die "需要 uv .venv: ${VENV_PY}"
+  fi
+
+  if ! ui_health_ok "${port}"; then
+    echo "UI 未在 :${port} 运行，先后台启动…"
+    cmd_ui --port "${port}" --daemon
+    started=1
+  fi
+
+  step 1 1 "scripts/arpo_train_verify.py  (ARPO 10 轮采样/reward/loss 验收)"
+  local check_args=(--base "http://127.0.0.1:${port}" --experiment arpo_e2e)
+  if [[ ${#extra[@]} -gt 0 ]]; then
+    check_args+=("${extra[@]}")
+  fi
+  if ! run_cmd "${py}" "${ROOT}/scripts/arpo_train_verify.py" "${check_args[@]}"; then
+    if [[ "${started}" == "1" ]]; then
+      echo "${YELLOW}检查失败；后台 UI 仍在跑。停掉: ./run.sh ui --stop${NC}"
+    fi
+    die "arpo-train-test 失败"
+  fi
+  echo
+  echo "${GREEN}${BOLD}arpo-train-test OK${NC}"
+  echo "  手册: docs/ARPO_TRAIN_TEST.md (Phase 4) + docs/MAS_AGENT_FRAMEWORK_TEST.md"
+  echo "  UI: http://127.0.0.1:${port}/"
+  if [[ "${started}" == "1" ]]; then
+    echo "  本次拉起的后台服务未关闭。停掉: ./run.sh ui --stop"
+  fi
+}
+
+cmd_feature_test() {
+  ensure_cli
+  local py
+  py="$(resolve_python)"
+  if [[ ! -x "${py}" ]]; then
+    die "需要 uv .venv: ${VENV_PY}"
+  fi
+  # 无参数 → 打印域列表；--all / 域名透传给 scripts/feature_test.py
+  run_cmd "${py}" "${ROOT}/scripts/feature_test.py" "$@"
+  local rc=$?
+  if [[ ${rc} -ne 0 ]]; then
+    die "feature-test 失败"
+  fi
+  echo
+  echo "${GREEN}${BOLD}feature-test OK${NC}"
+  echo "  域列表: ${py} ${ROOT}/scripts/feature_test.py --list"
+  echo "  手册: docs/MAS_AGENT_FRAMEWORK_TEST.md (§2 测试矩阵)"
+}
+
 main() {
   local mode="${1:-smoke}"
   shift || true
@@ -1144,9 +1374,13 @@ main() {
     train) cmd_train "$@" ;;
     ui|serve|webui) cmd_ui "$@" ;;
     ui-test|ui-check) cmd_ui_test "$@" ;;
+    branch-ui-test|branch-ui|branch-test) cmd_branch_ui_test "$@" ;;
+    traj-test|traj|trajectory-test) cmd_traj_test "$@" ;;
+    arpo-train-test|arpo-train|arpo-verify) cmd_arpo_train_test "$@" ;;
+    feature-test|feature|ftest) cmd_feature_test "$@" ;;
     *)
       die "未知模式: ${mode}
-用法: ./run.sh [smoke|tests|all|live-vllm|live-api|live-api-data|live|train|ui|ui-test|help]
+用法: ./run.sh [smoke|tests|all|live-vllm|live-api|live-api-data|live|train|ui|ui-test|branch-ui-test|traj-test|arpo-train-test|feature-test|help]
 详见: ./run.sh help"
       ;;
   esac

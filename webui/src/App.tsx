@@ -6,6 +6,7 @@ import { MASPanel } from './pages/MAS';
 import { RLPanel } from './pages/RL';
 import { HarnessPanel } from './pages/Harness';
 import { MonitorPanel } from './pages/Monitor';
+import { RolloutTreePanel } from './pages/RolloutTree';
 import GpuPicker from './features/gpu/GpuPicker';
 import './App.css';
 
@@ -14,6 +15,7 @@ const NAV = [
   { id: 'llm', label: 'LLM' },
   { id: 'mas', label: 'MAS' },
   { id: 'rl', label: 'RL' },
+  { id: 'rollout-tree', label: 'RolloutTree' },
   { id: 'harness', label: 'Harness' },
   { id: 'monitor', label: 'Monitor' },
 ] as const;
@@ -299,6 +301,9 @@ export default function App() {
               onStopTrain={stopTrain}
               onRefreshLog={refreshTrain}
             />
+          </div>
+          <div className={tab === 'rollout-tree' ? 'pane' : 'pane pane-hidden'}>
+            <RolloutTreePanel expId={expId} visible={tab === 'rollout-tree'} />
           </div>
           <div className={tab === 'harness' ? 'pane' : 'pane pane-hidden'}>
             <HarnessPanel expId={expId} bundle={bundle} meta={meta} onReload={reload} />

@@ -153,6 +153,8 @@ export function MonitorPanel({
         <div className="row" style={{ marginTop: 12 }}>
           <span className="chip">collect n={model?.n ?? 0}</span>
           <span className="chip ok">collect mean={model?.mean_reward ?? '—'}</span>
+          <span className="chip">sampling={model?.sampling_mode ?? '—'}</span>
+          <span className="chip">group_n={model?.group_n ?? '—'}</span>
           <span className="chip">train pts={trainChart.length}</span>
           <span className="chip">errors={model?.n_error ?? 0}</span>
         </div>
@@ -191,27 +193,40 @@ export function MonitorPanel({
       </div>
       {hasCollect ? (
         <div className="card">
-          <h3>Trajectories</h3>
+          <h3>Trajectories（按 group 分组）</h3>
           <table>
             <thead>
               <tr>
                 <th>#</th>
+                <th>group</th>
+                <th>idx</th>
                 <th>id</th>
                 <th>reward</th>
+                <th>branch</th>
                 <th>format</th>
                 <th>answer</th>
               </tr>
             </thead>
             <tbody>
-              {(model.trajectories || []).map((t: any, i: number) => (
-                <tr key={t.trajectory_id} onClick={() => setIdx(i)} style={{ cursor: 'pointer' }}>
-                  <td>{i + 1}</td>
-                  <td>{String(t.trajectory_id).slice(0, 10)}</td>
-                  <td>{t.reward ?? ''}</td>
-                  <td>{t.format_ok ? 'yes' : 'no'}</td>
-                  <td>{String(t.answer || '').slice(0, 60)}</td>
-                </tr>
-              ))}
+              {[...(model.trajectories || [])]
+                .map((t: any, i: number) => ({ t, i }))
+                .sort((a, b) =>
+                  String(a.t.group_id || a.t.trajectory_id).localeCompare(
+                    String(b.t.group_id || b.t.trajectory_id),
+                  ),
+                )
+                .map(({ t, i }) => (
+                  <tr key={t.trajectory_id} onClick={() => setIdx(i)} style={{ cursor: 'pointer' }}>
+                    <td>{i + 1}</td>
+                    <td>{String(t.group_id || '').slice(0, 12)}</td>
+                    <td>{t.sample_index ?? ''}</td>
+                    <td>{String(t.trajectory_id).slice(0, 10)}</td>
+                    <td>{t.reward ?? ''}</td>
+                    <td>{t.is_branch ? '✓' : ''}</td>
+                    <td>{t.format_ok ? 'yes' : 'no'}</td>
+                    <td>{String(t.answer || '').slice(0, 60)}</td>
+                  </tr>
+                ))}
             </tbody>
           </table>
           {idx != null && model.trajectories?.[idx] ? (

@@ -65,10 +65,12 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Check Science Control GPU/RL APIs")
     p.add_argument("--base", default="http://127.0.0.1:8787")
     p.add_argument("--experiment", default="demo")
+    p.add_argument("--algo", default="grpo", help="algo for rl patch + mock collect (grpo|arpo|...)")
     p.add_argument("--no-train", action="store_true", help="skip start_train / stop_train")
     args = p.parse_args()
     base = args.base
     exp = args.experiment
+    algo = str(args.algo or "grpo").lower()
     failed = 0
 
     def ok(name: str, cond: bool, detail: Any = "") -> None:
@@ -78,7 +80,7 @@ def main() -> int:
             failed += 1
         print(f"  [{mark}] {name}{('  ' + str(detail)) if detail not in ('', None) else ''}")
 
-    print(f"Science Control UI check → {base}  exp={exp}")
+    print(f"Science Control UI check → {base}  exp={exp}  algo={algo}")
     wait_health(base)
 
     code, health = req(base, "GET", "/api/health")
@@ -100,7 +102,7 @@ def main() -> int:
     ids = list((rec.get("devices") or {}).get("ids") or [0])
     rl_patch = {
         "profile": rec.get("profile") or "fast",
-        "algo": "grpo",
+        "algo": algo,
         "n_runners": int(rec.get("n_runners") or 1),
         "rollout_per_gpu": int(rec.get("rollout_per_gpu") or 2),
         "devices": {"ids": ids},
@@ -109,6 +111,11 @@ def main() -> int:
         merged = dict(bundle["rl"])
         merged.update(rl_patch)
         merged["devices"] = {"ids": ids}
+        merged["algo"] = algo
+        algo_block = dict(merged.get("algorithm") or {})
+        algo_block["tir_algo"] = algo
+        algo_block["adv_estimator"] = "grpo"
+        merged["algorithm"] = algo_block
         merged["trainer"] = {
             **(merged.get("trainer") or {}),
             "n_gpus_per_node": len(ids),
@@ -130,15 +137,21 @@ def main() -> int:
         ok("rl.yaml devices.ids persisted", list(got_ids or []) == [int(x) for x in ids], got_ids)
         ok("rl.yaml trainer.n_gpus_per_node", int(n_gpus or 0) == len(ids), n_gpus)
         ok("rl.yaml n_runners", int(rl.get("n_runners") or 0) >= 1, rl.get("n_runners"))
+        ok("rl.yaml algo", str(rl.get("algo") or "").lower() == algo, rl.get("algo"))
 
     code, col = req(
         base,
         "POST",
         f"/api/mas/collect?experiment_id={exp}",
-        {"mock": True, "n": 1, "algo": "grpo"},
+        {"mock": True, "n": 1, "algo": algo},
         timeout=60.0,
     )
     ok("POST /api/mas/collect mock", code == 200 and isinstance(col, dict) and int(col.get("n") or 0) >= 1)
+    if code == 200 and isinstance(col, dict):
+        sig = col.get("train_signal") or {}
+        adv = (sig.get("advantage") or {}) if isinstance(sig, dict) else {}
+        name = str(adv.get("name") or "")
+        ok(f"collect TrainSignal.advantage.name={algo}", name.lower() == algo, name)
 
     if not args.no_train:
         code, train = req(
@@ -155,6 +168,7 @@ def main() -> int:
             ok("train n_gpus", int(train.get("n_gpus") or 0) == len(ids), train.get("n_gpus"))
             ok("train argv --rl-yaml", any(a.endswith("rl.yaml") or a == "--rl-yaml" for a in argv))
             ok("train argv --n-runners", "--n-runners" in argv)
+            ok("train argv --algo", "--algo" in argv and algo in argv, argv)
             ok("train argv uses uv .venv", ".venv" in argv[0], argv[0] if argv else "")
             run_id = str(train.get("run_id"))
             time.sleep(1.0)
@@ -171,7 +185,6 @@ def main() -> int:
         return 1
     print("\nUI RL check OK")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -1,0 +1,14 @@
+experiment:
+  id: arpo_e2e
+  seed: 42
+  refs:
+    llm: llm.yaml
+    workflow: workflow.yaml
+    rl: rl.yaml
+    harness: harness.yaml
+  pipeline:
+  - collect
+  - diagnose
+  - train
+  name: arpo_e2e
+  agl_metrics_url: /agl/metrics

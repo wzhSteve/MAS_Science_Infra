@@ -74,13 +74,21 @@ def run_ppo(
             num_cpus=num_cpus,
         )
 
+    # Ray cannot pickle LightningStoreServer (FastAPI / thread locks). The HTTP
+    # server stays in the algorithm process; workers must use LightningStoreClient.
+    from agentlightning.store.client_server import LightningStoreClient, LightningStoreServer
+
+    ray_store: LightningStore | None = store
+    if isinstance(store, LightningStoreServer):
+        ray_store = LightningStoreClient(store.endpoint)
+
     runner = TaskRunner.remote()
     ray.get(
         runner.run.remote(  # type: ignore
             config=config,
             train_dataset=train_dataset,
             val_dataset=val_dataset,
-            store=store,
+            store=ray_store,
             llm_proxy=llm_proxy,
             adapter=adapter,
             trainer_cls=trainer_cls,

@@ -22,10 +22,12 @@ from science_infra.control.experiments import (
     exp_dir,
     load_bundle,
     load_secrets_env,
+    normalize_rl_data_paths,
     workflow_executable,
     write_json,
 )
 from science_infra.control.paths import tir_agent_root
+from science_infra.env import repo_root
 from science_infra.control.process_manager import PROCS
 
 
@@ -180,20 +182,72 @@ def list_gpus() -> Dict[str, Any]:
 
 AGL_ORIGIN = os.environ.get("AGL_METRICS_ORIGIN", "http://127.0.0.1:4747").rstrip("/")
 
+_AGL_SPA_PATHS = frozenset(
+    {
+        "",
+        "metrics",
+        "rollouts",
+        "science",
+        "resources",
+        "traces",
+        "runners",
+        "settings",
+    }
+)
+
+
+def agl_dashboard_dir() -> Path:
+    return repo_root() / "agent-lightning" / "agentlightning" / "dashboard"
+
+
+def agl_dashboard_built() -> bool:
+    return (agl_dashboard_dir() / "index.html").is_file()
+
+
+def agl_spa_missing_message() -> str:
+    return (
+        "AGL Dashboard SPA not built (agent-lightning/agentlightning/dashboard/index.html missing). "
+        "Run: cd agent-lightning/dashboard && npm install && npm run build "
+        "(or ./run.sh ui / ./run.sh train, which auto-build)."
+    )
+
+
+def is_agl_spa_path(origin_path: str) -> bool:
+    """True for dashboard client routes proxied as /agl/<path> → origin /<path>."""
+    p = origin_path.lstrip("/")
+    if p.startswith("v1/") or p.startswith("assets/"):
+        return False
+    first = p.split("/", 1)[0] if p else ""
+    return first in _AGL_SPA_PATHS
+
 
 def agl_health() -> Dict[str, Any]:
     """Probe AGL LightningStore (only up while train is running)."""
     url = f"{AGL_ORIGIN}/v1/agl/health"
+    dash_ok = agl_dashboard_built()
     try:
         r = httpx.get(url, timeout=2.0)
-        return {
+        out: Dict[str, Any] = {
             "ok": r.status_code < 500,
             "status_code": r.status_code,
             "origin": AGL_ORIGIN,
             "ui_path": "/agl/metrics",
+            "dashboard_built": dash_ok,
         }
+        if not dash_ok:
+            out["dashboard_hint"] = agl_spa_missing_message()
+        return out
     except Exception as e:
-        return {"ok": False, "error": str(e), "origin": AGL_ORIGIN, "ui_path": "/agl/metrics"}
+        out = {
+            "ok": False,
+            "error": str(e),
+            "origin": AGL_ORIGIN,
+            "ui_path": "/agl/metrics",
+            "dashboard_built": dash_ok,
+        }
+        if not dash_ok:
+            out["dashboard_hint"] = agl_spa_missing_message()
+        return out
 
 
 _AGL_SPA_TOS = (
@@ -244,12 +298,24 @@ def mas_palette() -> Dict[str, Any]:
         skills = ["react_loop", "verifier"]
         roles = ["hub", "verifier"]
     tools = ["web_search", "wikipedia_search", "execute_python"]
-    edge_kinds = ["message", "tool_call", "feedback", "route"]
+    edge_kinds = ["message", "tool_call", "feedback", "route", "sample_barrier"]
     return {
         "skills": skills,
         "roles": roles,
         "tools": tools,
         "edge_kinds": edge_kinds,
+        "sampling_modes": ["grpo_n", "arpo", "aepo", "appo", "rae"],
+        "gate_types": [
+            "entropy_delta",
+            "dual_entropy",
+            "always",
+            "tool_ok",
+            "tool_error",
+            "verifier_pass",
+            "verifier_fail",
+            "contradiction",
+            "failure_trigger",
+        ],
         "templates": [
             {
                 "id": "hub_react",
@@ -517,12 +583,18 @@ def run_collect(
     rows = []
     for t in batch.trajectories:
         kinds = [e.kind.value if hasattr(e.kind, "value") else str(e.kind) for e in t.events]
+        meta = dict(t.meta or {})
         rows.append(
             {
                 "id": (t.task or {}).get("id"),
                 "answer": t.final_answer,
                 "reward": t.final_reward,
                 "tool": "tool_call" in kinds,
+                "group_id": meta.get("group_id") or (t.task or {}).get("id"),
+                "sample_index": meta.get("sample_index"),
+                "is_branch": bool(meta.get("is_branch") or t.branch_parent_id),
+                "branch_parent_id": t.branch_parent_id,
+                "sampling_mode": meta.get("sampling_mode"),
             }
         )
     BUS.publish(
@@ -676,6 +748,26 @@ def monitor_model(exp_id: str) -> Dict[str, Any]:
     return model
 
 
+def _sync_workflow_sampling_into_rl(rl: Dict[str, Any], workflow: Dict[str, Any]) -> Dict[str, Any]:
+    """Map MASSpec.sampling onto rl.yaml so train_tir_agent sees tir_algo / rollout.n / tir.*."""
+    sampling = workflow.get("sampling") if isinstance(workflow, dict) else None
+    if not sampling:
+        return rl
+    _ensure_tir_on_path()
+    root = str(tir_agent_root().parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from rl.hooks.overlay import apply_sample_policy
+
+    synced = apply_sample_policy(rl, sampling)
+    tir_algo = str((synced.get("algorithm") or {}).get("tir_algo") or synced.get("algo") or "grpo").lower()
+    synced["algo"] = tir_algo
+    n = (synced.get("actor_rollout_ref") or {}).get("rollout", {}).get("n")
+    if n is not None:
+        synced["rollout_per_gpu"] = int(n)
+    return synced
+
+
 def start_train(
     exp_id: str,
     *,
@@ -693,6 +785,8 @@ def start_train(
     from science_infra.control.experiments import apply_gpu_selection, save_section
 
     rl = apply_gpu_selection(rl, ids)
+    rl = normalize_rl_data_paths(rl)
+    rl = _sync_workflow_sampling_into_rl(rl, bundle.get("workflow") or {})
     save_section(exp_id, "rl", {k: v for k, v in rl.items() if not str(k).startswith("_")})
     algo = str(rl.get("algo") or "grpo").lower()
     if algo not in VALID_ALGOS:
@@ -738,7 +832,10 @@ def start_train(
         pass
 
     env = _llm_env(exp_id, bundle["llm"])
-    env["PYTHONPATH"] = str(tir_agent_root()) + os.pathsep + env.get("PYTHONPATH", "")
+    root = str(tir_agent_root().parent)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [root, str(tir_agent_root()), env.get("PYTHONPATH", "")]
+    )
     env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in ids)
     env["VLLM_USE_V1"] = env.get("VLLM_USE_V1") or "1"
     note = rl.get("_profile_downgraded")

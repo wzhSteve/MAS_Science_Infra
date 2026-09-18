@@ -35,6 +35,10 @@ export const api = {
       body: JSON.stringify({ data }),
     }),
   palette: () => req('/api/mas/palette'),
+  rolloutTrees: (experimentId: string) =>
+    req<{ experiment_id: string; n: number; trees: Array<{ file: string; tree: any }> }>(
+      `/api/mas/rollout-trees?experiment_id=${encodeURIComponent(experimentId)}`,
+    ),
   llmHealth: (experimentId: string, body: { base_url?: string; api_key?: string } = {}) =>
     req(`/api/llm/health?experiment_id=${encodeURIComponent(experimentId)}`, {
       method: 'POST',

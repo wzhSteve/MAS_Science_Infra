@@ -325,16 +325,16 @@ class LightningStoreServer(LightningStore):
         """
         Control pickling to prevent server state from being sent to subprocesses.
 
-        When LightningStoreServer is pickled (e.g., passed to a subprocess), we only
-        serialize the underlying store and connection details. The client instance
-        and process-awareness state are excluded as they should not be transferred between processes.
-
-        The subprocess should create its own server instance if needed.
+        When LightningStoreServer is pickled (e.g., passed to a Ray actor / subprocess),
+        only serialize connection metadata. Never pickle FastAPI/uvicorn/locks — those
+        live only in the owner process. The unpickled stub talks to the HTTP endpoint.
         """
-        # server-launcher is needed for the host/port address are propagated to the subprocess
+        launcher = self.server_launcher
         return {
             "launcher_args": self.launcher_args,
-            "server_launcher": self.server_launcher,
+            "_host": getattr(launcher, "_host", None),
+            "_port": getattr(launcher, "_port", None),
+            "_access_host": getattr(launcher, "_access_host", None),
             "_owner_pid": self._owner_pid,
         }
 
@@ -348,19 +348,27 @@ class LightningStoreServer(LightningStore):
         The unpickled server will also have no app and store attributes,
         this is to make sure there is only one copy of the server in the whole system.
         """
+        from agentlightning.utils.server_launcher import PythonServerLauncher
+
         self.app = None
         self.store = None
         self.launcher_args = state["launcher_args"]
-        self.server_launcher = state["server_launcher"]
         self._tracker = None
         self._owner_pid = state["_owner_pid"]
         self._cors_allow_origins = state.get("_cors_allow_origins")
         self._client = None
         self._lock = threading.Lock()
         self._prometheus_registry = None
-        # Do NOT reconstruct app, _uvicorn_config, _uvicorn_server
-        # to avoid transferring server state to subprocess
-
+        # Rebuild a launcher stub for endpoint resolution only (no FastAPI app).
+        launcher = object.__new__(PythonServerLauncher)
+        launcher.app = None  # type: ignore[assignment]
+        launcher.args = self.launcher_args
+        launcher.serve_context = None
+        launcher._host = state.get("_host") or getattr(self.launcher_args, "host", None)
+        launcher._port = state.get("_port") or getattr(self.launcher_args, "port", None)
+        launcher._access_host = state.get("_access_host") or getattr(self.launcher_args, "access_host", None)
+        launcher.initialize()
+        self.server_launcher = launcher
     @staticmethod
     def _normalize_cors_origins(
         origins: Sequence[str] | str | None,

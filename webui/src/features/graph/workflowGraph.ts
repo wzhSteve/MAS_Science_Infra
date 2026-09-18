@@ -4,6 +4,7 @@ export const KNOWN_TOOLS = ['web_search', 'wikipedia_search', 'execute_python'];
 
 export type AgentSpec = {
   id: string;
+  kind?: string; // schema 0.3: hub | planner | tool | verifier | blank
   role?: string;
   skills?: string[];
   tools?: string[];
@@ -11,6 +12,14 @@ export type AgentSpec = {
   system_prompt?: string;
   model?: string;
   trainable?: boolean;
+  profile?: Record<string, unknown>;
+};
+
+export type RouterSpec = {
+  id: string;
+  candidates?: string[];
+  strategy?: string;
+  scorer?: string | null;
 };
 
 export type WorkflowSpec = {
@@ -29,7 +38,16 @@ export type WorkflowSpec = {
   memory?: Record<string, unknown>;
   archive?: Record<string, unknown>;
   agents?: AgentSpec[];
+  routers?: RouterSpec[];
   edges?: Array<{ from: string; to: string; kind?: string }>;
+  sampling?: {
+    mode?: string;
+    group_n?: number;
+    beam_size?: number;
+    initial_rollouts?: number;
+    barriers?: string[];
+    sites?: Array<Record<string, unknown>>;
+  };
 };
 
 export function workflowToFlow(wf: WorkflowSpec): { nodes: Node[]; edges: Edge[] } {
@@ -54,6 +72,7 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: Node[]; edges: Edge[]
     position: { x: 80 + (i % 3) * 240, y: 80 + Math.floor(i / 3) * 150 },
     data: {
       label: a.id,
+      kind: a.kind || (a.id === 'hub' ? 'hub' : 'blank'), // schema 0.3 kind badge
       role: a.role || 'agent',
       skills: a.skills || [],
       tools: a.tools || (a.id === 'hub' ? wf.tools : []),
@@ -101,6 +120,24 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: Node[]; edges: Edge[]
     ti += 1;
   }
 
+  // agent-framework A5: routers render as diamond routing nodes showing
+  // strategy + candidate count (edges to candidates handled below).
+  const routerIds = new Set<string>((wf.routers || []).map((r) => r.id));
+  for (const r of wf.routers || []) {
+    if (nodes.some((n) => n.id === r.id)) continue;
+    nodes.push({
+      id: r.id,
+      type: 'router',
+      position: { x: 420 + (nodes.length % 2) * 200, y: 240 + Math.floor(nodes.length / 2) * 140 },
+      data: {
+        label: r.id,
+        strategy: r.strategy || 'llm_choice',
+        candidates: r.candidates || [],
+        n_candidates: (r.candidates || []).length,
+      },
+    });
+  }
+
   const edges: Edge[] = (wf.edges || []).map((e, i) => ({
     id: `e-${e.from}-${e.to}-${i}`,
     source: e.from,
@@ -108,6 +145,20 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: Node[]; edges: Edge[]
     label: e.kind || 'message',
     data: { kind: e.kind || 'message' },
   }));
+
+  // Router candidate edges (route from router node to each candidate).
+  for (const r of wf.routers || []) {
+    for (const c of r.candidates || []) {
+      if (edges.some((e) => e.source === r.id && e.target === c)) continue;
+      edges.push({
+        id: `e-router-${r.id}-${c}`,
+        source: r.id,
+        target: c,
+        label: 'candidate',
+        data: { kind: 'candidate' },
+      });
+    }
+  }
 
   if (wf.hub?.verify && !edges.some((e) => e.source === 'verifier')) {
     edges.push({
@@ -127,7 +178,7 @@ export function flowToWorkflow(
   edges: Edge[],
   base: WorkflowSpec,
 ): WorkflowSpec {
-  const agentNodes = nodes.filter((n) => n.type !== 'tool');
+  const agentNodes = nodes.filter((n) => n.type !== 'tool' && n.type !== 'router');
   const toolNodes = nodes.filter((n) => n.type === 'tool');
   const hubNode = agentNodes.find((n) => n.id === 'hub') || agentNodes[0];
   const entry =
@@ -170,11 +221,13 @@ export function flowToWorkflow(
   const hubPrompt =
     String(hubNode?.data?.system_prompt || '') || base.hub?.system_prompt || '';
 
-  const edgeSpecs = edges.map((e) => ({
-    from: e.source,
-    to: e.target,
-    kind: String(e.data?.kind || e.label || 'message'),
-  }));
+  const edgeSpecs = edges
+    .filter((e) => e.source !== e.target && e.data?.kind !== 'candidate')
+    .map((e) => ({
+      from: e.source,
+      to: e.target,
+      kind: String(e.data?.kind || e.label || 'message'),
+    }));
 
   const onlyHubish = agents.every((a) => a.id === 'hub' || a.id === 'verifier');
   const topology =
@@ -200,6 +253,8 @@ export function flowToWorkflow(
     },
     tools,
     agents,
+    // agent-framework A5: routers round-trip through the canvas unchanged.
+    routers: base.routers,
     edges: edgeSpecs,
   };
 }
@@ -210,9 +265,12 @@ export function executableInfo(wf: WorkflowSpec): { ok: boolean; reason: string 
   }
   if (wf.topology === 'graph') {
     const agentIds = new Set((wf.agents || []).map((a) => a.id));
+    const routerIds = new Set((wf.routers || []).map((r) => r.id));
     const inboundRoute: Record<string, number> = {};
     for (const e of wf.edges || []) {
       const kind = e.kind || 'message';
+      // agent-framework A5: router edges are routing sugar, not graph edges.
+      if (routerIds.has(e.from) || routerIds.has(e.to)) continue;
       const toIsTool = KNOWN_TOOLS.includes(e.to);
       const fromIsTool = KNOWN_TOOLS.includes(e.from);
       if (kind === 'tool_call') {

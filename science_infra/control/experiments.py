@@ -11,9 +11,9 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field
 
-from science_infra.control.paths import experiments_root, tir_agent_root
+from science_infra.control.paths import experiments_root, repo_data_dir, tir_agent_root
 
-VALID_ALGOS = ("grpo", "arpo", "aepo", "igpo", "gigpo")
+VALID_ALGOS = ("grpo", "arpo", "aepo", "igpo", "gigpo", "rae")
 HARNESS_PLUGINS = (
     "log_error",
     "loss_volatility",
@@ -111,15 +111,15 @@ def default_rl() -> Dict[str, Any]:
         "n_runners": 1,
         "rollout_per_gpu": 2,
         "devices": {"ids": [0]},
-        "model_path": "/root/autodl-tmp/LLM/Qwen3-4B",
+        "model_path": "/root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B",
         "algorithm": {
             "adv_estimator": "grpo",
             "use_kl_in_reward": False,
             "tir_algo": "grpo",
         },
         "data": {
-            "train_files": "data/train.parquet",
-            "val_files": "data/val.parquet",
+            "train_files": str(repo_data_dir() / "train.parquet"),
+            "val_files": str(repo_data_dir() / "val.parquet"),
             "train_batch_size": 2,
             "max_prompt_length": 2048,
             "max_response_length": 512,
@@ -146,7 +146,7 @@ def default_rl() -> Dict[str, Any]:
             },
             "ref": {"log_prob_micro_batch_size_per_gpu": 1},
             "model": {
-                "path": "/root/autodl-tmp/LLM/Qwen3-4B",
+                "path": "/root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B",
                 "use_remove_padding": True,
                 "enable_gradient_checkpointing": True,
             },
@@ -164,6 +164,30 @@ def default_rl() -> Dict[str, Any]:
             "total_training_steps": 1,
         },
     }
+
+
+def normalize_rl_data_paths(rl: Dict[str, Any]) -> Dict[str, Any]:
+    """Point relative ``data/*.parquet`` paths at ``MAS_Science_Infra/data``."""
+    out = deepcopy(rl)
+    data = out.get("data")
+    if not isinstance(data, dict):
+        return out
+    root = repo_data_dir()
+    for key, default_name in (("train_files", "train.parquet"), ("val_files", "val.parquet")):
+        raw = data.get(key)
+        if raw is None or raw == "":
+            data[key] = str(root / default_name)
+            continue
+        p = Path(str(raw)).expanduser()
+        if p.is_file():
+            data[key] = str(p.resolve())
+            continue
+        # Relative data/... or bare filename → repo data dir
+        name = p.name if p.name.endswith(".parquet") else default_name
+        cand = root / name
+        if cand.is_file() or not p.is_absolute():
+            data[key] = str(cand)
+    return out
 
 
 def default_harness() -> Dict[str, Any]:
@@ -271,6 +295,7 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
             llm["base_url"] = data["llm"].get("base_url", llm.get("base_url", ""))
             _write_yaml(root / meta.refs.get("llm", "llm.yaml"), llm)
     elif section == "rl":
+        data = normalize_rl_data_paths(data)
         _write_yaml(root / meta.refs.get("rl", "rl.yaml"), data)
     elif section == "harness":
         _write_yaml(root / meta.refs.get("harness", "harness.yaml"), data)

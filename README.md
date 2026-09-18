@@ -1,8 +1,6 @@
 # Agent_Science_Infra
 
-实现主仓在 **agent-lightning** 示例目录，CLI / Control UI 入口在本目录 `science_infra`：
-
-[`agent-lightning/examples/tir_agent`](agent-lightning/examples/tir_agent)
+MAS 层在仓库根目录 [`mas/`](mas)；CLI / Control UI 入口在 `science_infra`。AGL 框架仍在 `agent-lightning/`。
 
 ## Science Control UI（分层面板）
 
@@ -46,11 +44,11 @@ AGL Dashboard（训练时通常是 `:4747`）侧栏 **Science MAS** 可打开同
 不安装时：
 
 ```bash
-cd agent-lightning/examples/tir_agent
+cd mas
 PYTHONPATH=. python scripts/check_workflow_deps.py
 PYTHONPATH=. python scripts/collect_rollouts.py --mock --out /tmp/traj.json
 PYTHONPATH=. python tests/test_infra_v1.py
-PYTHONPATH=. python train_tir_agent.py fast --algo grpo --rl-yaml ../../../experiments/demo/rl.yaml
+PYTHONPATH=. python train_tir_agent.py fast --algo grpo --rl-yaml ../experiments/demo/rl.yaml
 ```
 
 - 产品原则：[design.md](design.md)
@@ -58,4 +56,4 @@ PYTHONPATH=. python train_tir_agent.py fast --algo grpo --rl-yaml ../../../exper
 - UI 落地说明：[docs/CONTROL_UI.md](docs/CONTROL_UI.md)
 - 架构提案：[docs/GPT_analysis.md](docs/GPT_analysis.md)
 - 早期差距分析：[docs/infra-gap-analysis.md](docs/infra-gap-analysis.md)
-- TIR 算法：[agent-lightning/examples/tir_agent/docs/DESIGN.md](agent-lightning/examples/tir_agent/docs/DESIGN.md)
+- TIR 算法：[mas/docs/DESIGN.md](mas/docs/DESIGN.md)

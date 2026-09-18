@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parents[2]
-TIR = ROOT / "agent-lightning" / "examples" / "tir_agent"
+TIR = ROOT / "mas"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

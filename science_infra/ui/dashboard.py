@@ -42,6 +42,7 @@ def build_dashboard_model(
                     "payload": payload,
                 }
             )
+        meta_t = dict(getattr(traj, "meta", None) or {})
         rows.append(
             {
                 "trajectory_id": str(traj.trajectory_id),
@@ -52,6 +53,11 @@ def build_dashboard_model(
                 "n_python": int(traj.n_python or 0),
                 "kinds": kinds,
                 "events": events,
+                "group_id": meta_t.get("group_id") or (getattr(traj, "task", None) or {}).get("id"),
+                "sample_index": meta_t.get("sample_index"),
+                "is_branch": bool(meta_t.get("is_branch") or getattr(traj, "branch_parent_id", None)),
+                "branch_parent_id": getattr(traj, "branch_parent_id", None),
+                "sampling_mode": meta_t.get("sampling_mode") or meta.get("sampling_mode"),
             }
         )
     meta = getattr(batch, "meta", None) or {}
@@ -71,6 +77,8 @@ def build_dashboard_model(
     return {
         "n": len(trajs),
         "mean_reward": meta.get("mean_reward"),
+        "sampling_mode": meta.get("sampling_mode"),
+        "group_n": meta.get("group_n"),
         "rewards": rewards,
         "event_counts": dict(event_counts),
         "n_error": n_error,

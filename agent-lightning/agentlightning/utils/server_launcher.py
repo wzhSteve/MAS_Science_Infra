@@ -641,20 +641,22 @@ class PythonServerLauncher:
         self._is_running: bool = False
 
     def __getstate__(self):
-        """Control pickling to prevent server state from being sent to subprocesses."""
+        """Control pickling to prevent server state from being sent to subprocesses.
+
+        FastAPI apps / uvicorn handles / thread locks are not picklable (Ray/cloudpickle).
+        Only connection metadata is transferred; runtime fields are rebuilt in ``__setstate__``.
+        """
         return {
-            "app": self.app,
             "args": self.args,
-            "serve_context": self.serve_context,
             "_host": self._host,
             "_port": self._port,
             "_access_host": self._access_host,
         }
 
     def __setstate__(self, state: Dict[str, Any]):
-        self.app = state["app"]
+        self.app = None  # type: ignore[assignment]
         self.args = cast(PythonServerLauncherArgs, state["args"])
-        self.serve_context = state["serve_context"]
+        self.serve_context = None
         self._host = state["_host"]
         self._port = state["_port"]
         self._access_host = state["_access_host"]

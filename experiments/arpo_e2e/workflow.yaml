@@ -1,0 +1,83 @@
+schema_version: 0.1.0
+topology: hub_react
+hub:
+  role: orchestrator
+  skills:
+  - react_loop
+tools:
+- web_search
+- wikipedia_search
+- execute_python
+llm:
+  kind: api
+  model: qwen3.5-27b
+  base_url: https://www.dmxapi.cn/v1/
+memory:
+  agent: messages
+  system: none
+archive:
+  window: post_first_tool
+entry_agent: hub
+agents:
+- id: hub
+  role: orchestrator
+  skills:
+  - react_loop
+  tools:
+  - web_search
+  - wikipedia_search
+  - execute_python
+  trainable: true
+edges: []
+sampling:
+  mode: arpo
+  group_n: 4
+  beam_size: 2
+  initial_rollouts: 2
+  sites:
+  - id: site_after_tool_hub_execute_python
+    enabled: true
+    anchor:
+      kind: after_tool
+      agent_id: hub
+      tool_id: execute_python
+      edge_id: null
+    when: first
+    nth: 1
+    gate:
+      type: entropy_delta
+      params: {}
+    fork:
+      beam_size: 2
+      share_observation: true
+      resume_mode: messages
+      probe_max_tokens: 128
+    reward:
+      scheme: scalar_grpo
+      p_plus: 0.8
+      k_min: 2
+      epsilon_f: 0.001
+    priority: 10
+  - id: site_after_turn_hub
+    enabled: true
+    anchor:
+      kind: after_agent_turn
+      agent_id: hub
+      tool_id: null
+      edge_id: null
+    when: first
+    nth: 1
+    gate:
+      type: entropy_delta
+      params: {}
+    fork:
+      beam_size: 2
+      share_observation: true
+      resume_mode: messages
+      probe_max_tokens: 128
+    reward:
+      scheme: scalar_grpo
+      p_plus: 0.8
+      k_min: 2
+      epsilon_f: 0.001
+    priority: 10
