@@ -204,10 +204,8 @@ PYTHONPATH=..:. python train_tir_agent.py fast \
 
 ## 5. 实测结果
 
-（执行 Phase 1–4 后填写）
-
 | Phase | 结果 | 备注 |
 |-------|------|------|
-| 1 单测 | _pending_ | |
-| 2 UI/API | _pending_ | |
-| 3–4 训练 | _pending_ | 日志路径 / metrics 路径 |
+| 1 单测 | pass | 2026-09-20：`test_daemon_expand` + `test_realtime_harness` 10/10 OK |
+| 2 UI/API | pass | Control UI :8787；`Applied sibling workflow.sampling → tir_algo=arpo rollout.n=4` |
+| 3–4 训练 | pass | 5 样本截断数据集，run `384d1927458a`，returncode=0；1 step ≈237s（gen 200s）；branch_local_count=6、store_enqueue=6、incremental=6；`[TIR arpo] enqueued 4 branch/resume rollouts`；`tree_*.json` 6 棵落盘（真实 rollout id），`/api/mas/rollout-trees` n=6，节点含 event_kind/h_tool/site_id |

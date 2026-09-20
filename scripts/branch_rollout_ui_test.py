@@ -491,6 +491,26 @@ def main() -> int:
            and any(k == "tool" for k in agent_kinds.values())
            and agent_kinds.get("expert_phys") == "blank",
            agent_kinds)
+        # W1/W6: blank candidate blank:expert_phys compiles into upstream
+        # tools_for (adapter-mode routing surface) — compile the persisted
+        # spec locally through the same compiler the runtime uses.
+        try:
+            sys.path.insert(0, str(REPO))  # workflow.* transitively imports rl.*
+            sys.path.insert(0, str(REPO / "mas"))
+            sys.path.insert(0, str(REPO / "mas" / "tools"))
+            from workflow.compiler import compile_spec as _cs
+            from workflow.spec import MASSpec as _MS
+
+            compiled = _cs(_MS.model_validate(rt_got))
+            planner_tools = list(compiled.tools_for.get("planner") or [])
+            ok(
+                "blank:expert_phys compiled into planner tools_for",
+                "blank:expert_phys" in planner_tools,
+                planner_tools,
+            )
+            ok("router workflow compiles ok", compiled.ok, compiled.issues)
+        except Exception as e:  # noqa: BLE001
+            ok("compile router workflow in-process", False, str(e))
         # restore hub workflow so Collect/Train still target hub_react
         code, _ = req(base, "PUT", f"/api/experiments/{exp}/workflow", {"data": wf})
         ok("restore hub workflow after router-fixture", code == 200)

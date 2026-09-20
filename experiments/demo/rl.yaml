@@ -1,6 +1,6 @@
-profile: a800
+profile: fast
 algo: grpo
-n_runners: 2
+n_runners: 1
 rollout_per_gpu: 2
 devices:
   ids:

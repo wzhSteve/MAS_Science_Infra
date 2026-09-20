@@ -221,16 +221,41 @@ def create_app() -> FastAPI:
         from science_infra.control.paths import tir_agent_root
 
         exp_dir = tir_agent_root() / ".local_expansion"
-        trees: List[Dict[str, Any]] = []
+        # Daemon-persisted trees (tree_*.json) carry REAL store rollout ids on
+        # child nodes; the same query also exists inside runner expansions
+        # (ro-*.json) with synthetic "{parent}:0" ids. Serve daemon trees and
+        # skip the duplicated runner expansion for the same tree_id.
+        daemon_trees: Dict[str, Dict[str, Any]] = {}
+        expansion_trees: List[Dict[str, Any]] = []
         if exp_dir.is_dir():
+            for f in sorted(exp_dir.glob("tree_*.json")):
+                try:
+                    payload = json.loads(f.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(payload.get("nodes"), list) and payload.get("tree_id"):
+                    daemon_trees[str(payload["tree_id"])] = {"file": f.name, "tree": payload}
             for f in sorted(exp_dir.glob("*.json")):
+                if f.name.startswith("tree_"):
+                    continue
                 try:
                     payload = json.loads(f.read_text(encoding="utf-8"))
                 except Exception:
                     continue
                 tree = payload.get("tree")
                 if isinstance(tree, dict):
-                    trees.append({"file": f.name, "tree": tree})
+                    # Skip degenerate trees (no nodes / blank root id) written
+                    # by runner expansions of samples that produced no plans.
+                    nodes = tree.get("nodes")
+                    if not isinstance(nodes, list) or not nodes or not any(
+                        str(n.get("node_id") or "") for n in nodes if isinstance(n, dict)
+                    ):
+                        continue
+                    expansion_trees.append({"file": f.name, "tree": tree})
+        seen_ids = set(daemon_trees)
+        trees = list(daemon_trees.values()) + [
+            t for t in expansion_trees if str((t["tree"] or {}).get("tree_id") or "") not in seen_ids
+        ]
         return {"experiment_id": experiment_id, "n": len(trees), "trees": trees}
 
     @app.post("/api/llm/health")

@@ -95,6 +95,8 @@ def compile_spec(spec: MASSpec) -> CompiledWorkflow:
     agents = _agent_map(spec)
     tool_ids = tool_agent_ids(spec)
     agent_ids = set(agents)
+    # W1: blank agents routable via router candidates (blank:<id> tool-call shell)
+    blank_ids = {a.id for a in agents.values() if getattr(a, "kind", None) == "blank"}
 
     entry = str(spec.entry_agent or "hub").strip() or "hub"
     if entry not in agents:
@@ -171,24 +173,36 @@ def compile_spec(spec: MASSpec) -> CompiledWorkflow:
         tools_for["hub"] = list(spec.tools)
 
     # Router validation (schema 0.3): candidates must exist among agents.
+    # W1: blank candidates may be written either as the bare agent id or with
+    # the ``blank:`` tool-call prefix (UI writes blank:<id>) — both accepted.
     routers_out: Dict[str, RouterSpec] = {}
     for r in getattr(spec, "routers", None) or []:
         router_ids.add(r.id)
         routers_out[r.id] = r
         for c in r.candidates or []:
-            if c not in agent_ids and c not in tool_ids:
+            bare = c[len("blank:"):] if c.startswith("blank:") else c
+            if bare not in agent_ids and bare not in tool_ids:
                 issues.append(f"router {r.id!r} candidate {c!r} is not an agent node")
         if r.strategy == "score" and r.scorer and r.scorer not in agent_ids:
             issues.append(f"router {r.id!r} scorer {r.scorer!r} is not an agent node")
         # agent-framework A2 (adapter mode): a router's tool-agent candidates
         # become routable via the upstream agent's tool_call surface — same
         # semantics as tool_call edges, pure sugar over the existing protocol.
+        # W1: kind=blank candidates join with a ``blank:`` id prefix — same
+        # tool-call surface, dispatched to BlankAgentAdapter (one llm hop).
         upstream = _router_upstream(spec, r.id)
         if upstream and upstream in agents:
             cur = tools_for.setdefault(upstream, [])
             for c in r.candidates or []:
-                if c in tool_ids and c not in cur:
-                    cur.append(c)
+                if c in tool_ids:
+                    if c not in cur:
+                        cur.append(c)
+                else:
+                    bare = c[len("blank:"):] if c.startswith("blank:") else c
+                    if bare in blank_ids:
+                        pref = f"blank:{bare}"
+                        if pref not in cur:
+                            cur.append(pref)
 
     extra = [i for i in agents if i not in {"hub", "verifier"} and i not in tool_ids and i not in router_ids]
     hub_subset = not extra

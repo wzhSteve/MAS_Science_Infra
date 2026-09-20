@@ -227,12 +227,14 @@ export function buildTrajectoryGraph(wf: WorkflowSpec): TrajectoryGraph {
     mainPath.push(rn.id);
     prev = rn.id;
 
-    // tool-agent candidates hang off the router like tool children
+    // tool-agent and blank-agent candidates hang off the router like tool
+    // children (W5: blank:<id> labels strip the prefix for display).
     for (const c of r.candidates || []) {
+      const isBlank = c.startsWith('blank:');
       const tn: TrajNode = {
         id: `traj_tool_${r.id}_${c}`,
         kind: 'tool',
-        label: c,
+        label: isBlank ? c.slice('blank:'.length) : c,
         agentId: r.id,
         toolId: c,
         parentAgentId: r.id,

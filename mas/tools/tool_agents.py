@@ -160,5 +160,88 @@ for _name in ("execute_python", "wikipedia_search", "web_search"):
             TOOL_AGENTS[_name] = _llm_agent
 
 
+class BlankAgentAdapter(ToolAgent):
+    """Wrap a kind=blank agent as a tool_call shell (agent-framework W1).
+
+    Adapter-mode routing: router candidates that are blank agents get invoked
+    through the same tool-call surface as tool-agents. One ``llm.invoke`` hop
+    with the agent's system_prompt; output is a plain str (the caller wraps it
+    in a ToolMessage) — structurally identical to A2 router tool-agents.
+    """
+
+    def __init__(self, spec: Any, llm_factory: Any = None) -> None:
+        self.spec = spec
+        self._llm = None
+        self._llm_factory = llm_factory
+        profile = dict(getattr(spec, "profile", None) or {})
+        skills = profile.get("skills") or [str(s) for s in (getattr(spec, "skills", None) or [])]
+        desc = str(profile.get("description") or "")
+        if not desc:
+            desc = f"{spec.id}: {', '.join(str(s) for s in skills)}" if skills else f"{spec.id}: blank agent"
+        super().__init__(
+            f"blank:{spec.id}",
+            self._invoke,
+            description=desc,
+            trainable=False,
+            profile=profile,
+        )
+        self.kind = "blank"  # agent contract: this shell wraps a blank agent
+
+    @classmethod
+    def from_agent(cls, spec: Any, llm_factory: Any = None) -> "BlankAgentAdapter":
+        """Build from an AgentNodeSpec (kind=blank) + optional LLM factory."""
+        return cls(spec, llm_factory)
+
+    def bind_llm(self, llm: Any) -> "BlankAgentAdapter":
+        """Bind a concrete LLM (any object with .invoke(prompt) -> output)."""
+        self._llm = llm
+        return self
+
+    def _invoke(self, args: Dict[str, Any]) -> str:
+        llm = self._llm
+        if llm is None and callable(self._llm_factory):
+            # factory takes precedence over None; may itself be a builder llm
+            try:
+                built = self._llm_factory(self.spec)
+                llm = built if hasattr(built, "invoke") else None
+            except Exception:
+                llm = None
+        if llm is None:
+            return (
+                f"Error: blank agent '{self.spec.id}' has no bound LLM. "
+                "Ensure the router candidates include a valid agent or the runtime "
+                "binds an LLM before invocation."
+            )
+        # build the one-hop prompt: system_prompt + optional history + input
+        parts: List[str] = [self.system_prompt or f"You are {self.spec.id}."]
+        hist = args.get("history")
+        if hist:
+            parts.append(f"[History]\n{hist}")
+        user_input = args.get("input") or args.get("query") or args.get("question") or ""
+        parts.append(f"[Input]\n{user_input}")
+        prompt = "\n\n".join(p for p in parts if p)
+        try:
+            out = llm.invoke(prompt)
+            return str(getattr(out, "content", out) or "")
+        except Exception as e:  # noqa: BLE001
+            return f"Error invoking blank agent: {e}"
+
+    @property
+    def system_prompt(self) -> str:
+        p = dict(getattr(self.spec, "profile", None) or {})
+        return str(p.get("system_prompt") or getattr(self.spec, "system_prompt", "") or "")
+
+    @property
+    def agent_kind(self) -> str:
+        return "blank"
+
+    @property
+    def agent_id(self) -> str:
+        return str(self.spec.id)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"BlankAgentAdapter(id={self.id!r}, kind=blank)"
+
+
 def register_tool_agent(agent: ToolAgent) -> None:
     TOOL_AGENTS[agent.id] = agent

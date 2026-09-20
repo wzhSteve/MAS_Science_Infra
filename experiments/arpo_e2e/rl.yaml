@@ -28,13 +28,69 @@ algorithm:
     max_branch_depth: 2
     expand_in_runner: true
     use_official_arpo_gate: true
+    sites:
+    - id: site_after_tool_hub_execute_python
+      enabled: true
+      anchor:
+        kind: after_tool
+        agent_id: hub
+        tool_id: execute_python
+        edge_id: null
+      when: first
+      nth: 1
+      gate:
+        type: entropy_delta
+        params: {}
+      fork:
+        beam_size: 2
+        share_observation: true
+        resume_mode: messages
+        probe_max_tokens: 128
+      reward:
+        scheme: scalar_grpo
+        p_plus: 0.8
+        k_min: 2
+        epsilon_f: 0.001
+      priority: 10
+    - id: site_after_turn_hub
+      enabled: true
+      anchor:
+        kind: after_agent_turn
+        agent_id: hub
+        tool_id: null
+        edge_id: null
+      when: first
+      nth: 1
+      gate:
+        type: entropy_delta
+        params: {}
+      fork:
+        beam_size: 2
+        share_observation: true
+        resume_mode: messages
+        probe_max_tokens: 128
+      reward:
+        scheme: scalar_grpo
+        p_plus: 0.8
+        k_min: 2
+        epsilon_f: 0.001
+      priority: 10
+    zero_prefix_adv_for_children: true
+    ready_batch: true
+    rae_p_plus: 0.8
+    rae_k_min: 2
+    rae_epsilon_f: 0.001
+    rae_full_tgt: false
+    rae_dead_end_backprop: true
+    rae_dead_end_depth: 1
 data:
   train_files: /root/autodl-tmp/MAS_Science_Infra/data/train.parquet
   val_files: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet
-  train_batch_size: 2
+  train_batch_size: 5
   max_prompt_length: 2048
   max_response_length: 512
   truncation: error
+  val_batch_size: null
 actor_rollout_ref:
   rollout:
     tensor_model_parallel_size: 1
@@ -43,7 +99,7 @@ actor_rollout_ref:
     multi_turn:
       format: hermes
     name: vllm
-    gpu_memory_utilization: 0.35
+    gpu_memory_utilization: 0.25
   actor:
     ppo_mini_batch_size: 2
     ppo_micro_batch_size_per_gpu: 1
@@ -72,4 +128,4 @@ trainer:
   nnodes: 1
   test_freq: 1
   total_epochs: 1
-  total_training_steps: 3
+  total_training_steps: 2

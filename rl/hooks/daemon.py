@@ -20,6 +20,31 @@ from workflow.archive import load_resume_messages
 from rl.hooks.rae_advantage import adjudicate_action_group, apply_dead_end_backprop_verdicts
 
 
+def _persist_rollout_tree(tree_id: str, tree: Dict[str, Any]) -> None:
+    """Persist one RolloutTree to mas/.local_expansion/ so the WebUI
+    /api/mas/rollout-trees endpoint (which scans that dir) can serve it.
+
+    Written next to dump_local_expansion()'s expansion payloads; filename
+    is prefixed with "tree_" to distinguish UI trees from expansion plans.
+    Failures are swallowed: persistence must never break training.
+    """
+    import json as _json
+    import os as _os
+
+    try:
+        from workflow.active_set import EXPANSION_DIR
+    except Exception:
+        return
+    try:
+        root = _os.environ.get("TIR_LOCAL_EXPANSION_DIR") or EXPANSION_DIR
+        _os.makedirs(root, exist_ok=True)
+        dest = _os.path.join(root, f"tree_{tree_id}.json")
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(_json.dumps({"tree_id": tree_id, **tree}, ensure_ascii=False))
+    except Exception:
+        pass
+
+
 def emit_rollout_tree_event(event: Dict[str, Any]) -> None:
     """P3 real-time harness: emit a marked JSONL frame to stdout.
 
@@ -83,6 +108,43 @@ class TirAgentModeDaemon(AgentModeDaemon):
 
     async def _validate_data_v1(self, rollout: Rollout) -> RolloutLegacy:
         spans = await self.store.query_spans(rollout.rollout_id, attempt_id="latest")
+        # --- debug probe: dump spans/triplets for empty-triplet diagnosis ---
+        import json as _json
+        import os as _os
+
+        _dbg = _os.environ.get("TIR_DEBUG_SPANS", "").strip()
+        if _dbg:
+            try:
+                _names = [str(getattr(s, "name", "?")) for s in spans]
+                _payload = {
+                    "rollout_id": rollout.rollout_id,
+                    "n_spans": len(spans),
+                    "span_names": _names[:80],
+                    "adapter": type(self.adapter).__name__,
+                    "agent_match": getattr(self.adapter, "agent_match", None),
+                    "llm_call_match": getattr(self.adapter, "llm_call_match", None),
+                    "attempts": [
+                        {
+                            "span": i,
+                            "name": str(getattr(s, "name", "?")),
+                            "attrs": {k: v for k, v in list(dict(getattr(s, "attributes", None) or {}).items()) if k in (
+                                "langchain.chain.type", "agent.name", "operation.name", "agentops.span.kind",
+                                "lc_name", "langchain.llm.model", "gen_ai.request.model",
+                            )},
+                            "parent_id": getattr(s, "parent_id", None),
+                            "span_id": getattr(s, "span_id", None),
+                        }
+                        for i, s in enumerate(spans[:80])
+                    ],
+                    "n_triplets": -1,  # filled below
+                }
+                _t = self.adapter.adapt(spans)
+                _payload["n_triplets"] = len(_t)
+                with open(_dbg, "a", encoding="utf-8") as f:
+                    f.write(_json.dumps(_payload, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+        # --- end debug probe ---
         if not spans:
             triplets = []
         else:
@@ -140,6 +202,12 @@ class TirAgentModeDaemon(AgentModeDaemon):
             else:
                 n_init = int(self.tir_config.get("initial_rollouts", 2))
                 self.train_rollout_n = max(1, min(n_init, orig_n))
+        # Pre-inject expand fields into the raw data BEFORE super() enqueues tasks.
+        # super() snapshots each sample via _to_native() at enqueue time, so
+        # post-hoc mutation of daemon-side dicts (the old approach) never reached
+        # the agent and ARPO branching silently never happened (branch_local=0).
+        if is_train and self.tir_algo in ("arpo", "aepo", "rae") and self._expand_in_runner():
+            self._preinject_expand_fields(data, n_init=int(self.train_rollout_n) if self.tir_algo != "aepo" else 1)
         try:
             await super()._async_set_up(data, server_addresses, is_train=is_train)
         finally:
@@ -157,6 +225,48 @@ class TirAgentModeDaemon(AgentModeDaemon):
             for sample in self._task_id_to_original_sample.values():
                 if sites and "branch_sites" not in sample:
                     sample["branch_sites"] = sites
+
+    def _preinject_expand_fields(self, data: Dict[str, Any], *, n_init: int) -> None:
+        """Attach expand fields onto raw batch columns before super() enqueues.
+
+        super() builds each task input as {key: data[key][i]} then snapshots it
+        via _to_native(); anything stamped only after super() returns is lost.
+        Here each sample i gets one column-level scalar: expand_in_runner,
+        sampling_budget (per-root budget = full group_n split across the
+        n_init roots of that sample), plus gate/fork params and branch sites.
+        All wave-1 rollouts of one sample share the same fields — correct,
+        because each root independently plans up to its own budget.
+        """
+        try:
+            keys = list(data.keys())
+            if not keys:
+                return
+            num_samples = len(data[keys[0]])
+        except Exception:
+            return
+        n_target = int(self._full_group_n or self.train_rollout_n or 1)
+        # Per-root budget: group_n split across the wave-1 roots of one sample.
+        budget = max(1, (n_target + n_init - 1) // max(1, n_init))
+        fields: Dict[str, Any] = {
+            "expand_in_runner": True,
+            "sampling_budget": budget,
+            "max_branch_depth": int(self.tir_config.get("max_branch_depth", 2)),
+            "tir_beam_size": int(self.tir_config.get("beam_size", 2)),
+            "tir_branch_probability": float(self.tir_config.get("branch_probability", 0.5)),
+            "tir_entropy_weight": float(self.tir_config.get("entropy_weight", 0.5)),
+            "tir_use_official_arpo_gate": bool(self.tir_config.get("use_official_arpo_gate", True)),
+            "ready_batch": bool(self.tir_config.get("ready_batch", False)),
+            # NOTE: no force_local_expand — training hot path keeps
+            # execute_local=False (plan-only) so the Daemon materializes resume
+            # rollouts through the store (full span/GRPO observability).
+            # local_expand (collect/mock modes) is a collect-path concern.
+        }
+        sites = list(self.tir_config.get("sites") or [])
+        for key, value in fields.items():
+            if key not in data:
+                data[key] = [value] * num_samples
+        if sites and "branch_sites" not in data:
+            data["branch_sites"] = [sites] * num_samples
 
     def _stamp_expand_budgets(self) -> None:
         """Attach expand_in_runner + per-root sampling_budget onto wave-1 samples."""
@@ -254,6 +364,35 @@ class TirAgentModeDaemon(AgentModeDaemon):
             self._task_id_to_original_sample[rollout.rollout_id] = packed
         self._total_tasks_queued += len(rollouts)
         self._enqueued_expansion_parents.add(parent_rid)
+        # Incremental path: persist tree + emit node_added (same as the batch
+        # path in _enqueue_from_runner_expansions) so the RolloutTree UI panel
+        # updates live under ready_batch=True, which routes here.
+        tree = dict(expansion.get("tree") or {}) or None
+        if tree is not None:
+            branch_rollouts = [r for r, s in zip(rollouts, samples_for_requests) if s.get("is_branch")]
+            child_nodes = [n for n in (tree.get("nodes") or []) if n.get("role") != "root"]
+            for node, rollout in zip(child_nodes, branch_rollouts):
+                node["node_id"] = str(rollout.rollout_id)
+            tree_id = str(tree.get("tree_id") or parent_rid)
+            existing = self._rollout_trees.get(tree_id)
+            if existing:
+                seen = {n.get("node_id") for n in (existing.get("nodes") or [])}
+                new_nodes = [n for n in tree.get("nodes") or [] if n.get("node_id") not in seen]
+                existing.setdefault("nodes", []).extend(new_nodes)
+            else:
+                self._rollout_trees[tree_id] = tree
+            _persist_rollout_tree(tree_id, self._rollout_trees[tree_id])
+            emit_rollout_tree_event(
+                {
+                    "event": "node_added",
+                    "tree_id": tree_id,
+                    "node_id": None,
+                    "payload": {
+                        "n_nodes": len(self._rollout_trees[tree_id].get("nodes") or []),
+                        "n_new": len(child_nodes),
+                    },
+                }
+            )
         return len(rollouts)
 
     async def _async_run_until_finished(self, verbose: bool = True):
@@ -409,6 +548,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                     existing.setdefault("nodes", []).extend(new_nodes)
                 else:
                     self._rollout_trees[tree_id] = tree
+                _persist_rollout_tree(tree_id, self._rollout_trees[tree_id])
                 emit_rollout_tree_event(
                     {
                         "event": "node_added",

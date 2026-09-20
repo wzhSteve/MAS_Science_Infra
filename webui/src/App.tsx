@@ -93,6 +93,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Auto-select the experiment with an active train run (or latest train)
+    // so RL logs / RolloutTree reflect what is actually running now.
+    api
+      .runs()
+      .then((r: any) => {
+        const trains = (r.runs || []).filter((x: any) => x.kind === 'train');
+        const active = trains.find((x: any) => x.running);
+        const pick = active || trains.sort((a: any, b: any) => (b.started_at || 0) - (a.started_at || 0))[0];
+        if (pick && pick.experiment_id && pick.experiment_id !== 'demo') {
+          setExpId(pick.experiment_id);
+        }
+      })
+      .catch(() => {
+        /* ignore: keep default */
+      });
+  }, []);
+
+  useEffect(() => {
     reload();
   }, [reload]);
 

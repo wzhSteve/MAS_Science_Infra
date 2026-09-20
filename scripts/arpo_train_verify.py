@@ -175,8 +175,11 @@ def main() -> int:
     ok("PUT workflow.sampling arpo + sites", code == 200, f"status={code}")
 
     # --- PUT rl: 10 steps + arpo ---
+    # NOTE: total_training_steps lives under trainer.* (Hydra shape), not top-level.
     rl = dict(orig_rl)
-    rl["total_training_steps"] = int(args.steps)
+    trainer = dict(rl.get("trainer") or {})
+    trainer["total_training_steps"] = int(args.steps)
+    rl["trainer"] = trainer
     algo_block = dict(rl.get("algorithm") or {})
     algo_block["tir_algo"] = "arpo"
     algo_block["adv_estimator"] = "grpo"
@@ -278,7 +281,9 @@ def main() -> int:
     if args.negative:
         print("  --- negative case: extreme entropy_threshold → n_branch=0 ---")
         rl_neg = dict(orig_rl)
-        rl_neg["total_training_steps"] = 2
+        trainer_neg = dict(rl_neg.get("trainer") or {})
+        trainer_neg["total_training_steps"] = 2
+        rl_neg["trainer"] = trainer_neg
         algo_neg = dict(rl_neg.get("algorithm") or {})
         algo_neg["tir_algo"] = "arpo"
         tir_neg = dict(algo_neg.get("tir") or {})

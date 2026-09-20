@@ -57,8 +57,11 @@ def check_tree(tree: Dict[str, Any]) -> Dict[str, Any]:
     }
     for n in nodes:
         meta = n.get("meta") or {}
-        metrics = meta.get("metrics") or {}
-        ek = n.get("event_kind") or meta.get("event_kind")
+        # Canonical contract (workflow/contracts.py RolloutTreeNode): metrics
+        # is a top-level field on the node. Keep legacy meta fallbacks for
+        # older payloads.
+        metrics = n.get("metrics") or meta.get("metrics") or {}
+        ek = n.get("event_kind") or meta.get("event_kind") or metrics.get("event_kind")
         if ek:
             out["has_event_kind"] = True
             out["kinds"].add(str(ek))

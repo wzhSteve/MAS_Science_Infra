@@ -2,7 +2,7 @@
 
 日期：2026-09-16
 
-对照：[ROLLOUT_SAMPLING.md](./ROLLOUT_SAMPLING.md)、[ICML2027_Agent_RL/idea.md](./ICML2027_Agent_RL/idea.md)。
+对照：[ROLLOUT_SAMPLING.md](./ROLLOUT_SAMPLING.md)、[SAMPLING_ARPO_APPO.md](./SAMPLING_ARPO_APPO.md)。
 
 **UI 验收**：[BRANCH_ROLLOUT_UI_TEST.md](./BRANCH_ROLLOUT_UI_TEST.md)（`./run.sh branch-ui-test`）。
 

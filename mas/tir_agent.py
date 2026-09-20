@@ -206,6 +206,7 @@ class ToolAgentInvoker:
     def __init__(self, tool_map: Dict[str, Any]) -> None:
         self._tool_map = tool_map
         self._agents: Dict[str, Any] = {}
+        self._blank_agents: Dict[str, Any] = {}
         self.prefer_llm = False  # test mode (llm.kind=api) flips this
         try:
             from tools.tool_agents import TOOL_AGENTS  # local import: registry is optional
@@ -214,8 +215,14 @@ class ToolAgentInvoker:
         except Exception:
             self._agents = {}
 
+    def bind_blank_agents(self, adapters: Dict[str, Any]) -> None:
+        """W1: register BlankAgentAdapter shells (id -> adapter) for routing."""
+        self._blank_agents = dict(adapters or {})
+        for aid, adapter in self._blank_agents.items():
+            self._agents.setdefault(str(aid), adapter)
+
     def invoke(self, agent_id: str, args: Dict[str, Any]) -> Optional[str]:
-        agent = self._agents.get(agent_id)
+        agent = self._agents.get(agent_id) or self._blank_agents.get(agent_id)
         if agent is not None:
             try:
                 return str(agent.invoke(args, prefer_llm=self.prefer_llm))
@@ -231,7 +238,7 @@ class ToolAgentInvoker:
 
     @property
     def known_ids(self) -> set:
-        return set(self._agents) | set(self._tool_map)
+        return set(self._agents) | set(self._tool_map) | set(self._blank_agents)
 
 
 def last_assistant_text(messages: List[AnyMessage]) -> Optional[str]:
@@ -330,10 +337,24 @@ class TirAgent:
         # the tool being called is a router candidate, the router context.
         self.routers: Dict[str, Any] = dict(routers or {})
         self.agent_id = agent_id
+        # W1: kind=blank agent specs (id -> AgentNodeSpec-ish) so blank:<id>
+        # router candidates can be bound as tool-call shells below.
+        self._blank_specs: Dict[str, Any] = {}
+        for _a in (self.routers.pop("__blank_specs__", None) or []):
+            _aid = str(_a.get("id") if isinstance(_a, dict) else getattr(_a, "id", "") or "")
+            if _aid:
+                self._blank_specs[_aid] = _a
         self._router_by_tool: Dict[str, str] = {}
         for rid, r in self.routers.items():
             for c in (r.get("candidates") if isinstance(r, dict) else getattr(r, "candidates", None)) or []:
-                self._router_by_tool.setdefault(str(c), str(rid))
+                c = str(c)
+                self._router_by_tool.setdefault(c, str(rid))
+                # W1: blank candidates are invoked as blank:<id> tool_calls —
+                # register the prefixed form too so window_events carry the
+                # router context for blank-agent hops.
+                bare = c[len("blank:"):] if c.startswith("blank:") else c
+                if bare in self._blank_specs:
+                    self._router_by_tool.setdefault(f"blank:{bare}", str(rid))
         env_len = os.environ.get("TIR_MAX_MODEL_LEN", "").strip()
         self.max_model_len = int(max_model_len or (env_len or 0) or 0) or None
         self.system_prompt = (system_prompt or "").strip() or SYSTEM_PROMPT
@@ -341,6 +362,13 @@ class TirAgent:
         self.tool_map = {n: TOOL_MAP[n] for n in names if n in TOOL_MAP}
         self.tool_agent_invoker = ToolAgentInvoker(self.tool_map)  # schema 0.3 adapter
         bound_tools = [self.tool_map[n] for n in names if n in self.tool_map]
+        # W1: blank router candidates become visible tool schemas for the
+        # upstream LLM (id blank:<id>, single "input" arg) — routed at runtime
+        # to BlankAgentAdapter via ToolAgentInvoker.
+        self._blank_adapters: Dict[str, Any] = {}
+        for n in names:
+            if str(n).startswith("blank:") and str(n) not in self.tool_map:
+                bound_tools.append(self._make_blank_tool(str(n)))
         extra: Dict[str, Any] = {}
         if request_logprobs:
             extra = {"logprobs": True, "top_logprobs": 1}
@@ -360,6 +388,61 @@ class TirAgent:
         fin_kwargs["max_tokens"] = min(max_tokens, 256)
         fin_kwargs.pop("model_kwargs", None)
         self.llm_finalize = init_chat_model(model_name, **fin_kwargs)
+        # W1: bind kind=blank router candidates as tool-call shells. The
+        # upstream agent's LLM can now emit tool_calls named "blank:<id>";
+        # each shell runs one llm.invoke hop with that agent's system_prompt.
+        for cand in list(self._router_by_tool):
+            if str(cand).startswith("blank:"):
+                self._bind_blank_agent(str(cand))
+
+    def _make_blank_tool(self, tool_id: str) -> Any:
+        """Build a langchain tool schema for a ``blank:<id>`` router candidate.
+
+        The schema is what the upstream LLM sees; execution is dispatched to a
+        BlankAgentAdapter (one llm.invoke hop with that agent's system_prompt)
+        registered on the ToolAgentInvoker.
+        """
+        from langchain_core.tools import StructuredTool
+        from pydantic import BaseModel, Field
+
+        agent_id = tool_id[len("blank:"):]
+        spec = self._blank_specs.get(agent_id)
+
+        class _BlankInput(BaseModel):
+            input: str = Field(description="question or task for this expert agent")
+
+        def _run(input: str = "") -> str:  # noqa: A002
+            del input  # placeholder to satisfy langchain schema building
+            return ""
+
+        # description: "{id}: {profile.skills}" (plan W1 §1)
+        if spec is not None:
+            skills = getattr(spec, "profile", {}).get("skills") or getattr(spec, "skills", None) or []
+            skills = [str(s) for s in skills] if isinstance(skills, list) else []
+            desc = f"{agent_id}: {', '.join(skills)}" if skills else f"{agent_id}: expert agent"
+        else:
+            desc = f"{agent_id}: expert agent"
+        return StructuredTool.from_function(
+            func=_run,
+            name=tool_id,
+            description=desc,
+            args_schema=_BlankInput,
+        )
+
+    def _bind_blank_agent(self, tool_id: str) -> None:
+        """Create/bind a BlankAgentAdapter for a ``blank:<id>`` router candidate."""
+        agent_id = str(tool_id)[len("blank:"):]
+        spec = self._blank_specs.get(agent_id)
+        if spec is None:
+            return
+        try:
+            from tools.tool_agents import BlankAgentAdapter
+
+            adapter = BlankAgentAdapter.from_agent(spec).bind_llm(self.llm)
+        except Exception:
+            return
+        self._blank_adapters[tool_id] = adapter
+        self.tool_agent_invoker.bind_blank_agents({tool_id: adapter})
 
     @classmethod
     def from_spec(
@@ -385,6 +468,16 @@ class TirAgent:
         routers = kwargs.pop("routers", None)
         if routers is None:
             routers = {str(r.id): r for r in (getattr(spec, "routers", None) or [])}
+        # W1: kind=blank agents ride along as specs so blank:<id> candidates
+        # can be bound as tool-call shells (one llm hop each).
+        blank_specs = [
+            a
+            for a in (getattr(spec, "agents", None) or [])
+            if str(getattr(a, "kind", "") or "") == "blank"
+        ]
+        if blank_specs:
+            routers = dict(routers or {})
+            routers["__blank_specs__"] = blank_specs
         return cls(
             endpoint=endpoint,
             model_name=model_name,
@@ -523,6 +616,10 @@ class TirAgent:
             _tool_name = str(results[0][1]) if results else None
             _rid = self._router_by_tool.get(str(_tool_name)) if _tool_name else None
             _metrics: Dict[str, Any] = {"n_tools": len(tool_messages)}
+            # W1: blank:<id> calls are blank-agent hops routed via tool_call —
+            # record the prefixed tool_id and mark the agent kind.
+            if _tool_name and str(_tool_name).startswith("blank:"):
+                _metrics["agent_kind"] = "blank"
             if _rid is not None:
                 _r = self.routers.get(_rid) or {}
                 _cands = _r.get("candidates") if isinstance(_r, dict) else getattr(_r, "candidates", None)

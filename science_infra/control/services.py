@@ -299,10 +299,71 @@ def mas_palette() -> Dict[str, Any]:
         roles = ["hub", "verifier"]
     tools = ["web_search", "wikipedia_search", "execute_python"]
     edge_kinds = ["message", "tool_call", "feedback", "route", "sample_barrier"]
+    # agent-framework W2: unified agent palette (schema 0.3). The UI renders a
+    # single "Agent" drag category from these kind templates; legacy roles/tools
+    # fields stay for the transition period.
+    agent_templates = [
+        {
+            "id": "tool_agent",
+            "kind": "tool",
+            "label": "Tool Agent",
+            "hint": "封装工具为 agent，可开 LLM 后端",
+        },
+        {
+            "id": "blank",
+            "kind": "blank",
+            "label": "空白 Agent",
+            "hint": "自定义 profile 多专家",
+        },
+        {
+            "id": "verifier",
+            "kind": "verifier",
+            "label": "Verifier",
+            "hint": "校验上游产出并反馈",
+        },
+        {
+            "id": "planner",
+            "kind": "planner",
+            "label": "Planner",
+            "hint": "任务分解与派发",
+        },
+        {
+            "id": "hub",
+            "kind": "hub",
+            "label": "Hub",
+            "hint": "ReAct 主循环入口",
+        },
+        {
+            "id": "router",
+            "kind": "router",
+            "label": "Router",
+            "hint": "多专家路由：从 candidates 中选择一个 agent",
+        },
+    ]
+    tool_agents = []
+    try:
+        from tools.tool_agents import TOOL_AGENTS
+
+        for _ta in TOOL_AGENTS.values():
+            tool_agents.append(
+                {
+                    "id": _ta.id,
+                    "backend": _ta.backend,
+                    "llm_required": bool(_ta.llm_required),
+                    "description": str(_ta.description or ""),
+                }
+            )
+    except Exception:
+        tool_agents = [
+            {"id": t, "backend": "pure", "llm_required": False, "description": ""}
+            for t in tools
+        ]
     return {
         "skills": skills,
         "roles": roles,
         "tools": tools,
+        "agent_templates": agent_templates,
+        "tool_agents": tool_agents,
         "edge_kinds": edge_kinds,
         "sampling_modes": ["grpo_n", "arpo", "aepo", "appo", "rae"],
         "gate_types": [
@@ -642,6 +703,81 @@ def run_diagnose(exp_id: str, *, metrics_path: Optional[str] = None) -> Dict[str
     return {"path": str(out), "hypotheses": rows, "n": len(rows)}
 
 
+def _offline_step_rewards(limit: int = 200) -> List[Dict[str, Any]]:
+    """Step-level reward series from the last train run's metrics.jsonl.
+
+    Path resolution order:
+    1. ``AGL_METRICS_JSONL`` env (if the service itself was started with it).
+    2. Scan train run stdout logs (newest first) for an ``AGL_METRICS_JSONL=``
+       line — the training glue prints it at startup.
+    3. Glob ``mas/checkpoints/AgentLightning/*/metrics.jsonl`` (newest first).
+    """
+    import glob as _glob
+    import re as _re
+
+    candidates: List[str] = []
+    env_path = os.environ.get("AGL_METRICS_JSONL", "").strip()
+    if env_path:
+        candidates.append(env_path)
+    pat = _re.compile(r"^AGL_METRICS_JSONL=(\S+)", _re.MULTILINE)
+    for row in PROCS.list_runs():
+        if row.get("kind") != "train":
+            continue
+        lp = row.get("log_path") or ""
+        try:
+            text = Path(lp).read_text(encoding="utf-8", errors="replace")[:200_000]
+        except OSError:
+            continue
+        m = pat.search(text)
+        if m:
+            candidates.append(m.group(1))
+    repo = Path(__file__).resolve().parents[2]
+    candidates.extend(sorted(_glob.glob(str(repo / "mas" / "checkpoints" / "AgentLightning" / "*" / "metrics.jsonl")), key=lambda p: os.path.getmtime(p), reverse=True))
+    seen = set()
+    for cand in candidates:
+        cand = os.path.abspath(cand)
+        if cand in seen or not os.path.isfile(cand):
+            seen.add(cand)
+            continue
+        seen.add(cand)
+        out: List[Dict[str, Any]] = []
+        try:
+            with open(cand, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    val = rec.get("training/reward")
+                    if val is None:
+                        continue
+                    try:
+                        step_idx = int(rec.get("training/global_step") or len(out) + 1)
+                        # Metrics from restarted runs may repeat global_step
+                        # (e.g. 1,2,1 after a crash); keep the series monotonic
+                        # so the chart x-axis stays well-formed.
+                        if out and step_idx <= out[-1]["index"]:
+                            step_idx = out[-1]["index"] + 1
+                        out.append(
+                            {
+                                "index": step_idx,
+                                "reward": float(val),
+                            }
+                        )
+                    except (TypeError, ValueError):
+                        continue
+        except OSError:
+            continue
+        if out:
+            return out[-limit:]
+    return []
+
+
 def fetch_agl_training_metrics() -> Dict[str, Any]:
     """Same payload as AGL dashboard GET /v1/agl/metrics (only while store is up)."""
     try:
@@ -696,7 +832,22 @@ def _agl_reward_series(agl: Dict[str, Any]) -> Dict[str, Any]:
             )
         except (TypeError, ValueError):
             continue
-    return {"train_rewards": train_rewards, "step_rewards": step_rewards, "agl_online": bool(agl)}
+    offline = False
+    if not train_rewards and not step_rewards:
+        # AGL store is down (training stopped). Fall back to the metrics.jsonl
+        # the training process sinks to disk (path is printed in run stdout
+        # as AGL_METRICS_JSONL=...). Without this, the Monitor reward charts
+        # go blank whenever training is not actively running.
+        offline_series = _offline_step_rewards()
+        if offline_series:
+            step_rewards = offline_series
+            offline = True
+    return {
+        "train_rewards": train_rewards,
+        "step_rewards": step_rewards,
+        "agl_online": bool(agl),
+        "agl_source": "offline_metrics_jsonl" if offline else ("agl_store" if agl else None),
+    }
 
 
 def monitor_model(exp_id: str) -> Dict[str, Any]:

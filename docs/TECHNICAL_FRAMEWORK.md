@@ -3,7 +3,7 @@
 
 | 项        | 内容                                                                                                                                                                                                                                                                                                              |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 版本       | 2026-09-18（新增：新框架 P0–P3 + MAS agent 化重构 + 功能分组测试）                                                                                                                                                                                                                                                |
+| 版本       | 2026-09-20（新增：ARPO 热路径修复（pre-inject expand 字段）+ Daemon 树持久化 `tree_*.json` + blank agent 路由 W1 / 统一 palette W2 + Monitor 离线曲线 + 5 样本端到端实测）；上一版 2026-09-18（新框架 P0–P3 + MAS agent 化重构 + 功能分组测试）                                                                                                                                                                                                                                                |
 | 对照提案     | [GPT_analysis.md](./GPT_analysis.md)（架构提案 v1.0）；v2 构思 [new_framework.md](./new_framework.md) → 整理与最优架构 [NEW_FRAMEWORK_DESIGN.md](./NEW_FRAMEWORK_DESIGN.md) → 落地计划 [NEW_FRAMEWORK_MIGRATION_PLAN.md](./NEW_FRAMEWORK_MIGRATION_PLAN.md) → agent 化验收 [MAS_AGENT_FRAMEWORK_TEST.md](./MAS_AGENT_FRAMEWORK_TEST.md)                                                                   |
 | 产品原则     | [design.md](../design.md)                                                                                                                                                                                                                                                                                       |
 | 层边界      | [LAYER_LAYOUT.md](./LAYER_LAYOUT.md)                                                                                                                                                                                                                                                                            |
@@ -30,15 +30,15 @@
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | MAS 构建 / 数据面 | `MASSpec`（schema 0.3：kind/profile/routers）→ `ExecutionService`（TirAgent / mock / Compiler walk）→ Event / Trajectory / Archive；可独立于 RL             |
 | Agent 模型      | **一切皆 Agent**：`AgentRegistry`（planner/tool/verifier/blank）+ `RouterSpec`（适配器模式，决策映射为 tool_calls）；tool-agent 双模式（pure / epc_aw llm）       |
-| 采样 / 分支      | `SamplePolicy.sites`（`BranchSite`）→ `ActiveSetSession.plan_forks_from_raw`（支持 `window_events` 事件匹配）→ `.local_expansion` → Daemon enqueue；Collect **不做**树 |
-| RolloutTree    | `RolloutTree` / `RolloutTreeNode` 一等合同；`tree_from_plans` 建树；Daemon 存真实 rollout id 树；`GET /api/mas/rollout-trees` + React Flow 可视化 + SSE 实时    |
+| 采样 / 分支      | `SamplePolicy.sites`（`BranchSite`）→ `ActiveSetSession.plan_forks_from_raw`（支持 `window_events` 事件匹配）→ `.local_expansion` → Daemon enqueue；Daemon `_preinject_expand_fields` 在波-1 enqueue 前注入 expand 列（修复 `branch_local=0`，2026-09-20 实测 branch_local=6）；Collect **不做**树 |
+| RolloutTree    | `RolloutTree` / `RolloutTreeNode` 一等合同；`tree_from_plans` 建树；Daemon `_persist_rollout_tree` 训练期落盘真实 rollout id 树（`mas/.local_expansion/tree_*.json`，平铺格式）；`GET /api/mas/rollout-trees`（daemon 树优先 + tree_id 去重 + 过滤退化树）+ React Flow 可视化 + SSE 实时    |
 | RL 面         | 权威 outcome 在 `rl/rewards`；LossSpec / TrainSignal / overlay / ARPO·AEPO·RAE Daemon 在 `rl/`；token advantage 在 VERL hook；`CreditAssignmentSpec`（k-hop/verdict） |
 | Harness       | 四插件 + `Diagnoser.consume` 实时协议 + `RewardHackingMonitor`（leave-one-out z-score）；stdout JSONL 帧 → SSE `rollout_tree`                              |
-| Control / UI | 实验 YAML bundle + FastAPI REST/SSE + React 七页（+RolloutTree）+ React Flow→YAML（含 router 菱形节点）+ Rollout Sampling 小窗写 `sampling.sites`（含 router 锚点） |
+| Control / UI | 实验 YAML bundle + FastAPI REST/SSE + React 七页（+RolloutTree）+ React Flow→YAML（含 router 菱形节点）+ Rollout Sampling 小窗写 `sampling.sites`（含 router 锚点）+ palette `agent_templates` 统一 Agent 拖拽 + Monitor 离线 reward 回落 |
 | 研究原语缺口       | 独立 `Episode`、`Diagnostic`/`Intervention`、Experiment 生命周期状态机仍未冻结                                                                               |
 
 
-**已跑通**：`WorkflowSpec(YAML) → LangGraph TirAgent → Event/Trajectory → rl.rewards → TrainSignal → Harness → CLI HTML / Monitor`；训练 `LitTirAgent → agl.Trainer/VERL → GRPO 族（含 ARPO/AEPO/RAE 树分支）`；`sampling.sites` → ActiveSet plan → Daemon enqueue → `verdict_list` / R0 prefix-zero（`tir_algo=rae`）；agent 化：RouterSpec 编译进 `tools_for`、per-agent `window_events`、两层 memory 读写、`feature-test --all` 15 域 146 例全绿（2026-09-18 实跑验证）。
+**已跑通**：`WorkflowSpec(YAML) → LangGraph TirAgent → Event/Trajectory → rl.rewards → TrainSignal → Harness → CLI HTML / Monitor`；训练 `LitTirAgent → agl.Trainer/VERL → GRPO 族（含 ARPO/AEPO/RAE 树分支）`；`sampling.sites` → ActiveSet plan → Daemon enqueue → `verdict_list` / R0 prefix-zero（`tir_algo=rae`）；agent 化：RouterSpec 编译进 `tools_for`、per-agent `window_events`、两层 memory 读写、blank agent 经 router 候选 `blank:<id>` 以 tool-call shell 路由（W1）、feature-test `--all` 15 域 154 例全绿（2026-09-20 实跑验证：145 Python + 9 frontend vitest）。**ARPO 训练端到端（2026-09-20，5 样本小数据集）**：run `384d1927458a` returncode=0，`branch_local_count=6`、`store_enqueue_branch_count=6`、`incremental_branch_count=6`、`[TIR arpo] enqueued 4 branch/resume rollouts`、6 棵 `tree_ro-*.json` 落盘（after_tool×2 + after_agent_turn×4，child 为真实 store rollout id），单 step ≈237s（batch=20 时 2704s）。
 
 **硬边界已守住**：
 
@@ -294,8 +294,12 @@ MASSpec.sampling (SamplePolicy)
                           → ActiveSetSession.plan_forks_from_raw
                           → dump_local_expansion
                         TirAgentModeDaemon materialize
+                          → _preinject_expand_fields（波-1 enqueue 前注入
+                             expand_in_runner/sampling_budget/branch_sites 列；
+                             super() 快照 task input，事后补写不生效）
                           → Store enqueue(resume_messages)
                           → non_tensor: role / resume_boundary / verdict_list
+                          → _persist_rollout_tree(tree_*.json) + emit node_added
                         apply_tir_advantages（GRPO 基线 + 可选 R0 / RAE）
 ```
 
@@ -307,7 +311,7 @@ flowchart TD
   AS --> Gate["gates.evaluate_gate plus probes"]
   AS --> Tree["tree_from_plans → RolloutTree"]
   Gate --> Dump["dump_local_expansion (含 tree)"]
-  Dump --> Daemon["TirAgentModeDaemon materialize<br/>真实 rollout id 重写"]
+  Dump --> Daemon["TirAgentModeDaemon materialize<br/>真实 rollout id 重写 + _persist_rollout_tree"]
   Daemon --> Store["AGL Store resume_messages"]
   Daemon --> Batch["non_tensor role boundary verdict"]
   Daemon --> Emit["emit_rollout_tree_event stdout JSONL"]
@@ -321,7 +325,7 @@ flowchart TD
 
 Caveat：`plan_forks_from_raw` 对每个 site 用 `site.anchor.kind` **自匹配**（不是「等真实 event 到达才叉」）；P2 起支持传入 `window_events`（WindowEndEvent 流）做**事件优先匹配**，无事件时回退 `branch_messages`/`messages`。Collect 绿路径**不做**树分支；真 branch 看 Train + `.local_expansion`。
 
-**RolloutTree 链路（P0）**：`plan_forks_from_raw` 产出的 plans 经 `tree_from_plans` 构成一等 `RolloutTree` 合同（root/children/hops），随 expansion payload 双格式落盘；Daemon `_enqueue_from_runner_expansions` 用真实 Store rollout id 重写节点 id 后存 `_rollout_trees` 并 `emit_rollout_tree_event`（stdout JSONL `__rollout_tree_event__` 帧）；Control SSE `_drain_tree_frames` 转发 `rollout_tree` 事件，WebUI RolloutTree 页实时渲染。
+**RolloutTree 链路（P0；2026-09-20 接通落盘）**：`plan_forks_from_raw` 产出的 plans 经 `tree_from_plans` 构成一等 `RolloutTree` 合同（root/children/hops），随 expansion payload 双格式落盘（runner 侧 `mas/.local_expansion/<rollout_id>.json`，child 为合成 id `{parent}:0`）；Daemon `_enqueue_from_runner_expansions` / ready_batch 增量路径 `_enqueue_expansion_for_parent` 用真实 Store rollout id 重写节点 id 后存 `_rollout_trees`，并经 `_persist_rollout_tree` 落盘为 `mas/.local_expansion/tree_<tree_id>.json`（平铺 `{tree_id, query, nodes}`，与 `contracts.RolloutTree` 字段一致）；`emit_rollout_tree_event` 发 stdout JSONL `__rollout_tree_event__` 帧（node_added / loss）；Control SSE `_drain_tree_frames` 转发 `rollout_tree` 事件；`GET /api/mas/rollout-trees` 扫描目录并**双源合并**：daemon `tree_*.json` 优先、同 `tree_id` 的 runner 展开文件去重、无有效节点 id 的退化树过滤；WebUI RolloutTree 页实时渲染。
 
 ### 3.4 层边界（四条）
 
@@ -521,7 +525,7 @@ ExecutionService
 
 `fork` = **从 Archive Snapshot 续跑**，不是运行中 pause。`TirAgent.resume_react`（finalize 后无 `<answer>` 继续）与 Archive fork **不是**同一原语。
 
-**agent 化运行时（A1–A4）**：`run_episode` 构造 TirAgent 后按 `spec.llm.kind == "api"` 且 `profile.llm_required` 设 `tool_agent_invoker.prefer_llm`（测试态切 epc_aw 后端，训练/Collect 永远 pure）；`_open/_close_construct` 按节点 `memory_scope` 经 `MemoryStore.read_agent/write_agent` 读写（agent 私有 / shared hub buffer，`profile.memory` append_latest 截断）。
+**agent 化运行时（A1–A4 + W1）**：`run_episode` 构造 TirAgent 后按 `spec.llm.kind == "api"` 且 `profile.llm_required` 设 `tool_agent_invoker.prefer_llm`（测试态切 epc_aw 后端，训练/Collect 永远 pure）；`_open/_close_construct` 按节点 `memory_scope` 经 `MemoryStore.read_agent/write_agent` 读写（agent 私有 / shared hub buffer，`profile.memory` append_latest 截断）。**W1（blank agent 路由）**：router 候选中的 `kind=blank` agent 以 `blank:<id>` 前缀注册为 tool-call shell——`TirAgent._make_blank_tool` 生成 LLM 可见的 StructuredTool schema（单 `input` 参数，description=`{id}: {skills}`），`_bind_blank_agent` 经 `BlankAgentAdapter.from_agent(spec).bind_llm(self.llm)` 绑定到 `ToolAgentInvoker.bind_blank_agents`；调用时单跳 `llm.invoke`（该 agent 的 system_prompt + history + input），window_events 记 `agent_kind=blank` 与 router 上下文（`blank:<id>` 也登记进 `_router_by_tool`）。
 
 关键函数：`run_episode`、`episode_to_trajectory`、`apply_verifier_feedback`、`run_compiled_episode`、`ExecutionService`、`_node_memory_settings`。
 
@@ -540,7 +544,7 @@ def compile_spec(spec: MASSpec) -> CompiledWorkflow:
 
 合法边：agent→tool 的 `tool_call`；agent→agent 的 `route` / `message` / `feedback`（feedback 源限 verifier/critic）；**router 相邻边为路由糖**（跳过常规校验）。`trainable_agents(spec)` 供训练侧筛选可训节点（排除 kind=tool）。
 
-**RouterSpec 编译（A2 适配器模式）**：候选必须存在于 agents/tools（否则 issue）；候选中 `kind=tool` 的注册进 `tools_for[_router_upstream(...)]`（edge source 指向 router 的上游 agent）——tool_call 边语义不变，纯糖；`strategy=score` 时 `scorer` 必须是 agent 节点。`compiled.routers` 携带完整 RouterSpec 供 TirAgent window_events metrics（`router_id` + `candidates`）使用。
+**RouterSpec 编译（A2 适配器模式 + W1）**：候选必须存在于 agents/tools（否则 issue）；候选中 `kind=tool` 的注册进 `tools_for[_router_upstream(...)]`（edge source 指向 router 的上游 agent）——tool_call 边语义不变，纯糖；`strategy=score` 时 `scorer` 必须是 agent 节点。`compiled.routers` 携带完整 RouterSpec 供 TirAgent window_events metrics（`router_id` + `candidates`）使用。**W1 扩展**：`kind=blank` 候选同样编入 `tools_for[上游]`，id 带 `blank:` 前缀（`blank:<id>`）；候选写法**裸 id 与 `blank:` 前缀两种都接受**（UI 写带前缀形式），校验时统一 strip 前缀再比对 agents/tools 全集。
 
 ---
 
@@ -553,7 +557,7 @@ def compile_spec(spec: MASSpec) -> CompiledWorkflow:
 | ------------ | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
 | `archive.py` | events.jsonl、snapshot JSON、`restore`、`BranchPoint`、`dump_resume_with_archive` / `load_resume_messages` | 无窗口淘汰产品化；无跨进程 Object存储                          |
 | `memory.py`  | `read/write/latest` + **`read_agent/write_agent`**（`memory_scope: agent/shared` 路由 + `profile.memory` append_latest 截断） | 无 `update/snapshot/restore`；非向量                 |
-| `agents.py`  | `AgentRegistry.from_spec`（双模式 tool-agent 绑定 + `_PureOnlyView` 训练态降级）/ `BlankAgent` / `router_for` | 多 Runtime Registry 未统一                             |
+| `agents.py`  | `AgentRegistry.from_spec`（双模式 tool-agent 绑定 + `_PureOnlyView` 训练态降级）/ `BlankAgent` / `router_for`；blank 经 W1 `BlankAgentAdapter`（`mas/tools/tool_agents.py`）以 tool-call shell 执行 | 多 Runtime Registry 未统一                             |
 | `plugins.py` | `Skill`/`AgentRole`；`react_loop`、`verifier`；planner/executor role                                      | 无 Planning/Causal Skill；无独立 `Controller.decide` |
 
 
@@ -740,7 +744,7 @@ def batch_to_train_signal(batch: TrajectoryBatch, *, algo: str = "grpo") -> Trai
 | 模块                 | 职责                                                                            |
 | ------------------ | ----------------------------------------------------------------------------- |
 | `overlay.py`       | `VALID_ALGOS`；`apply_algo_overlay`；`apply_sample_policy`；`apply_train_signal` |
-| `daemon.py`        | `TirAgentModeDaemon`：树 enqueue + `verdict_list` + `_rollout_trees` 存储 + `emit_rollout_tree_event`（stdout JSONL 帧） |
+| `daemon.py`        | `TirAgentModeDaemon`：`_preinject_expand_fields`（波-1 前注入 expand 列）+ 树 enqueue + `verdict_list` + `_rollout_trees` 存储 + `_persist_rollout_tree`（真实 id 树落盘 `tree_*.json`）+ `emit_rollout_tree_event`（stdout JSONL 帧）+ ready_batch 增量 enqueue 同步落盘 |
 | `trainer.py`       | `TirAgentLightningTrainer` / `bound_daemon_cls`                               |
 | `advantage.py`     | 替换 VERL `compute_advantage`（IGPO/GIGPO/AEPO/RAE + R0）                         |
 | `rae_advantage.py` | R0 / R1-lite / R1-full / dead-end backprop / `k_hop_cumulative_reward` / `apply_verdicts_to_tree` |
@@ -794,6 +798,10 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
 
 训练屏障（branch 点）：由 `SamplePolicy.sites` / ActiveSet 决定；无 `sites` 时 `barriers` 派生默认 `after_tool`（`branch_messages`；见 `tir_agent.py` + `dump_resume_with_archive`）。`after_agent_turn` / `after_verifier` 可走 `messages` fallback。
 
+**Span→Triplet 命名空间映射（2026-09-19 修复）**：AGL `TracerTraceToTriplet` 的 `agent_match` 过滤读 LangGraph span 的 `langchain.chain.type` 属性（= langgraph 节点名：`agent`/`tools`/`should_continue`/`finalize`/`react`），而非 MAS 图 agent 名（如 `hub`）。两个命名空间不同：UI `--active-agent` 传 MAS 名，`train_tir_agent.py` 将其映射为 langgraph 拥有全部 LLM 调用的节点 `"agent"` 后再传给 adapter（`agent_match="agent"`）。若直接把 MAS 名传给 `agent_match`，所有 LLM span 会被过滤 → `adapter.adapt()` 产出 0 个 triplet → 训练 batch 为空 → `IndexError: argmax() Expected reduction dim 0 to have non-zero size`。验证：2-step ARPO 短训 `n_triplets=43`、`n_rollouts_w_reward=8/8`、step:1 reward=0.0757。
+
+**Expand 字段预注入（2026-09-20 修复 `branch_local=0`）**：`AgentModeDaemon._async_set_up` 在 `super()` 里就用 `_to_native()` 快照每条 task input（`{key: data[key][i]}`），事后补写 `self._task_id_to_original_sample` 的字段永远到不了 Agent——旧版 `_stamp_expand_budgets` 跑在 super() 之后，导致 `expand_in_runner`/`sampling_budget`/`branch_sites` 丢失、ARPO 分支静默不发生（metrics 恒 `branch_local_count=0`）。修复：`_preinject_expand_fields(data, n_init=)` 在 super() **之前**把这些字段作为 batch 列注入（每题 wave-1 roots 共享同一列值；per-root 预算 = `ceil(group_n / n_init)`）；`_stamp_expand_budgets` 保留为兜底。回归：`test_daemon_expand.test_preinject_expand_fields_reaches_task_inputs`；实测 5 样本 ARPO run `384d1927458a` `branch_local_count=6` 且出现 `[TIR arpo] enqueued 4 branch/resume rollouts`。
+
 ---
 
 
@@ -827,7 +835,7 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
 | -------------------- | ------------------------------------------------------------------- |
 | `mas/tir_agent.py`   | LangGraph ReAct：think → tool → answer；`branch_messages`；`from_spec`（接受 `routers`/`agent_id`）；`call_tools` 双写 snapshots + events（真实节点 id + 路由 metrics） |
 | `mas/tools/`         | `web_search`、`wikipedia_search`、`execute_python`                    |
-| `mas/tools/tool_agents.py` | `TOOL_AGENTS` 注册表：`ToolAgent` 双后端（`pure` = mas/tools 纯函数；`llm` = epc_aw LLM-in-tool，惰性 import） |
+| `mas/tools/tool_agents.py` | `TOOL_AGENTS` 注册表：`ToolAgent` 双后端（`pure` = mas/tools 纯函数；`llm` = epc_aw LLM-in-tool，惰性 import）；`BlankAgentAdapter`（W1：kind=blank agent → `blank:<id>` tool-call shell，单跳 llm） |
 | `mas/python_tool.py` | Python 执行沙箱辅助                                                       |
 
 
@@ -865,7 +873,7 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
 | GET/PUT  | `/api/experiments/{id}`           | 读 bundle / 写 meta                                              |
 | GET/PUT  | `/api/experiments/{id}/workflow`  | workflow.yaml + `executable`                                   |
 | PUT      | `/api/experiments/{id}/{section}` | `llm / rl / harness` 段 YAML                                    |
-| GET      | `/api/mas/palette`                | skills/roles/tools/edge_kinds/templates/sampling_modes         |
+| GET      | `/api/mas/palette`                | skills/roles/tools/edge_kinds/templates/sampling_modes + `agent_templates`（W2 统一 Agent 拖拽模板）+ `tool_agents`（后端清单）         |
 | POST     | `/api/llm/health` / `start` / `stop` | 本地 vLLM 健康检查 / 启停                                         |
 | POST     | `/api/mas/sample-data`            | parquet 抽样                                                     |
 | POST     | `/api/mas/collect`                | mock / live / parquet；不可执行图 400                                |
@@ -873,12 +881,14 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
 | POST     | `/api/rl/train` / `stop`          | 训练启停（train_tir_agent.py --rl-yaml）                            |
 | GET      | `/api/runs` `/api/runs/{id}`      | 进程状态 + log tail                                                |
 | GET      | `/api/monitor/{id}`               | dashboard 模型                                                   |
-| GET      | `/api/mas/rollout-trees`          | 扫描 `.local_expansion/*.json` → RolloutTree 列表（P0）           |
+| GET      | `/api/mas/rollout-trees`          | 扫描 `.local_expansion/` → RolloutTree 列表（P0）：daemon `tree_*.json`（真实 rollout id）优先，同 tree_id 的 runner 展开去重，退化树过滤   |
 | GET      | `/api/events`                     | SSE（进程状态 + `rollout_tree` 实时帧）                            |
 | `*`      | `/agl/*` `/v1/agl/*`              | 反代 AGL Dashboard                                               |
 
 
 **无** WebSocket；**无** pause / resume / fork 端点。Collect 为同步 HTTP。SSE `events` 端点含 `_drain_tree_frames`：tail 训练进程 stdout 的 `__rollout_tree_event__` JSONL 帧，转发为 `event: rollout_tree`。
+
+`/api/monitor/{id}` 的训练 reward 曲线有**离线回落**（2026-09-20）：AGL LightningStore 关闭（训练已结束）时，`services._offline_step_rewards` 从 `mas/checkpoints/AgentLightning/<exp>/metrics.jsonl` 读 `training/reward` 序列（路径解析顺序：`AGL_METRICS_JSONL` env → 最近 train run stdout 的 `AGL_METRICS_JSONL=` 行 → glob checkpoints 取最新），并保证 index 单调（重启续跑重复 global_step 时顺延）。
 
 `ProcessManager`：kind ∈ `{llm, collect, train}`，每种同时一个 active；SIGINT→SIGKILL。
 
@@ -891,14 +901,16 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
 | ---------- | --------------------------------------------------------------------------------------------------------- | ----------------- |
 | Experiment | 列表 / 新建 / name+seed                                                                                       | `pipeline` 表单未深编辑 |
 | LLM        | kind；health；local 启停；密钥写 `.secrets.env`                                                                   | `rl_endpoint` 仅提示 |
-| MAS        | React Flow→YAML（Agent/Tool/**Router 菱形节点** + kind 徽标）；模板；Collect；**Rollout Sampling 小窗**写 `sampling.sites`（mode/group_n/beam + 站点/gate，**含 router 锚点候选**）；主画布角标同步 | 图版本化未做；Fork UI 未做 |
+| MAS        | React Flow→YAML（Agent/Tool/**Router 菱形节点** + kind 徽标；**W2 统一 Agent palette**：hub/planner/verifier/tool/blank/router 模板拖拽）；模板；Collect；**Rollout Sampling 小窗**写 `sampling.sites`（mode/group_n/beam + 站点/gate，**含 router 锚点候选**）；主画布角标同步 | 图版本化未做；Fork UI 未做 |
 | RL         | GPU 勾选 / n_runners / TrainSignal 预填 / 启停 / 链 AGL metrics                                                  | runs 列表 UI 弱      |
 | Harness    | 勾选插件（stub 禁用）+ diagnose                                                                                   | 无 Intervention    |
-| Monitor    | Recharts reward、事件、hypotheses                                                                             | 不订阅 SSE 刷新图表      |
-| RolloutTree | 树列表 + React Flow 渲染 root/child 分层 + 节点徽标（event_kind/h_tool/verdict）+ SSE LIVE 徽标                | 无树对比             |
+| Monitor    | Recharts reward、事件、hypotheses；store 关闭后训练 reward 曲线**离线回落** metrics.jsonl（2026-09-20）                                                                             | 不订阅 SSE 刷新图表      |
+| RolloutTree | 树列表 + React Flow 渲染 root/child 分层 + 节点徽标（event_kind/h_tool/verdict）+ SSE LIVE 徽标；数据源含 Daemon 落盘真实 rollout id 树                | 无树对比             |
 
 
 图编辑：`features/graph/workflowGraph.ts` + `MasGraphEditor.tsx` → MASSpec YAML（`flowToWorkflow` round-trip `routers`；`executableInfo` 跳过 router 边）。采样小窗：`features/sampling/RolloutSamplingPanel.tsx` + `trajectoryGraph.ts`（主路径含 `kind=router` 节点，候选锚定 router id）。Inspector「Branch Rollout 站点」为 Advanced 同步列表。
+
+App 启动会查 `GET /api/runs` 自动选中**有活跃（或最近）train run 的实验**（非 demo 时），使 RL 日志 / RolloutTree 反映当前实际运行。注意 `App.tsx` 与 `RolloutTree.tsx` 各持一条 `/api/events` SSE 长连接（RolloutTree 页另有 8s 轮询）：HTTP/1.1 每域名 6 连接上限的浏览器（尤其 IDE 内嵌 webview）里，切到 RolloutTree 页可能出现请求排队、树列表暂显「暂无树」——换外部浏览器即恢复（2026-09-20 排查记录）。
 
 ---
 
@@ -983,11 +995,11 @@ experiments/{id}/
 
 | 层          | 关键进展                                                             | 主要缺口                                                                      |
 | ---------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| MAS        | Spec（schema 0.3 kind/profile/routers）+ Compiler walk + Archive fork + `BranchSite` / ActiveSet + **AgentRegistry 双模式 + RouterSpec 适配器 + 两层 memory + per-agent events** | pause/resume；多 Runtime；Controller.decide；blank agent 独立执行器未实现         |
+| MAS        | Spec（schema 0.3 kind/profile/routers）+ Compiler walk + Archive fork + `BranchSite` / ActiveSet + **AgentRegistry 双模式 + RouterSpec 适配器 + 两层 memory + per-agent events + blank agent tool-call shell（W1）** | pause/resume；多 Runtime；Controller.decide；blank 仍借道 tool_call 单跳执行（非独立 ReAct 执行器） |
 | RL         | `rl/` **抽离**；六算法（含 `rae`）+ SamplePolicy→Daemon；R0/R1 + k-hop/verdict credit；`--rl-yaml` | token alignment 合同；TRL/DAPO 产品接口；APPO 现映射 arpo；无 vLLM Worker 共置 ActiveSet |
 | Harness    | 四插件 + stub + `consume` 实时协议 + leave-one-out reward hacking 监控         | Intervention；Judge LLM                                                      |
 | Experiment | YAML + REST CRUD + 分步执行                                          | 生命周期 Controller；fork/compare API                                          |
-| UI         | 七页 + 画布（Router 菱形节点）+ GPU + **Rollout Sampling 小窗** + **RolloutTree 页** + AGL 反代 | WebSocket；图版本；fork 按钮                                                     |
+| UI         | 七页 + 画布（Router 菱形节点 + **W2 统一 Agent palette**）+ GPU + **Rollout Sampling 小窗** + **RolloutTree 页** + AGL 反代 | WebSocket；图版本；fork 按钮                                                     |
 
 
 
@@ -1056,9 +1068,9 @@ Control UI：
 ```bash
 ./run.sh feature-test --list        # 列出全部功能域与用例数
 ./run.sh feature-test mas-core      # 单域：MAS 基础层（18 例）
-./run.sh feature-test agent-framework   # 单域：registry/router/memory/PEV（17 例）
+./run.sh feature-test agent-framework   # 单域：registry/router/memory/PEV/blank 路由（24 例）
 ./run.sh feature-test mas-core rl harness   # 多域
-./run.sh feature-test --all         # 全量：15 域 146 例（含 frontend vitest 9 例）
+./run.sh feature-test --all         # 全量：15 域 154 例（145 Python + frontend vitest 9 例）
 # 域：mas-core rl harness branch rollout-tree agent-framework schema03
 #     daemon realtime cli control-ui gpu-compiler verifier e2e frontend smoke
 ```
@@ -1078,7 +1090,7 @@ RolloutTree 验收（训练后）：
 cd mas
 PYTHONPATH=..:. python scripts/collect_rollouts.py --mock --n 2 --out /tmp/traj.json
 PYTHONPATH=..:. python tests/test_infra_v1.py
-# 全量 discover（stage1–11 + 新框架 + agent 化，137 个测试函数）
+# 全量 discover（stage1–11 + 新框架 + agent 化，145 个测试函数，约 30s 全绿）
 ```
 
 有 GPU + AGL：
@@ -1095,18 +1107,21 @@ PYTHONPATH=..:. python train_tir_agent.py fast --algo arpo --rl-yaml ../experime
 
 - YAML Spec → ExecutionService（hub_react；graph 经 Compiler；schema 0.3 sugar 归一化，旧 YAML 零改动）
 - Mock / Live → Event → Trajectory → `rl.rewards`
-- AgentRegistry：双模式 tool-agent（pure / epc_aw llm）+ BlankAgent + RouterSpec 解析
+- AgentRegistry：双模式 tool-agent（pure / epc_aw llm）+ BlankAgent + RouterSpec 解析；W1 blank tool-call shell（`BlankAgentAdapter` + `_bind_blank_agent`，`blank:<id>` 单跳 llm + system_prompt，window_events 标 `agent_kind=blank`）
 - RouterSpec 运行时（适配器）：编译进 `tools_for[上游]`；路由决策进 window_events（router_id + candidates）
 - per-agent `window_events` / `window_snapshots`（graph 路径合并真实节点 id）
 - 两层 memory：`read_agent/write_agent`（agent 私有 / shared hub + append_latest 截断）
 - Archive snapshot + `fork`（脚本/测试级）
 - Skill 热路径 + verifier 回边
 - `SamplePolicy.sites` → Collect `group_n` + Train ActiveSet / Daemon 树分支（window_events 优先匹配）
-- RolloutTree：`tree_from_plans` → expansion 双格式 → Daemon 真实 id 重写 → `GET /api/mas/rollout-trees` + SSE + React Flow 页
+- **span→triplet 命名空间映射**：`train_tir_agent.py` 把 MAS agent 名（`--active-agent hub`）映射为 langgraph 节点 `agent` 再传 `adapter.agent_match`（2026-09-19 修复空 triplet 崩溃；2-step ARPO 验证 `n_triplets=43`、`n_rollouts_w_reward=8/8`）
+- RolloutTree：`tree_from_plans` → expansion 双格式 → Daemon 真实 id 重写 + `_persist_rollout_tree` 落盘 `tree_*.json`（ready_batch 增量路径同步落盘 + `node_added` SSE）→ `GET /api/mas/rollout-trees`（daemon 优先 / tree_id 去重 / 过滤退化树）+ SSE + React Flow 页
 - TrainSignal → Hydra；`--rl-yaml`；GPU / n_runners；`CreditAssignmentSpec`（k-hop / verdict）
 - Harness 四插件 + stub + `consume` 实时协议 + leave-one-out reward hacking
-- Experiment bundle + REST/SSE + WebUI 七页 + React Flow→YAML（Router 菱形节点）+ Rollout Sampling 小窗（router 锚点）
-- `./run.sh feature-test --all` 15 域 146 例（含 frontend vitest）；`traj-test`（即 frontend 域）；`branch-ui-test`（--pev/--router fixture）；`arpo-train-test`
+- Experiment bundle + REST/SSE + WebUI 七页 + React Flow→YAML（Router 菱形节点 + W2 统一 Agent palette）+ Rollout Sampling 小窗（router 锚点）+ App 启动自动选中活跃 train run 实验
+- `scripts/ui_public_forwarder.py`：AutoDL 公网 6006 → 容器 8787 TCP 转发（SSE 透传），UI 公网可访问
+- Monitor 训练曲线离线回落：store 关闭后从 `mas/checkpoints/AgentLightning/<exp>/metrics.jsonl` 续供 reward 序列（`services._offline_step_rewards`）
+- `./run.sh feature-test --all` 15 域 154 例（145 Python + 9 frontend vitest，2026-09-20 实测）；`traj-test`（即 frontend 域）；`branch-ui-test`（--pev/--router fixture）；`arpo-train-test`（ARPO 端到端 4 阶段验收：启动→轮询→树落盘→扩展性；2026-09-20 5 样本全 PASS，run `384d1927458a`，step ≈237s，见 `docs/ARPO_TRAIN_TEST.md` §5）
 
 ---
 
@@ -1120,7 +1135,7 @@ PYTHONPATH=..:. python train_tir_agent.py fast --algo arpo --rl-yaml ../experime
 2. Experiment Controller 生命周期（CREATE…COMPARE）；现仅 YAML + 分步按钮
 3. Checkpoint/Fork 接到 Control（`POST .../fork`）与 Monitor 对比
 4. `RuntimeCapabilities` 声明（即使仍只有 TirAgent）
-5. blank agent 独立执行器（当前 kind=blank 仅 spec/profile 合同，graph walk 仍跑 TirAgent prompt）
+5. blank 独立 ReAct 执行器（W1 已接通 tool-call shell：`blank:<id>` 经 router 候选单跳 llm + system_prompt 执行；完整多步执行器仍待做）
 
 **P1**
 
@@ -1181,8 +1196,8 @@ PYTHONPATH=..:. python train_tir_agent.py fast --algo arpo --rl-yaml ../experime
 | -- | ---- |
 | `RolloutTreeNode` / `RolloutTree` / `RolloutTreeEvent` | `mas/workflow/contracts.py`（`leaves()` / `path_to_root()`） |
 | `tree_from_plans` | `mas/workflow/active_set.py`：ForkPlan 列表 → 树；`expansion_payload_from_result` 双格式（`plans` + `tree`） |
-| Daemon 树存储 | `rl/hooks/daemon.py`：`_rollout_trees`；`_enqueue_from_runner_expansions` 用真实 Store rollout id 重写节点 id |
-| API + UI | `GET /api/mas/rollout-trees`（扫 `.local_expansion/*.json`）+ `webui/src/pages/RolloutTree.tsx`（React Flow 分层） |
+| Daemon 树存储 + 落盘 | `rl/hooks/daemon.py`：`_rollout_trees`；`_enqueue_from_runner_expansions` / ready_batch 增量路径用真实 Store rollout id 重写节点 id + `_persist_rollout_tree` 落盘 `mas/.local_expansion/tree_*.json`（平铺格式，2026-09-20） |
+| API + UI | `GET /api/mas/rollout-trees`（daemon `tree_*.json` 优先 + tree_id 去重 runner 展开 + 退化树过滤）+ `webui/src/pages/RolloutTree.tsx`（React Flow 分层） |
 
 ### P1 — schema 0.3：kind / profile / routers
 
@@ -1191,10 +1206,10 @@ PYTHONPATH=..:. python train_tir_agent.py fast --algo arpo --rl-yaml ../experime
 | `AgentNodeSpec.kind/profile`、`MASSpec.routers`、schema_version "0.3" | `mas/workflow/spec.py` |
 | `_normalize_schema03` | `load_spec` sugar：top-level `tools` → `kind=tool` 节点；legacy agents 按 role 推断 kind（**旧 YAML 磁盘零改动**） |
 | `ToolAgentInvoker` | `mas/tir_agent.py`：tool 调用适配器，`prefer_llm` 切 epc_aw LLM-in-tool 后端（仅 `llm.kind=api` 测试态；训练永远 pure） |
-| `TOOL_AGENTS` 注册表 | `mas/tools/tool_agents.py`：`ToolAgent{pure, llm, llm_required, backend}` |
-| Compiler | `tool_agent_ids`（含 legacy）；`multi_agent` / `trainable_agents` 排除 kind=tool；RouterSpec 校验与候选编译 |
+| `TOOL_AGENTS` 注册表 | `mas/tools/tool_agents.py`：`ToolAgent{pure, llm, llm_required, backend}`；`BlankAgentAdapter`（W1：blank agent → `blank:<id>` tool-call shell） |
+| Compiler | `tool_agent_ids`（含 legacy）；`multi_agent` / `trainable_agents` 排除 kind=tool；RouterSpec 校验与候选编译（W1：`kind=blank` 候选编入 `tools_for[上游]`，裸 id / `blank:` 前缀双写法） |
 | window_snapshots 双写 | `TirAgent.call_tools`：legacy 路径与 agent 化路径同时产出 |
-| WebUI | `AgentNode` kind 徽标；`workflowGraph.ts` routers round-trip |
+| WebUI | `AgentNode` kind 徽标；`workflowGraph.ts` routers round-trip；W2 统一 Agent palette（`mas_palette().agent_templates` 六模板） |
 
 ### P2 — WindowEndEvent + credit assignment
 
@@ -1223,7 +1238,11 @@ PYTHONPATH=..:. python train_tir_agent.py fast --algo arpo --rl-yaml ../experime
 | RouterSpec 运行时 | `mas/workflow/compiler.py`（候选 kind=tool 进 `tools_for[上游]`，适配器模式）+ `mas/tir_agent.py`（路由 metrics：`router_id` + `candidates`） |
 | per-agent window_events | `mas/workflow/runtime.py` `run_compiled_episode`：`current_agent_id` 逐 hop 跟踪；`_open/_close_construct(agent_id)` |
 | 两层 memory | `mas/workflow/memory.py` `read_agent/write_agent`（`memory_scope` 路由 + `profile.memory` append_latest 截断） |
-| 验收脚本 | `scripts/arpo_train_verify.py`（10 轮训练断言）、`scripts/rollout_tree_verify.py`（API/离线）、`branch_rollout_ui_test.py --router-fixture`、`scripts/feature_test.py`（15 域 146 例分组） |
+| W1 blank 路由 | `mas/tools/tool_agents.py` `BlankAgentAdapter` + `mas/tir_agent.py`（`blank:<id>` tool-call shell，单跳 llm + system_prompt，window_events `agent_kind=blank`）+ `mas/workflow/compiler.py`（裸 id / `blank:` 前缀双写法编入 `tools_for[上游]`） |
+| W2 统一 palette | `science_infra/control/services.py` `mas_palette().agent_templates`（hub/planner/verifier/tool/blank/router 六模板）+ `webui MasGraphEditor`（单一 Agent 分类按模板渲染） |
+| ARPO 热路径 / 树持久化 | `rl/hooks/daemon.py` `_preinject_expand_fields`（super() 快照前注入 expand 列）+ `_persist_rollout_tree`（`tree_*.json` 平铺落盘，含 ready_batch 增量路径）；`app.py` rollout-trees 双源去重 |
+| Monitor 离线曲线 | `science_infra/control/services.py` `_offline_step_rewards`（`mas/checkpoints/AgentLightning/<exp>/metrics.jsonl` 回落） |
+| 验收脚本 | `scripts/arpo_train_verify.py`（10 轮训练断言）、`scripts/rollout_tree_verify.py`（API/离线；B3 查规范契约位置 `node.metrics`）、`branch_rollout_ui_test.py --router-fixture`、`scripts/feature_test.py`（15 域 154 例分组） |
 | 红线 | 旧 `experiments/*/workflow.yaml` 零改动 Collect+Train 仍绿（feature-test `schema03`/`e2e` 域） |
 
 详细架构说明与测试矩阵：[MAS_AGENT_FRAMEWORK_TEST.md](./MAS_AGENT_FRAMEWORK_TEST.md)。
@@ -1281,7 +1300,6 @@ MASSpec (+ SamplePolicy.sites)
 | [TECHNICAL_FRAMEWORK.md](./TECHNICAL_FRAMEWORK.md)           | **当前代码框架 + 差距（本文）**          |
 | [infra-gap-analysis.md](./infra-gap-analysis.md)             | 早期差距规格（部分已被超越）               |
 | `mas/docs/DESIGN.md`                                         | TIR 算法细节                     |
-| [ICML2027_Agent_RL/](./ICML2027_Agent_RL/)                   | 研究综述 / 基线卡片                  |
 
 
 ---
@@ -1311,18 +1329,19 @@ MASSpec (+ SamplePolicy.sites)
 | LossSpec / AdvantageSpec / CreditAssignmentSpec | `rl/loss.py`                                                                          |
 | TrainSignal                                    | `rl/train_signal.py`                                                                  |
 | Algo / SamplePolicy overlay                    | `rl/hooks/overlay.py`                                                                 |
-| 树分支 Daemon（_rollout_trees / emit_rollout_tree_event） | `rl/hooks/daemon.py`                                                                  |
+| 树分支 Daemon（_rollout_trees / _preinject_expand_fields / _persist_rollout_tree / emit_rollout_tree_event） | `rl/hooks/daemon.py`                                                                  |
 | Advantage hook                                 | `rl/hooks/advantage.py`                                                               |
 | RAE R0/R1 + k_hop/verdict tree                 | `rl/hooks/rae_advantage.py`                                                           |
 | Branch policy                                  | `rl/hooks/branch_policy.py`                                                           |
-| TirAgent（routers / agent_id / window_events）  | `mas/tir_agent.py`                                                                    |
+| TirAgent（routers / agent_id / window_events / blank tool-call shell W1） | `mas/tir_agent.py`                                                                    |
 | ToolAgentInvoker                               | `mas/tir_agent.py`                                                                    |
-| ToolAgent 双后端注册表（pure / epc_aw llm）        | `mas/tools/tool_agents.py`                                                            |
+| ToolAgent 双后端注册表（pure / epc_aw llm）+ BlankAgentAdapter（W1） | `mas/tools/tool_agents.py`                                                            |
 | LitTirAgent                                    | `mas/lit_tir_agent.py`                                                                |
 | Train entry                                    | `mas/train_tir_agent.py`                                                              |
-| Control API（rollout-trees / SSE tree 帧）       | `science_infra/control/app.py`                                                        |
+| Control API（rollout-trees 双源去重 / SSE tree 帧） | `science_infra/control/app.py`                                                        |
 | Experiment bundle                              | `science_infra/control/experiments.py`                                                |
-| Collect/Train 服务                               | `science_infra/control/services.py`                                                   |
+| Collect/Train 服务（palette agent_templates W2 / Monitor 离线回落 _offline_step_rewards） | `science_infra/control/services.py` |
+| AutoDL 公网转发器（6006→8787，SSE 透传）            | `scripts/ui_public_forwarder.py`                                                      |
 | CLI                                            | `science_infra/ui/cli.py`                                                             |
 | SamplePolicy UI                                | `webui/src/pages/MAS.tsx`                                                             |
 | RolloutTree 页                                  | `webui/src/pages/RolloutTree.tsx`                                                     |
@@ -1333,11 +1352,11 @@ MASSpec (+ SamplePolicy.sites)
 | 功能分组测试                                       | `scripts/feature_test.py`（`./run.sh feature-test`）                                     |
 | ARPO 训练验收                                    | `scripts/arpo_train_verify.py`（`./run.sh arpo-train-test`）                             |
 | RolloutTree 验收                                 | `scripts/rollout_tree_verify.py`                                                      |
-| Branch UI 回归（--router-fixture）               | `scripts/branch_rollout_ui_test.py`                                                   |
+| Branch UI 回归（--router-fixture）               | `scripts/branch_rollout_ui_test.py`（sys.path 含仓库根：`workflow.*` 传递引用 `rl.*`）                                          |
 | Demo 配置                                        | `experiments/demo/*.yaml`                                                             |
 | 回归测试                                           | `mas/tests/test_stage*.py`、`test_agent_framework.py`、`test_rollout_tree.py`、`test_schema03_tool_agents.py`、`test_realtime_harness.py` 等 |
 
 
 ---
 
-*生成说明：本文基于仓库实读，最近一次全面更新 2026-09-18（覆盖：`mas/workflow/` 含 `agents.py`/schema 0.3、顶层 `rl/` 含 RolloutTree 树存储与 credit assignment、`science_infra/`、`webui/src/features/{graph,sampling}/` + `pages/RolloutTree.tsx`、`experiments/demo/`、`scripts/feature_test.py` 等验收脚本、stage1–11 + 新框架/agent 化测试与 `run.sh`），记录真实结构与功能，不以提案愿景替代实现状态。*
+*生成说明：本文基于仓库实读，最近一次全面更新 2026-09-18（覆盖：`mas/workflow/` 含 `agents.py`/schema 0.3、顶层 `rl/` 含 RolloutTree 树存储与 credit assignment、`science_infra/`、`webui/src/features/{graph,sampling}/` + `pages/RolloutTree.tsx`、`experiments/demo/`、`scripts/feature_test.py` 等验收脚本、stage1–11 + 新框架/agent 化测试与 `run.sh`），记录真实结构与功能，不以提案愿景替代实现状态。2026-09-19 增补：`train_tir_agent.py` 的 span→triplet 命名空间映射（agent_match 修复，见 §4.8）与 branch UI 测试 sys.path 修复。2026-09-20 增补：`rl/hooks/daemon.py` `_preinject_expand_fields`（branch_local=0 修复）与 `_persist_rollout_tree`（`tree_*.json` 落盘）；`app.py` `/api/mas/rollout-trees` daemon 优先双源去重；W1 blank agent tool-call shell；W2 统一 Agent palette；Monitor 离线 reward 回落；`scripts/ui_public_forwarder.py`；5 样本 ARPO 端到端实测（run `384d1927458a`，见 §7.1）。feature-test 实跑：15 域 154 例全绿。*

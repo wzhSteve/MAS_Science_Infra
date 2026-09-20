@@ -66,6 +66,10 @@ export function deriveBranchCandidates(wf: WorkflowSpec): BranchCandidate[] {
 
   for (const a of agents) {
     const tools = a.tools?.length ? a.tools : a.id === 'hub' ? wf.tools || [] : [];
+    // W3: kind=tool agents are tool-call targets too — derive after_tool
+    // candidates from the agent kind, not the legacy node type. Blank router
+    // candidates ride as blank:<id> (see workflowGraph.flowToWorkflow).
+    const isToolAgent = a.kind === 'tool';
     for (const t of tools) {
       out.push({
         id: `cand_after_tool_${a.id}_${t}`,
@@ -75,6 +79,19 @@ export function deriveBranchCandidates(wf: WorkflowSpec): BranchCandidate[] {
         toolId: t,
         recommendedGate: 'entropy_delta',
         nodeId: t,
+      });
+    }
+    // W3: kind=tool agents are tool-call targets too — derive after_tool
+    // candidates from the agent kind, not the legacy node type.
+    if (isToolAgent) {
+      out.push({
+        id: `cand_after_tool_${a.id}`,
+        label: `after ${a.id} (tool-agent)`,
+        anchorKind: 'after_tool',
+        agentId: a.id,
+        toolId: a.id,
+        recommendedGate: 'entropy_delta',
+        nodeId: a.id,
       });
     }
     out.push({

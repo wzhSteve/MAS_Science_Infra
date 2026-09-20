@@ -204,13 +204,22 @@ def train(config: Dict[str, Any], n_runners: int, active_agent: Optional[str]) -
             trainer_cls=TirAgentLightningTrainer,
             daemon_cls=bound_daemon_cls(tir_algo, tir_cfg),
         )
+    # MAS agent names (e.g. "hub") live in a different namespace from the langgraph
+    # span agent names (langchain.chain.type = langgraph node names: "agent", "tools",
+    # "should_continue", "finalize", "react"). TracerTraceToTriplet.agent_name() reads
+    # the langgraph namespace, so map the MAS trainable agent onto the langgraph node
+    # that owns all LLM calls (the "agent" node), otherwise agent_match filters out
+    # every LLM span and the training batch ends up empty.
+    agent_match = "agent" if active_agent else None
     trainer = agl.Trainer(
         n_runners=n_runners,
         algorithm=algorithm,
-        adapter={"agent_match": active_agent} if active_agent else None,
+        adapter={"agent_match": agent_match} if agent_match else None,
     )
     if active_agent:
-        print("Adapter agent match acknowledged:", getattr(trainer.adapter, "agent_match", None))
+        print(
+            f"Adapter agent match: {agent_match!r} (MAS agent {active_agent!r} -> langgraph node)"
+        )
 
     train_path = _resolve_parquet_path(config["data"]["train_files"], "train.parquet")
     val_path = _resolve_parquet_path(config["data"]["val_files"], "val.parquet")

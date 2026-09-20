@@ -38,3 +38,5 @@ model.safetensors
 /mas/data/
 agentops.log
 /mas/agentops.log
+/mas/.local_expansion/
+/data/*.bak

@@ -119,6 +119,38 @@ class TestDaemonExpandEnqueue(unittest.TestCase):
             self.assertTrue(created[0].input.get("resume_messages"))
             self.assertIsNone(created[2].input.get("resume_messages"))
 
+    def test_preinject_expand_fields_reaches_task_inputs(self):
+        """Fields must land in raw batch columns BEFORE super() snapshots them."""
+        with _agl_modules_quarantined():
+            from rl.hooks.daemon import TirAgentModeDaemon
+
+            daemon = TirAgentModeDaemon.__new__(TirAgentModeDaemon)
+            daemon.tir_config = {
+                "max_branch_depth": 2,
+                "beam_size": 2,
+                "ready_batch": True,
+                "sites": [{"anchor": {"kind": "after_tool"}, "when": "first"}],
+            }
+            daemon._full_group_n = 4
+            daemon.train_rollout_n = 2
+
+            # Simulate the raw batch dict AGL passes to _async_set_up.
+            data = {"question": ["q1", "q2"], "answer": ["a1", "a2"]}
+            daemon._preinject_expand_fields(data, n_init=2)
+
+            self.assertEqual(len(data["expand_in_runner"]), 2)
+            self.assertTrue(all(data["expand_in_runner"]))
+            # per-root budget = ceil(group_n / n_init) = ceil(4/2) = 2
+            self.assertEqual(data["sampling_budget"], [2, 2])
+            # super() builds inputs as {key: data[key][i]} — verify a materialized
+            # task input would carry the fields.
+            task_input = {k: data[k][0] for k in data}
+            self.assertTrue(task_input["expand_in_runner"])
+            self.assertEqual(task_input["sampling_budget"], 2)
+            self.assertEqual(len(task_input["branch_sites"]), 1)
+            # hot path must NOT force local execution (plan-only in runner)
+            self.assertNotIn("force_local_expand", task_input)
+
     def test_stamp_expand_budgets_distributes(self):
         with _agl_modules_quarantined():
             from rl.hooks.daemon import TirAgentModeDaemon

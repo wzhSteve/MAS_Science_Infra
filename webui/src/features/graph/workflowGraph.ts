@@ -66,23 +66,29 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: Node[]; edges: Edge[]
           },
         ];
 
-  const nodes: Node[] = agents.map((a, i) => ({
+  const nodes: Node[] = agents.map((a, i) => {
+    // W3: blank agents carry no role semantics — prefer profile.skills as label
+    const skills = (a.profile?.skills as string[] | undefined) || a.skills || [];
+    const label = a.kind === 'blank' && skills.length > 0 ? `${a.id} (${skills[0]})` : a.id;
+    return {
     id: a.id,
     type: 'agent',
     position: { x: 80 + (i % 3) * 240, y: 80 + Math.floor(i / 3) * 150 },
     data: {
-      label: a.id,
+      label,
       kind: a.kind || (a.id === 'hub' ? 'hub' : 'blank'), // schema 0.3 kind badge
       role: a.role || 'agent',
       skills: a.skills || [],
       tools: a.tools || (a.id === 'hub' ? wf.tools : []),
       system_prompt: a.system_prompt || (a.id === 'hub' ? wf.hub?.system_prompt : '') || '',
+      memory_scope: a.memory_scope || 'agent', // W3: fidelity round-trip
+      profile: a.profile || {}, // W3: blank agent custom profile
       trainable: a.trainable !== false,
       entry: a.id === entry,
       verify: a.id === 'hub' ? wf.hub?.verify : undefined,
       max_feedback_hops: a.id === 'hub' ? wf.hub?.max_feedback_hops : undefined,
     },
-  }));
+  }});
 
   if (wf.hub?.verify && !nodes.find((n) => n.id === 'verifier')) {
     nodes.push({
@@ -180,6 +186,7 @@ export function flowToWorkflow(
 ): WorkflowSpec {
   const agentNodes = nodes.filter((n) => n.type !== 'tool' && n.type !== 'router');
   const toolNodes = nodes.filter((n) => n.type === 'tool');
+  const routerNodes = nodes.filter((n) => n.type === 'router');
   const hubNode = agentNodes.find((n) => n.id === 'hub') || agentNodes[0];
   const entry =
     agentNodes.find((n) => n.data?.entry)?.id ||
@@ -189,32 +196,35 @@ export function flowToWorkflow(
 
   const agents: AgentSpec[] = agentNodes.map((n) => ({
     id: n.id,
+    kind: String(n.data?.kind || (n.id === 'hub' ? 'hub' : 'blank')), // W3: schema 0.3 fidelity
     role: String(n.data?.role || 'agent'),
     skills: (n.data?.skills as string[]) || [],
     tools: (n.data?.tools as string[]) || [],
-    memory_scope: 'agent',
+    memory_scope: String(n.data?.memory_scope || 'agent'), // W3: agent/shared
     system_prompt: String(n.data?.system_prompt || ''),
     model: String(n.data?.model || 'inherit'),
     trainable: n.data?.trainable !== false,
+    profile: (n.data?.profile as Record<string, unknown>) || {}, // W3: blank profile fidelity
   }));
 
   for (const e of edges) {
     if (String(e.data?.kind || e.label) !== 'tool_call') continue;
     const agent = agents.find((a) => a.id === e.source);
-    if (agent && !agent.tools.includes(e.target)) agent.tools.push(e.target);
+    if (agent && !agent.tools?.includes(e.target)) (agent.tools ||= []).push(e.target);
   }
 
   const toolsFromHub = (hubNode?.data?.tools as string[]) || [];
   const tools = Array.from(
     new Set([
       ...toolsFromHub,
-      ...agents.flatMap((a) => a.tools),
+      ...agents.flatMap((a) => a.tools || []),
       ...toolNodes.map((n) => n.id),
       ...(base.tools || []),
     ]),
   );
 
-  const skills = (hubNode?.data?.skills as string[]) || base.hub?.skills || ['react_loop'];
+  const skills =
+    (hubNode?.data?.skills as string[] | undefined) || base.hub?.skills || ['react_loop'];
   const verify = (hubNode?.data?.verify as string | null | undefined) ?? base.hub?.verify ?? null;
   const maxHops =
     (hubNode?.data?.max_feedback_hops as number | undefined) ?? base.hub?.max_feedback_hops ?? 1;
@@ -229,6 +239,34 @@ export function flowToWorkflow(
       kind: String(e.data?.kind || e.label || 'message'),
     }));
 
+  // W5: rebuild routers[] from canvas router nodes + candidate edges. Canvas
+  // edges with kind 'candidate' (router -> agent) define membership; strategy
+  // and scorer live on the router node data. Router ids not present on the
+  // canvas are dropped (deleted) — deletions round-trip.
+  const routers: RouterSpec[] = routerNodes.map((n) => {
+    const cands = edges
+      .filter((e) => e.source === n.id && e.data?.kind === 'candidate')
+      .map((e) => e.target);
+    return {
+      id: n.id,
+      candidates: cands,
+      strategy: String(n.data?.strategy || 'llm_choice'),
+      scorer: (n.data?.scorer as string | null | undefined) || null,
+    };
+  });
+  // preserve strategy/candidates of spec-level routers whose nodes are absent
+  // from the canvas (defensive: workflowToFlow always creates them, so this
+  // only matters for programmatically-built specs).
+  for (const r of base.routers || []) {
+    if (routers.some((x) => x.id === r.id)) continue;
+    routers.push({
+      id: r.id,
+      candidates: r.candidates || [],
+      strategy: r.strategy || 'llm_choice',
+      scorer: r.scorer ?? null,
+    });
+  }
+
   const onlyHubish = agents.every((a) => a.id === 'hub' || a.id === 'verifier');
   const topology =
     agents.length <= 2 && onlyHubish && !agents.some((a) => a.id === 'planner')
@@ -241,7 +279,7 @@ export function flowToWorkflow(
 
   return {
     ...base,
-    schema_version: topology === 'graph' ? '0.2.0' : base.schema_version || '0.1.0',
+    schema_version: '0.3', // W3: schema 0.3 round-trip (routers/kind/profile)
     topology,
     entry_agent: entry,
     hub: {
@@ -253,8 +291,8 @@ export function flowToWorkflow(
     },
     tools,
     agents,
-    // agent-framework A5: routers round-trip through the canvas unchanged.
-    routers: base.routers,
+    // W5: routers rebuilt from canvas router nodes + candidate edges.
+    routers,
     edges: edgeSpecs,
   };
 }
@@ -290,6 +328,19 @@ export function executableInfo(wf: WorkflowSpec): { ok: boolean; reason: string 
         if (inboundRoute[e.to] > 1) {
           return { ok: false, reason: `agent ${e.to} has more than one inbound route` };
         }
+      }
+    }
+    // W5: router candidates must exist among agents (compiler mirrors this).
+    // blank:<id> candidates are accepted (bare agent id underneath).
+    for (const r of wf.routers || []) {
+      for (const c of r.candidates || []) {
+        const bare = c.startsWith('blank:') ? c.slice('blank:'.length) : c;
+        if (!agentIds.has(bare)) {
+          return { ok: false, reason: `router ${r.id} candidate ${c} is not an agent node` };
+        }
+      }
+      if (r.strategy === 'score' && r.scorer && !agentIds.has(r.scorer)) {
+        return { ok: false, reason: `router ${r.id} scorer ${r.scorer} is not an agent node` };
       }
     }
     return { ok: true, reason: 'graph_compiled' };
