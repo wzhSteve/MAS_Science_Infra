@@ -1,25 +1,46 @@
 import type { Edge, Node } from '@xyflow/react';
-import type { Config } from '../../shared/api/types';
+import type { AgentKind, Config, RouterStrategy } from '../../shared/api/types';
 
 export type GraphNodeData = Record<string, unknown> & {
   label?: string;
+  kind?: AgentKind;
   role?: string;
   skills?: string[];
   tools?: string[];
+  memory_scope?: string;
   system_prompt?: string;
+  model?: string;
   trainable?: boolean;
+  profile?: Config;
+  meta?: Config;
   entry?: boolean;
   verify?: string | null;
   max_feedback_hops?: number;
+  candidates?: string[];
+  strategy?: RouterStrategy;
+  scorer?: string | null;
+  backend?: string;
+  llm_required?: boolean;
+  description?: string;
   issue?: string;
   related?: boolean;
 };
 
-export type EdgeKind = 'tool_call' | 'message' | 'feedback' | 'route';
+export type EdgeKind = 'tool_call' | 'message' | 'feedback' | 'route' | 'sample_barrier';
 export type HandleId = 'top' | 'right' | 'bottom' | 'left';
-export type GraphNode = Node<GraphNodeData, 'agent' | 'tool'>;
+export type GraphNodeKind = 'agent' | 'tool' | 'router';
+export interface GraphNodePreset {
+  nodeType: GraphNodeKind;
+  id: string;
+  agentKind?: AgentKind;
+  role?: string;
+  backend?: string;
+  llmRequired?: boolean;
+  description?: string;
+}
+export type GraphNode = Node<GraphNodeData, GraphNodeKind>;
 export type GraphEdge = Edge<{
-  kind: string;
+  kind: EdgeKind;
   meta?: Config;
   lane?: number;
   issue?: string;

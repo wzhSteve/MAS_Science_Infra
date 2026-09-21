@@ -4,21 +4,22 @@ import {
   useNodesInitialized, useReactFlow, useViewport, type ReactFlowProps, type XYPosition,
 } from '@xyflow/react';
 import { Maximize, Minus, Plus, Map, Workflow } from 'lucide-react';
-import type { GraphNode, GraphEdge } from '../types';
+import type { GraphNode, GraphEdge, GraphNodePreset } from '../types';
 import { Button } from '../../../shared/ui/button';
 import AgentNode from './AgentNode';
 import ToolNode from './ToolNode';
+import RouterNode from './RouterNode';
 import { NODE_TRANSFER } from './GraphPalette';
 import { WorkflowEdge } from './WorkflowEdge';
 import { ConnectionPreview } from './ConnectionPreview';
 
-const nodeTypes = { agent: AgentNode, tool: ToolNode };
+const nodeTypes = { agent: AgentNode, tool: ToolNode, router: RouterNode };
 const edgeTypes = { workflow: WorkflowEdge };
 type Props = Pick<ReactFlowProps<GraphNode, GraphEdge>,
   'nodes' | 'edges' | 'onNodesChange' | 'onEdgesChange' | 'onConnect' | 'onNodeClick' | 'onEdgeClick' | 'onPaneClick'
   | 'isValidConnection' | 'onConnectStart' | 'onConnectEnd' | 'onReconnect' | 'onReconnectStart' | 'onReconnectEnd' | 'onMoveStart'> & {
   active: boolean;
-  onAdd: (kind: 'agent' | 'tool', type: string, position: XYPosition) => void;
+  onAdd: (preset: GraphNodePreset, position: XYPosition) => void;
   onOpenLibrary: (templates?: boolean) => void;
   onError: (message: string) => void;
 };
@@ -46,12 +47,12 @@ export const GraphCanvas = memo(function GraphCanvas({ active, onAdd, onOpenLibr
     let payload: unknown;
     try { payload = JSON.parse(raw); }
     catch { onError('无法读取拖入的节点，请从节点库重新添加。'); return; }
-    if (!payload || typeof payload !== 'object' || !('kind' in payload) || !('type' in payload)
-      || (payload.kind !== 'agent' && payload.kind !== 'tool') || typeof payload.type !== 'string') {
+    if (!payload || typeof payload !== 'object' || !('nodeType' in payload) || !('id' in payload)
+      || !['agent', 'tool', 'router'].includes(String(payload.nodeType)) || typeof payload.id !== 'string') {
       onError('不支持此节点数据，请从节点库添加。');
       return;
     }
-    onAdd(payload.kind, payload.type, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+    onAdd(payload as GraphNodePreset, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
   };
 
   return <div className="mas-canvas" aria-label="Workflow 画布" onDrop={onDrop}

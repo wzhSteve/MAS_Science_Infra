@@ -1,7 +1,7 @@
-import { CornerDownLeft, MessageSquare, Route, Wrench, CircleAlert, type LucideIcon } from 'lucide-react';
+import { CornerDownLeft, GitBranch, MessageSquare, Route, Wrench, CircleAlert, type LucideIcon } from 'lucide-react';
 import type { EdgeKind } from '../types';
 
-export const EDGE_KINDS: readonly EdgeKind[] = ['message', 'route', 'feedback', 'tool_call'];
+export const EDGE_KINDS: readonly EdgeKind[] = ['message', 'route', 'feedback', 'tool_call', 'sample_barrier'];
 export const KNOWN_TOOLS = ['web_search', 'wikipedia_search', 'execute_python'];
 
 interface EdgeDefinition {
@@ -36,6 +36,11 @@ const definitions: Record<EdgeKind, EdgeDefinition> = {
     family: 'agent', title: '反馈', label: '反馈', icon: CornerDownLeft,
     description: '由验证方根据结果决定是否返回处理。',
     color: '#a57d39', width: 2, dash: '8 5 1 5', directional: true,
+  },
+  sample_barrier: {
+    family: 'agent', title: '采样边界', label: '采样边界', icon: GitBranch,
+    description: '声明可供采样策略引用的执行边界；具体分支规则在采样设置中配置。',
+    color: '#7a67a8', width: 2, dash: '5 5', directional: true,
   },
 };
 

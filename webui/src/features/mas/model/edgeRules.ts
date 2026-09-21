@@ -24,7 +24,12 @@ export function createEdgeRules(nodes: GraphNode[], edges: GraphEdge[], palette:
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const outgoing = new Map<string, GraphEdge[]>();
   const incomingRoutes = new Map<string, GraphEdge[]>();
-  const tools = new Set(palette.tools ?? KNOWN_TOOLS);
+  const isTool = (node?: GraphNode) => node?.type === 'tool' || node?.data.kind === 'tool';
+  const isRouter = (node?: GraphNode) => node?.type === 'router';
+  const tools = new Set([
+    ...(palette.tools ?? KNOWN_TOOLS),
+    ...nodes.filter(isTool).map((node) => node.id),
+  ]);
   const supported = new Set(palette.edge_kinds ?? EDGE_KINDS);
   for (const edge of edges) {
     const list = outgoing.get(edge.source) || [];
@@ -38,7 +43,7 @@ export function createEdgeRules(nodes: GraphNode[], edges: GraphEdge[], palette:
   }
 
   const normalize = (connection: Connection): Connection =>
-    nodeById.get(connection.source)?.type === 'tool' && nodeById.get(connection.target)?.type === 'agent'
+    isTool(nodeById.get(connection.source)) && nodeById.get(connection.target)?.type === 'agent'
       ? reverseConnection(connection) : connection;
 
   const normalizeEdit = (connection: Connection, edge: GraphEdge, kind = edge.data?.kind || 'message'): Connection => {
@@ -52,11 +57,16 @@ export function createEdgeRules(nodes: GraphNode[], edges: GraphEdge[], palette:
     if (!source || !target) return '连接对象已不存在。';
     if (source.id === target.id) return '请连接两个不同的实体。';
     if (!isEdgeKind(kind) || !supported.has(kind)) return '当前不支持此关系类型。';
-    if (source.type === 'tool' && target.type === 'tool') return '工具之间不能直接连接。';
+    if (isRouter(source) || isRouter(target)) {
+      if (isTool(source) || isTool(target)) return 'Router 只能连接 Agent。';
+      if (kind !== 'route') return 'Router 使用任务路由关系连接上游 Agent。';
+    } else if (isTool(source) && isTool(target)) {
+      return '工具之间不能直接连接。';
+    }
     if (kind === 'tool_call') {
-      if (source.type !== 'agent' || target.type !== 'tool') return '工具关系必须由 Agent 指向 Tool。';
+      if (source.type !== 'agent' || isTool(source) || !isTool(target)) return '工具关系必须由 Agent 指向 Tool 或 tool-agent。';
       if (!tools.has(target.id)) return '当前运行时不支持该工具。';
-    } else if (source.type !== 'agent' || target.type !== 'agent') {
+    } else if (!isRouter(source) && !isRouter(target) && (source.type !== 'agent' || target.type !== 'agent' || isTool(source) || isTool(target))) {
       return 'Agent 协作不能连接 Tool。';
     }
     const other = (outgoing.get(source.id) || []).filter((edge) => edge.id !== replacing);
@@ -65,7 +75,8 @@ export function createEdgeRules(nodes: GraphNode[], edges: GraphEdge[], palette:
     }
     if (kind === 'tool_call') return '';
     if (kind === 'feedback') {
-      const matches = (node: GraphNode, roles: string[]) => roles.includes(node.id) || roles.includes(node.data.role || '');
+      const matches = (node: GraphNode, roles: string[]) =>
+        roles.includes(node.id) || roles.includes(node.data.role || '') || roles.includes(node.data.kind || '');
       if (!matches(source, ['verifier', 'critic'])) return '反馈方必须是 verifier 或 critic。';
       if (!matches(target, ['hub', 'planner', 'orchestrator'])) return '反馈接收方必须是 hub、planner 或 orchestrator。';
     }
@@ -84,8 +95,12 @@ export function createEdgeRules(nodes: GraphNode[], edges: GraphEdge[], palette:
 
   const options = (raw: Connection, replacing?: string): RelationOption[] => {
     const connection = normalize(raw);
-    const hasTool = [connection.source, connection.target].some((id) => nodeById.get(id)?.type === 'tool');
-    const kinds = hasTool ? ['tool_call'] as const : EDGE_KINDS.filter((kind) => kind !== 'tool_call');
+    const parties = [nodeById.get(connection.source), nodeById.get(connection.target)];
+    const hasTool = parties.some(isTool);
+    const hasRouter = parties.some(isRouter);
+    const kinds = hasRouter ? ['route'] as const
+      : hasTool ? ['tool_call'] as const
+        : EDGE_KINDS.filter((kind) => kind !== 'tool_call');
     return kinds.map((kind) => ({ kind, reason: error(connection, kind, replacing) }));
   };
 

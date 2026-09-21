@@ -1,19 +1,21 @@
 import { memo } from 'react';
 import type { NodeProps } from '@xyflow/react';
-import { Bot, Flag } from 'lucide-react';
+import { Bot, Flag, Wrench } from 'lucide-react';
 import type { GraphNode } from '../types';
 import { NodeHandles } from './NodeHandles';
 
 function AgentNode({ id, data: d, selected }: NodeProps<GraphNode>) {
-  const cls = ['mas-node', 'mas-node--agent', selected ? 'is-selected' : '', d.entry ? 'is-entry' : '', d.issue ? 'has-issue' : '', d.related ? 'is-related' : '']
+  const toolAgent = d.kind === 'tool';
+  const cls = ['mas-node', 'mas-node--agent', toolAgent ? 'mas-node--tool-agent' : '', selected ? 'is-selected' : '', d.entry ? 'is-entry' : '', d.issue ? 'has-issue' : '', d.related ? 'is-related' : '']
     .filter(Boolean)
     .join(' ');
   return (
     <div className={cls}>
       <NodeHandles id={id} />
       <div className="mas-node__heading">
-        <span className="mas-node__icon"><Bot size={18} /></span>
-        <div><div className="mas-node__name">{d.label || 'Agent'}</div><div className="mas-node__role">{d.role}</div></div>
+        <span className="mas-node__icon">{toolAgent ? <Wrench size={18} /> : <Bot size={18} />}</span>
+        <div><div className="mas-node__name">{d.label || 'Agent'}</div>
+          <div className="mas-node__role">{toolAgent ? '智能工具' : d.kind === 'blank' ? '自定义 Agent' : `${d.kind || 'Agent'} · ${d.role}`}</div></div>
       </div>
       <div className="mas-node__footer">
         {d.entry ? <span className="mas-node__entry"><Flag size={10} />入口</span> : <span>Agent</span>}

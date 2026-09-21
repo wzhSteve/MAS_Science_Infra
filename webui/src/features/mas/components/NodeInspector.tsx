@@ -1,16 +1,52 @@
-import { memo } from 'react';
-import { Bot, Flag, Trash2, Wrench, X } from 'lucide-react';
-import type { Palette } from '../../../shared/api/types';
-import type { GraphNodeData, SelectedGraphNode } from '../types';
+import { memo, useEffect, useState } from 'react';
+import { Bot, Flag, Route, Trash2, Wrench, X } from 'lucide-react';
+import type { AgentKind, Config, Palette, RouterStrategy } from '../../../shared/api/types';
+import type { GraphNode, GraphNodeData, SelectedGraphNode } from '../types';
 import { Button } from '../../../shared/ui/button';
 import { Input } from '../../../shared/ui/input';
 import { Select } from '../../../shared/ui/select';
 import { Textarea } from '../../../shared/ui/textarea';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { FormField } from '../../../shared/components/FormField';
+import { InlineNotice } from '../../../shared/components/InlineNotice';
 
-export const NodeInspector = memo(function NodeInspector({ selected, palette, entryId, onPatch, onEntry, onDelete, onClose, onModelResources }: {
+const AGENT_KINDS: Array<{ value: Exclude<AgentKind, 'tool'>; label: string }> = [
+  { value: 'hub', label: 'Hub' },
+  { value: 'planner', label: 'Planner' },
+  { value: 'verifier', label: 'Verifier' },
+  { value: 'blank', label: '自定义 Agent' },
+];
+
+function JsonObjectField({ label, value, onChange }: {
+  label: string;
+  value: Config;
+  onChange: (value: Config) => void;
+}) {
+  const serialized = JSON.stringify(value, null, 2);
+  const [text, setText] = useState(serialized);
+  const [error, setError] = useState('');
+  useEffect(() => { setText(serialized); setError(''); }, [serialized]);
+  const commit = () => {
+    try {
+      const parsed: unknown = JSON.parse(text || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('请输入 JSON 对象');
+      onChange(parsed as Config);
+      setError('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+  return <FormField label={label} hint="JSON 对象；离开输入框时应用。">
+    <div>
+      <Textarea rows={5} className="mono" value={text} onChange={(event) => setText(event.target.value)} onBlur={commit} />
+      {error && <InlineNotice tone="danger">{error}</InlineNotice>}
+    </div>
+  </FormField>;
+}
+
+export const NodeInspector = memo(function NodeInspector({ selected, nodes, palette, entryId, onPatch, onEntry, onDelete, onClose, onModelResources }: {
   selected: SelectedGraphNode;
+  nodes: GraphNode[];
   palette: Palette;
   entryId: string;
   onPatch: (patch: Partial<GraphNodeData>) => void;
@@ -19,20 +55,104 @@ export const NodeInspector = memo(function NodeInspector({ selected, palette, en
   onClose: () => void;
   onModelResources: () => void;
 }) {
-  const isTool = selected.type === 'tool';
-  const Icon = isTool ? Wrench : Bot;
+  const isLegacyTool = selected.type === 'tool';
+  const isIntelligentTool = selected.type === 'agent' && selected.data.kind === 'tool';
+  const isTool = isLegacyTool || isIntelligentTool;
+  const isRouter = selected.type === 'router';
+  const Icon = isTool ? Wrench : isRouter ? Route : Bot;
   const tools = Array.from(new Set([...(palette.tools || []), ...(selected.data.tools || [])]));
+  const agents = nodes.filter((node) => node.type === 'agent' && node.data.kind !== 'tool');
+  const toolNodes = nodes.filter((node) => node.type === 'tool' || node.data.kind === 'tool');
+  const routerCandidates = selected.data.candidates || [];
+  const routerStrategy = selected.data.strategy || 'llm_choice';
   return <aside className="mas-panel mas-inspector" aria-label="节点属性">
     <div className="mas-panel-heading">
-      <div><span className="mas-panel-caption">{isTool ? 'Tool' : 'Agent'} 属性</span><h2><Icon size={16} />{selected.id}</h2></div>
+      <div><span className="mas-panel-caption">{isTool ? 'Tool' : isRouter ? 'Router' : 'Agent'} 属性</span><h2><Icon size={16} />{selected.id}</h2></div>
       <Button size="sm" variant="ghost" onClick={onClose} aria-label="关闭节点属性"><X size={16} /></Button>
     </div>
     <div className="mas-panel-body">
-      {isTool ? <div className="mas-property-section">
+      {isLegacyTool ? <div className="mas-property-section">
         <FormField label="工具标识"><Input value={selected.id} readOnly className="mono" /></FormField>
-        <p className="field-hint">从 Agent 拉出连线调用此工具。工具不能作为运行入口。</p>
-      </div> : <>
+        <p className="field-hint">{selected.data.description || '确定性工具，通过标准 tool_call 调用。'}</p>
+      </div> : isIntelligentTool ? <>
         <div className="mas-property-section">
+          <FormField label="工具标识"><Input value={selected.id} readOnly className="mono" /></FormField>
+          <p className="field-hint">{selected.data.description || '智能工具可使用模型、Memory 和独立训练配置。'}</p>
+          <FormField label="角色"><Input value={selected.data.role || 'tool'} onChange={(event) => onPatch({ role: event.target.value })} /></FormField>
+          <FormField label="模型" hint="inherit 表示继承实验默认模型。">
+            <Input value={selected.data.model || 'inherit'} onChange={(event) => onPatch({ model: event.target.value })} />
+          </FormField>
+          <FormField label="系统提示词">
+            <Textarea rows={7} value={selected.data.system_prompt || ''} onChange={(event) => onPatch({ system_prompt: event.target.value })} />
+          </FormField>
+          <FormField label="Memory scope">
+            <Input value={selected.data.memory_scope || 'agent'} onChange={(event) => onPatch({ memory_scope: event.target.value })} />
+          </FormField>
+          <label className="mas-checkbox-row"><Checkbox checked={selected.data.trainable !== false}
+            onChange={(event) => onPatch({ trainable: event.target.checked })} />参与训练</label>
+        </div>
+        <details className="mas-property-section">
+          <summary>扩展字段</summary>
+          <JsonObjectField label="profile" value={selected.data.profile || {}} onChange={(profile) => onPatch({ profile })} />
+          <JsonObjectField label="meta" value={selected.data.meta || {}} onChange={(meta) => onPatch({ meta })} />
+        </details>
+      </> : isRouter ? <>
+        <div className="mas-property-section">
+          <FormField label="路由策略">
+            <Select value={routerStrategy} onChange={(event) => onPatch({ strategy: event.target.value as RouterStrategy })}>
+              <option value="llm_choice">LLM 选择</option>
+              <option value="score">候选评分</option>
+              <option value="round_robin">轮询</option>
+            </Select>
+          </FormField>
+          {routerStrategy === 'score' && <FormField label="Scorer Agent">
+            <Select value={selected.data.scorer || ''} onChange={(event) => onPatch({ scorer: event.target.value || null })}>
+              <option value="">未指定</option>
+              {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.id}</option>)}
+            </Select>
+          </FormField>}
+        </div>
+        <fieldset className="mas-property-section">
+          <legend>候选 Agent</legend>
+          {agents.map((agent) => {
+            const aliases = agent.data.kind === 'blank' ? [agent.id, `blank:${agent.id}`] : [agent.id];
+            const checked = routerCandidates.some((candidate) => aliases.includes(candidate));
+            return <label key={agent.id} className="mas-checkbox-row">
+              <Checkbox checked={checked} onChange={() => onPatch({
+                candidates: checked
+                  ? routerCandidates.filter((candidate) => !aliases.includes(candidate))
+                  : [...routerCandidates, agent.id],
+              })} />
+              <span>{agent.id}<small className="field-hint"> · {agent.data.kind === 'blank' ? '自定义 Agent' : agent.data.kind || 'Agent'}</small></span>
+            </label>;
+          })}
+          {!agents.length && <p className="field-hint">先在画布中添加 Agent。</p>}
+        </fieldset>
+        <fieldset className="mas-property-section">
+          <legend>候选 Tool</legend>
+          {toolNodes.map((tool) => {
+            const checked = routerCandidates.includes(tool.id);
+            return <label key={tool.id} className="mas-checkbox-row">
+              <Checkbox checked={checked} onChange={() => onPatch({
+                candidates: checked ? routerCandidates.filter((candidate) => candidate !== tool.id) : [...routerCandidates, tool.id],
+              })} />
+              <span>{tool.id}<small className="field-hint"> · {tool.data.kind === 'tool' ? '智能工具' : '内置工具'}</small></span>
+            </label>;
+          })}
+          {!toolNodes.length && <p className="field-hint">画布中暂无 Tool。</p>}
+        </fieldset>
+        <div className="mas-property-section">
+          <p className="field-hint">使用任务路由连线将上游 Agent 接入 Router；候选集合由这里维护，不创建普通下游边。</p>
+          <JsonObjectField label="Router meta" value={selected.data.meta || {}} onChange={(meta) => onPatch({ meta })} />
+        </div>
+      </> : <>
+        <div className="mas-property-section">
+          <FormField label="Agent 类型">
+            <Select value={selected.data.kind || 'blank'} onChange={(event) =>
+              onPatch({ kind: event.target.value as AgentKind })}>
+              {AGENT_KINDS.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}
+            </Select>
+          </FormField>
           <FormField label="角色"><Input value={selected.data.role || ''} onChange={(e) => onPatch({ role: e.target.value })} /></FormField>
           <FormField label="系统提示词" hint="定义 Agent 的职责、行为和输出要求。">
             <Textarea rows={7} value={selected.data.system_prompt || ''} placeholder="描述这个 Agent 应该完成什么…"
@@ -42,10 +162,16 @@ export const NodeInspector = memo(function NodeInspector({ selected, palette, en
             <Input value={(selected.data.skills || []).join(', ')} onChange={(e) =>
               onPatch({ skills: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} />
           </FormField>
+          <FormField label="模型" hint="inherit 表示继承实验默认模型。">
+            <Input value={selected.data.model || 'inherit'} onChange={(event) => onPatch({ model: event.target.value })} />
+          </FormField>
+          <FormField label="Memory scope">
+            <Input value={selected.data.memory_scope || 'agent'} onChange={(event) => onPatch({ memory_scope: event.target.value })} />
+          </FormField>
         </div>
         <div className="mas-property-section">
           <h3>模型绑定</h3>
-          <p className="field-hint">继承实验默认推理模型。Agent 是协作角色，不是独立加载的一份权重；逐节点模型覆盖暂未开放。</p>
+          <p className="field-hint">默认继承实验模型；model 字段可声明运行时支持的节点级模型标识。</p>
           <Button size="sm" variant="ghost" onClick={onModelResources}>查看实验模型资源</Button>
         </div>
         <fieldset className="mas-property-section">
@@ -77,6 +203,11 @@ export const NodeInspector = memo(function NodeInspector({ selected, palette, en
             </Select>
           </FormField>
         </details>}
+        <details className="mas-property-section">
+          <summary>扩展字段</summary>
+          <JsonObjectField label="profile" value={selected.data.profile || {}} onChange={(profile) => onPatch({ profile })} />
+          <JsonObjectField label="meta" value={selected.data.meta || {}} onChange={(meta) => onPatch({ meta })} />
+        </details>
       </>}
     </div>
     <div className="mas-panel-footer"><Button size="sm" variant="danger" onClick={onDelete}><Trash2 size={14} />删除节点</Button></div>

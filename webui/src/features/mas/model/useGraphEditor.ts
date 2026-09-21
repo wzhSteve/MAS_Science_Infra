@@ -3,8 +3,8 @@ import {
   applyEdgeChanges, applyNodeChanges,
   type Connection, type EdgeChange, type NodeChange, type XYPosition,
 } from '@xyflow/react';
-import type { Palette, WorkflowSpec } from '../../../shared/api/types';
-import type { EdgeKind, EdgePatch, GraphNodeData, GraphNode, GraphEdge, GraphSelection } from '../types';
+import type { AgentKind, Palette, WorkflowSpec } from '../../../shared/api/types';
+import type { EdgeKind, EdgePatch, GraphNodeData, GraphNode, GraphEdge, GraphNodePreset, GraphSelection } from '../types';
 import { flowToWorkflow, graphEdge, workflowToFlow } from './workflowGraph';
 import { createEdgeRules, edgeConnection } from './edgeRules';
 import { defaultHandles, resolveHandles, serializeEdges } from './edgeGeometry';
@@ -53,7 +53,7 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
         bindings.set(edge.source, tools);
       }
       next = { ...next, nodes: next.nodes.map((node) => {
-        if (node.type === 'tool') return node;
+        if (node.type !== 'agent') return node;
         const tools = bindings.get(node.id) || [];
         return tools.join('\0') === (node.data.tools || []).join('\0')
           ? node : { ...node, data: { ...node.data, tools } };
@@ -83,9 +83,22 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
     const edges = current.edges.filter((e) => !nodeIds.has(e.source) && !nodeIds.has(e.target) && !edgeIds.has(e.id));
     const removedFeedback = current.edges.some((e) =>
       e.source === 'verifier' && e.target === 'hub' && e.data?.kind === 'feedback' && !edges.includes(e));
-    let nodes = current.nodes.filter((n) => !nodeIds.has(n.id)).map((n) =>
-      n.id === 'hub' && (nodeIds.has('verifier') || removedFeedback)
-        ? { ...n, data: { ...n.data, verify: null } } : n);
+    let nodes = current.nodes.filter((n) => !nodeIds.has(n.id)).map((n) => {
+      if (n.id === 'hub' && (nodeIds.has('verifier') || removedFeedback)) {
+        return { ...n, data: { ...n.data, verify: null } };
+      }
+      if (n.type === 'router') {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            candidates: (n.data.candidates || []).filter((id) => !nodeIds.has(id.replace(/^blank:/, ''))),
+            scorer: n.data.scorer && nodeIds.has(n.data.scorer) ? null : n.data.scorer,
+          },
+        };
+      }
+      return n;
+    });
     if (!nodes.some((n) => n.type === 'agent' && n.data.entry)) {
       const entry = nodes.find((n) => n.type === 'agent');
       nodes = nodes.map((n) => n === entry ? { ...n, data: { ...n.data, entry: true } } : n);
@@ -125,25 +138,38 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
     return true;
   }, [commit, select]);
 
-  const addNode = useCallback((kind: 'agent' | 'tool', type: string, position: XYPosition) => {
+  const addNode = useCallback((preset: GraphNodePreset, position: XYPosition) => {
     const current = graphRef.current;
-    let id = type;
-    if (kind === 'tool' || type === 'hub') {
-      if (current.nodes.some((n) => n.id === id)) { setNotice(`${type} 已在画布中。`); return; }
+    const kind = preset.nodeType;
+    let id = preset.id;
+    if (kind === 'tool' || preset.id === 'hub') {
+      if (current.nodes.some((n) => n.id === id)) { setNotice(`${preset.id} 已在画布中。`); return; }
     } else {
       let suffix = 1;
-      while (current.nodes.some((n) => n.id === id)) id = `${type}_${suffix++}`;
+      while (current.nodes.some((n) => n.id === id)) id = `${preset.id}_${suffix++}`;
     }
-    const node: GraphNode = {
-      id, type: kind, position,
-      data: {
-        label: id, role: kind === 'tool' ? 'tool' : type,
-        skills: type === 'verifier' ? ['verifier'] : kind === 'agent' ? ['react_loop'] : [],
-        tools: [], trainable: type !== 'verifier',
-        entry: kind === 'agent' && !current.nodes.some((n) => n.type === 'agent'),
-        system_prompt: '',
-      },
-    };
+    const agentKind: AgentKind = preset.agentKind || 'blank';
+    const toolProfile = agentKind === 'tool'
+      ? { backend: preset.backend || 'llm', llm_required: preset.llmRequired ?? true }
+      : {};
+    const node: GraphNode = kind === 'router'
+      ? {
+          id, type: 'router', position,
+          data: { label: id, candidates: [], strategy: 'llm_choice', scorer: null, meta: {} },
+        }
+      : {
+          id, type: kind, position,
+          data: kind === 'tool'
+            ? { label: id, role: 'tool', backend: preset.backend, llm_required: false, description: preset.description }
+            : {
+                label: id, kind: agentKind, role: preset.role || 'agent',
+                skills: agentKind === 'verifier' ? ['verifier'] : agentKind === 'tool' ? [] : ['react_loop'],
+                tools: [], memory_scope: 'agent', system_prompt: '', model: 'inherit',
+                trainable: agentKind !== 'verifier', profile: toolProfile, meta: {},
+                backend: preset.backend, llm_required: preset.llmRequired, description: preset.description,
+                entry: !current.nodes.some((n) => n.type === 'agent'),
+              },
+        };
     commit({ ...current, nodes: [...current.nodes, node] });
     select({ kind: 'node', id });
     return id;
@@ -151,6 +177,7 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
 
   const setEntry = useCallback((id: string) => {
     const current = graphRef.current;
+    if (current.nodes.find((node) => node.id === id)?.type !== 'agent') return;
     commit({ ...current, nodes: current.nodes.map((n) =>
       n.type === 'agent' ? { ...n, data: { ...n.data, entry: n.id === id } } : n) });
   }, [commit]);
@@ -162,7 +189,7 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
     if (!selected) return;
     let nodes = current.nodes.map((n) => n === selected ? { ...n, data: { ...n.data, ...patch } } : n);
     let edges = current.edges;
-    if (patch.tools) {
+    if (patch.tools && selected.type === 'agent') {
       edges = edges.filter((e) => e.source !== selected.id || e.data?.kind !== 'tool_call' || patch.tools?.includes(e.target));
       for (const [index, tool] of patch.tools.entries()) {
         if (!nodes.some((n) => n.id === tool)) nodes.push({
@@ -178,13 +205,17 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
         }
       }
     }
-    if (patch.verify !== undefined && selected.id === 'hub') {
+    if (patch.verify !== undefined && selected.type === 'agent' && selected.id === 'hub') {
       edges = edges.filter((e) => patch.verify || !(e.source === 'verifier' && e.target === 'hub' && e.data?.kind === 'feedback'));
       if (patch.verify) {
         if (!nodes.some((n) => n.id === 'verifier')) nodes.push({
           id: 'verifier', type: 'agent',
           position: { x: selected.position.x + 280, y: selected.position.y + 160 },
-          data: { label: 'verifier', role: 'verifier', skills: ['verifier'], tools: [], trainable: false },
+          data: {
+            label: 'verifier', kind: 'verifier', role: 'verifier',
+            skills: ['verifier'], tools: [], memory_scope: 'agent', system_prompt: '',
+            model: 'inherit', trainable: false, profile: {}, meta: {},
+          },
         });
         if (!edges.some((e) => e.source === 'verifier' && e.target === 'hub' && e.data?.kind === 'feedback')) {
           const error = createEdgeRules(nodes, edges, palette).error({

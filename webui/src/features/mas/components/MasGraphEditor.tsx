@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { ReactFlowProvider, useReactFlow, type Connection, type XYPosition, type ReactFlowProps } from '@xyflow/react';
 import { AlertCircle, X } from 'lucide-react';
 import type { Palette, WorkflowSpec } from '../../../shared/api/types';
-import type { EditorPanel, GraphNode, GraphEdge, TraceFocusRequest } from '../types';
+import type { EditorPanel, GraphNode, GraphEdge, GraphNodePreset, TraceFocusRequest } from '../types';
 import { executableInfo } from '../model/workflowGraph';
 import { edgeConnection } from '../model/edgeRules';
 import { edgeLanes } from '../model/edgeGeometry';
@@ -137,7 +137,7 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
     revealNode(agent.id);
   }, [active, traceFocus, graph.nodes, graph.edges, graph.select, graph.setNotice, onPanelChange, revealNode]);
 
-  const add = (kind: 'agent' | 'tool', type: string, position?: XYPosition) => {
+  const add = (preset: GraphNodePreset, position?: XYPosition) => {
     const area = visibleArea();
     if (!area) return;
     const { bounds } = area;
@@ -151,7 +151,7 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
         center.y += 28;
       }
     }
-    const id = graph.addNode(kind, type, position || center);
+    const id = graph.addNode(preset, position || center);
     onPanelChange(null);
     setConnection(null);
     if (id) revealNode(id);
@@ -252,7 +252,7 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
         requestAnimationFrame(() => void flow.fitView({ padding: 0.25, maxZoom: 1 }));
       }} />}
     {settingsContent}
-    {panel === null && graph.selected ? <NodeInspector selected={graph.selected} palette={palette} entryId={workflow.entry_agent || 'hub'}
+    {panel === null && graph.selected ? <NodeInspector selected={graph.selected} nodes={graph.nodes} palette={palette} entryId={workflow.entry_agent || 'hub'}
         onModelResources={onModelResources}
         onPatch={graph.updateSelected} onEntry={graph.setEntry} onDelete={graph.deleteSelected} onClose={closePanels} />
       : panel === null && selectedEdge ? <EdgeInspector key={selectedEdge.id} edge={selectedEdge} nodes={graph.nodes}

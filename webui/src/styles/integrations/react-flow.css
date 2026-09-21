@@ -69,6 +69,9 @@
 .mas-connection-options { padding: 12px 14px 14px; overflow: auto; min-height: 0; }
 .mas-workbench .mas-node { width: 204px; padding: 14px 14px 10px; border: 1px solid #c8cfd8; border-radius: 9px; color: var(--text-primary); background: var(--surface); font-size: 12px; box-shadow: 0 2px 5px #20252b06; }
 .mas-workbench .mas-node--tool { width: 192px; border-style: dashed; padding-bottom: 14px; }
+.mas-workbench .mas-node--router { width: 192px; border-color: #8c7bb6; }
+.mas-workbench .mas-node--router .mas-node__icon { background: #f1edfa; color: #715b9e; }
+.mas-workbench .mas-node--tool-agent { border-style: dashed; }
 .mas-workbench .mas-node.is-selected { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); box-shadow: 0 4px 16px #245db512; }
 .mas-workbench .mas-node.has-issue { border-color: var(--danger); }
 .mas-node__heading { display: flex; align-items: center; gap: 10px; min-width: 0; }

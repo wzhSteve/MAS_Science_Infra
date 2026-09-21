@@ -10,7 +10,7 @@ function ToolNode({ id, data: d, selected }: NodeProps<GraphNode>) {
     <div className={cls}>
       <NodeHandles id={id} />
       <div className="mas-node__heading"><span className="mas-node__icon"><Wrench size={17} /></span>
-        <div><div className="mas-node__name">{d.label || 'Tool'}</div><div className="mas-node__role">Tool · 按需调用</div></div>
+        <div><div className="mas-node__name">{d.label || 'Tool'}</div><div className="mas-node__role">内置工具 · 按需调用</div></div>
       </div>
       {d.issue && <div className="mas-node__issue">{d.issue}</div>}
     </div>

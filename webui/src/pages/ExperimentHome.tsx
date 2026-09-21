@@ -86,9 +86,6 @@ export const ExperimentHome = memo(function ExperimentHome({ active, currentExpe
       <div><Button size="sm" disabled={catalog.page === 0} onClick={() => catalog.setPage(catalog.page - 1)}>上一页</Button>
         <Button size="sm" disabled={catalog.page + 1 >= catalog.pageCount} onClick={() => catalog.setPage(catalog.page + 1)}>下一页</Button></div>
     </nav>}
-    <footer className="experiment-home-note">
-      打开实验进入画布，通过“实验设置”配置模型、训练和诊断；其他入口保留在“更多功能”中。
-    </footer>
     <CreateExperimentDialog open={active && creating} onOpenChange={setCreating} onCreated={onCreated} />
   </div>;
 });

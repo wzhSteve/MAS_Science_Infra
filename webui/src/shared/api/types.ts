@@ -1,7 +1,11 @@
 export type Config = Record<string, unknown>;
 
+export type AgentKind = 'hub' | 'planner' | 'tool' | 'verifier' | 'blank';
+export type RouterStrategy = 'llm_choice' | 'score' | 'round_robin';
+
 export interface AgentSpec extends Config {
   id: string;
+  kind?: AgentKind;
   role?: string;
   skills?: string[];
   tools?: string[];
@@ -9,13 +13,32 @@ export interface AgentSpec extends Config {
   system_prompt?: string;
   model?: string;
   trainable?: boolean;
+  profile?: Config;
+  meta?: Config;
+}
+
+export interface RouterSpec extends Config {
+  id: string;
+  candidates: string[];
+  strategy?: RouterStrategy;
+  scorer?: string | null;
+  meta?: Config;
 }
 
 export interface WorkflowEdgeSpec {
   from: string;
   to: string;
-  kind?: string;
+  kind?: 'message' | 'tool_call' | 'feedback' | 'route' | 'sample_barrier';
   meta?: Config;
+}
+
+export interface SamplingSpec extends Config {
+  mode?: string;
+  group_n?: number;
+  beam_size?: number;
+  initial_rollouts?: number;
+  barriers?: string[];
+  sites?: Config[];
 }
 
 export interface WorkflowSpec extends Config {
@@ -32,7 +55,9 @@ export interface WorkflowSpec extends Config {
   };
   tools: string[];
   agents?: AgentSpec[];
+  routers?: RouterSpec[];
   edges?: WorkflowEdgeSpec[];
+  sampling?: SamplingSpec;
   llm?: Config;
   memory?: Config;
   archive?: Config;
@@ -108,6 +133,18 @@ export interface Palette {
   roles?: string[];
   tools?: string[];
   edge_kinds?: string[];
+  agent_templates?: Array<{
+    id: string;
+    kind: AgentKind | 'router';
+    label: string;
+    hint?: string;
+  }>;
+  tool_agents?: Array<{
+    id: string;
+    backend: string;
+    llm_required: boolean;
+    description?: string;
+  }>;
   templates?: Array<{ id: string; label: string; workflow?: WorkflowSpec }>;
 }
 

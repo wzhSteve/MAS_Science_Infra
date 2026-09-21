@@ -1,5 +1,5 @@
-import type { AgentSpec, WorkflowSpec } from '../../../shared/api/types';
-import type { GraphNode, GraphEdge } from '../types';
+import type { AgentKind, AgentSpec, RouterSpec, WorkflowSpec } from '../../../shared/api/types';
+import type { EdgeKind, GraphNode, GraphEdge } from '../types';
 import { EDGE_KINDS, edgeDefinition } from './edgeDefinitions';
 import { resolveHandles, serializeEdges } from './edgeGeometry';
 export type { AgentSpec, WorkflowSpec } from '../../../shared/api/types';
@@ -8,8 +8,17 @@ export { KNOWN_TOOLS } from './edgeDefinitions';
 
 export const EDGE_LABELS: Record<string, string> = Object.fromEntries(EDGE_KINDS.map((kind) => [kind, edgeDefinition(kind).title]));
 
-export function graphEdge(source: string, target: string, kind: string, id = `edge-${crypto.randomUUID()}`): GraphEdge {
+export function graphEdge(source: string, target: string, kind: EdgeKind, id = `edge-${crypto.randomUUID()}`): GraphEdge {
   return { id, source, target, type: 'workflow', data: { kind } };
+}
+
+function inferredKind(agent: AgentSpec): AgentKind {
+  const role = (agent.role || '').toLowerCase();
+  if (agent.id === 'hub' || role === 'hub' || role === 'orchestrator') return 'hub';
+  if (role === 'planner' || role === 'executor') return 'planner';
+  if (role === 'verifier') return 'verifier';
+  if (role === 'tool') return 'tool';
+  return 'blank';
 }
 
 export function workflowToFlow(wf: WorkflowSpec): { nodes: GraphNode[]; edges: GraphEdge[] } {
@@ -34,11 +43,18 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: GraphNode[]; edges: G
     position: { x: 80 + (i % 3) * 240, y: 80 + Math.floor(i / 3) * 150 },
     data: {
       label: a.id,
+      kind: a.kind || inferredKind(a),
       role: a.role || 'agent',
       skills: a.skills || [],
       tools: a.tools || (a.id === 'hub' ? wf.tools : []),
+      memory_scope: a.memory_scope || 'agent',
       system_prompt: a.system_prompt ?? (a.id === 'hub' ? wf.hub?.system_prompt : '') ?? '',
+      model: a.model || 'inherit',
       trainable: a.trainable !== false,
+      profile: a.profile || {},
+      meta: a.meta || {},
+      backend: typeof a.profile?.backend === 'string' ? a.profile.backend : undefined,
+      llm_required: a.profile?.llm_required === true,
       entry: a.id === entry,
       verify: a.id === 'hub' ? wf.hub?.verify : undefined,
       max_feedback_hops: a.id === 'hub' ? wf.hub?.max_feedback_hops : undefined,
@@ -52,11 +68,32 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: GraphNode[]; edges: G
       position: { x: 300, y: 280 },
       data: {
         label: 'verifier',
+        kind: 'verifier',
         role: 'verifier',
         skills: ['verifier'],
         tools: [],
+        memory_scope: 'agent',
+        system_prompt: '',
+        model: 'inherit',
         trainable: false,
+        profile: {},
+        meta: {},
         entry: false,
+      },
+    });
+  }
+
+  for (const [index, router] of (wf.routers || []).entries()) {
+    nodes.push({
+      id: router.id,
+      type: 'router',
+      position: { x: 420 + (index % 2) * 240, y: 100 + Math.floor(index / 2) * 160 },
+      data: {
+        label: router.id,
+        candidates: [...(router.candidates || [])],
+        strategy: router.strategy || 'llm_choice',
+        scorer: router.scorer ?? null,
+        meta: router.meta || {},
       },
     });
   }
@@ -107,8 +144,9 @@ export function flowToWorkflow(
   edges: GraphEdge[],
   base: WorkflowSpec,
 ): WorkflowSpec {
-  const agentNodes = nodes.filter((n) => n.type !== 'tool');
+  const agentNodes = nodes.filter((n) => n.type === 'agent');
   const toolNodes = nodes.filter((n) => n.type === 'tool');
+  const routerNodes = nodes.filter((n) => n.type === 'router');
   const hubNode = agentNodes.find((n) => n.id === 'hub') || agentNodes[0];
   const entry =
     agentNodes.find((n) => n.data?.entry)?.id ||
@@ -121,13 +159,16 @@ export function flowToWorkflow(
     return {
       ...previous,
       id: n.id,
+      kind: n.data.kind || previous?.kind || inferredKind({ id: n.id, role: n.data.role }),
       role: n.data.role || 'agent',
       skills: n.data.skills || [],
       tools: [...(n.data.tools || [])],
-      memory_scope: previous?.memory_scope || 'agent',
+      memory_scope: n.data.memory_scope || 'agent',
       system_prompt: n.data.system_prompt || '',
-      model: previous?.model || 'inherit',
+      model: n.data.model || 'inherit',
       trainable: n.data.trainable !== false,
+      profile: n.data.profile || {},
+      meta: n.data.meta || {},
     };
   });
 
@@ -140,10 +181,21 @@ export function flowToWorkflow(
 
   const tools = Array.from(
     new Set([
+      ...(base.tools || []),
       ...agents.flatMap((a) => a.tools),
       ...toolNodes.map((n) => n.id),
     ]),
   );
+
+  const previousRouters = new Map((base.routers || []).map((router) => [router.id, router]));
+  const routers: RouterSpec[] = routerNodes.map((node) => ({
+    ...previousRouters.get(node.id),
+    id: node.id,
+    candidates: [...(node.data.candidates || [])],
+    strategy: node.data.strategy || 'llm_choice',
+    scorer: node.data.scorer || null,
+    meta: node.data.meta || {},
+  }));
 
   const skills = hubNode?.data.skills || [];
   const verify = hubNode?.data.verify ?? null;
@@ -152,9 +204,9 @@ export function flowToWorkflow(
   const hubPrompt =
     hubNode?.data.system_prompt || '';
 
-  const onlyHubish = agents.every((a) => a.id === 'hub' || a.id === 'verifier');
+  const onlyHubish = agents.every((a) => a.kind === 'hub' || a.kind === 'verifier');
   const topology =
-    hubNode?.id === 'hub' && agents.length <= 2 && onlyHubish
+    !routers.length && hubNode?.id === 'hub' && agents.length <= 2 && onlyHubish
       ? verify || agents.length > 1
         ? base.topology === 'graph'
           ? 'graph'
@@ -164,7 +216,7 @@ export function flowToWorkflow(
 
   return {
     ...base,
-    schema_version: topology === 'graph' ? '0.2.0' : base.schema_version || '0.1.0',
+    schema_version: '0.3',
     topology,
     entry_agent: entry,
     hub: {
@@ -177,6 +229,7 @@ export function flowToWorkflow(
     },
     tools,
     agents,
+    routers,
     edges: serializeEdges(edges),
   };
 }
@@ -185,6 +238,11 @@ export function executableInfo(wf: WorkflowSpec): { ok: boolean; reason: string;
   const agents = wf.agents && (wf.agents.length > 0 || wf.topology === 'graph') ? wf.agents : [{ id: 'hub' }];
   if (!agents.length) return { ok: false, reason: '请先添加一个 Agent，并设置运行入口。' };
   const agentIds = new Set(agents.map((a) => a.id));
+  const toolIds = new Set([
+    ...(wf.tools || []),
+    ...agents.filter((agent) => agent.kind === 'tool').map((agent) => agent.id),
+  ]);
+  const routerIds = new Set((wf.routers || []).map((router) => router.id));
   const entry = wf.entry_agent || 'hub';
   if (!agentIds.has(entry)) return { ok: false, reason: `入口 ${entry} 不存在，请重新设置运行入口。` };
   if (wf.topology === 'hub_react' || wf.topology === 'single' || !wf.topology) {
@@ -194,14 +252,15 @@ export function executableInfo(wf: WorkflowSpec): { ok: boolean; reason: string;
     const inboundRoute: Record<string, number> = {};
     for (const e of wf.edges || []) {
       const kind = e.kind || 'message';
-      const toIsTool = wf.tools.includes(e.to);
-      const fromIsTool = wf.tools.includes(e.from);
+      if (routerIds.has(e.from) || routerIds.has(e.to) || kind === 'sample_barrier') continue;
+      const toIsTool = toolIds.has(e.to);
+      const fromIsTool = toolIds.has(e.from);
       if (kind === 'tool_call') {
         if (!agentIds.has(e.from)) {
           return { ok: false, reason: `工具调用的起点 ${e.from} 必须是 Agent。`, nodeId: e.from };
         }
-        if (agentIds.has(e.to)) {
-          return { ok: false, reason: '工具调用的终点不能是 Agent。', nodeId: e.to };
+        if (!toIsTool) {
+          return { ok: false, reason: `工具调用的终点 ${e.to} 必须是 Tool 或 tool-agent。`, nodeId: e.to };
         }
         continue;
       }
@@ -216,6 +275,17 @@ export function executableInfo(wf: WorkflowSpec): { ok: boolean; reason: string;
         if (inboundRoute[e.to] > 1) {
           return { ok: false, reason: `${e.to} 只能有一条输入路由。`, nodeId: e.to };
         }
+      }
+    }
+    for (const router of wf.routers || []) {
+      for (const candidate of router.candidates) {
+        const id = candidate.startsWith('blank:') ? candidate.slice('blank:'.length) : candidate;
+        if (!agentIds.has(id) && !toolIds.has(id)) {
+          return { ok: false, reason: `Router ${router.id} 的候选 ${candidate} 不存在。`, nodeId: router.id };
+        }
+      }
+      if (router.strategy === 'score' && router.scorer && !agentIds.has(router.scorer)) {
+        return { ok: false, reason: `Router ${router.id} 的 scorer ${router.scorer} 不存在。`, nodeId: router.id };
       }
     }
     return { ok: true, reason: 'graph_compiled' };
