@@ -39,7 +39,7 @@ class ExperimentMeta(BaseModel):
     name: str = ""
     agl_metrics_url: str = "/agl/metrics"
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "allow"}
 
 
 def _safe_id(exp_id: str) -> str:
@@ -219,6 +219,20 @@ def ensure_experiment(exp_id: str, *, seed: int = 42, name: str = "") -> Path:
     return root
 
 
+def create_experiment(exp_id: str, *, seed: int = 42, name: str = "") -> Path:
+    root = exp_dir(exp_id)
+    if (root / "experiment.yaml").is_file():
+        raise ValueError(f"experiment already exists: {exp_id}")
+    return ensure_experiment(exp_id, seed=seed, name=name)
+
+
+def require_experiment(exp_id: str) -> Path:
+    root = exp_dir(exp_id)
+    if not (root / "experiment.yaml").is_file():
+        raise FileNotFoundError(f"experiment not found: {exp_id}")
+    return root
+
+
 def list_experiments() -> List[str]:
     root = experiments_root()
     if not root.is_dir():
@@ -231,7 +245,7 @@ def list_experiments() -> List[str]:
 
 
 def load_bundle(exp_id: str) -> Dict[str, Any]:
-    root = ensure_experiment(exp_id)
+    root = require_experiment(exp_id)
     meta_raw = _read_yaml(root / "experiment.yaml")
     exp = meta_raw.get("experiment") or meta_raw
     meta = ExperimentMeta.model_validate(exp)
@@ -259,7 +273,7 @@ def load_bundle(exp_id: str) -> Dict[str, Any]:
 
 
 def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, Any]:
-    root = ensure_experiment(exp_id)
+    root = require_experiment(exp_id)
     meta_raw = _read_yaml(root / "experiment.yaml")
     exp = meta_raw.get("experiment") or meta_raw
     meta = ExperimentMeta.model_validate(exp)
@@ -268,7 +282,12 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
         merged = {**meta.model_dump(), **{k: v for k, v in data.items() if k != "id"}}
         merged["id"] = exp_id
         meta = ExperimentMeta.model_validate(merged)
-        _write_yaml(root / "experiment.yaml", {"experiment": meta.model_dump()})
+        if isinstance(meta_raw.get("experiment"), dict):
+            document = deepcopy(meta_raw)
+            document["experiment"] = meta.model_dump()
+        else:
+            document = meta.model_dump()
+        _write_yaml(root / "experiment.yaml", document)
     elif section == "llm":
         clean = dict(data)
         api_key = clean.pop("api_key", None)

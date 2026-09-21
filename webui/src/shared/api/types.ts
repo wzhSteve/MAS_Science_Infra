@@ -75,9 +75,18 @@ export interface LlmConfig extends Config {
   resource_revision?: number | null;
 }
 
+export interface ExperimentMeta extends Config {
+  id: string;
+  seed: number;
+  refs: Record<string, string>;
+  pipeline: string[];
+  name: string;
+  agl_metrics_url: string;
+}
+
 export interface Bundle {
   id: string;
-  meta: Config & { seed?: number; name?: string };
+  meta: ExperimentMeta;
   llm: LlmConfig;
   workflow: WorkflowSpec;
   rl: RlConfig;

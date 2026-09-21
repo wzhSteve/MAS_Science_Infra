@@ -1,6 +1,6 @@
 # Main 核心功能清单
 
-`main` 是后端、训练和运行行为的功能基线；`feature/ui` 是新 WebUI 的设计与实现基线。
+`main` 是后端、训练和运行行为的功能基线；`feature/ui` 是新 WebUI 的设计与实现基线。目标是讲main的一些功能ui，在新 WebUI 中同步对接实现
 
 | 核心功能 | `main` 功能入口 | 新 WebUI 适配目标 |
 | --- | --- | --- |

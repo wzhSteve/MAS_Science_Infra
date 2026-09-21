@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../api/client';
+import { experimentApi } from '../api';
 import { errorMessage } from '../../../shared/api/http';
 import type { Bundle } from '../../../shared/api/types';
 import { ActionBar } from '../../../shared/components/ActionBar';
@@ -33,9 +34,16 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
   const [list, setList] = useState<string[]>([]);
   const [listError, setListError] = useState('');
   const [newId, setNewId] = useState('');
-  const [seed, setSeed] = useState(Number(bundle.meta.seed || 42));
-  const [name, setName] = useState(String(bundle.meta.name || ''));
-  const [savedSettings, setSavedSettings] = useState(() => JSON.stringify({ seed, name }));
+  const incoming = useMemo(() => ({
+    seed: bundle.meta.seed,
+    name: bundle.meta.name,
+  }), [bundle.meta.seed, bundle.meta.name]);
+  const incomingKey = JSON.stringify(incoming);
+  const [{ draft, saved }, setDraft] = useState(() => ({
+    draft: incoming,
+    saved: incomingKey,
+  }));
+  const lastIncoming = useRef(incomingKey);
   const editRevision = useRef(0);
   const { pending, notice, run } = useAction();
   const mounted = useRef(true);
@@ -43,6 +51,15 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (pending !== null || lastIncoming.current === incomingKey) return;
+    lastIncoming.current = incomingKey;
+    setDraft(current => ({
+      draft: JSON.stringify(current.draft) === current.saved ? incoming : current.draft,
+      saved: incomingKey,
+    }));
+  }, [incoming, incomingKey, pending]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -59,10 +76,14 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
 
   const save = async () => {
     const submittedRevision = editRevision.current;
+    const submitted = { ...draft };
     const success = await run('save', async () => {
-      await api.putSection(expId, 'meta', { ...bundle.meta, seed, name: name || bundle.meta.name });
+      await experimentApi.updateExperiment(expId, submitted);
       if (mounted.current) {
-        setSavedSettings(JSON.stringify({ seed, name }));
+        setDraft(current => ({
+          draft: editRevision.current === submittedRevision ? submitted : current.draft,
+          saved: JSON.stringify(submitted),
+        }));
         onReload();
       }
       return 'saved experiment.yaml';
@@ -72,7 +93,7 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
 
   useUnsavedChanges('experiment-settings', {
     label: '实验配置', resource: 'meta',
-    dirty: JSON.stringify({ seed, name }) !== savedSettings,
+    dirty: JSON.stringify(draft) !== saved,
     busy: pending === 'save', save,
   });
 
@@ -89,8 +110,14 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
       </FormField>
       {listError && <InlineNotice tone="danger">实验列表刷新失败：{listError}</InlineNotice>}
       <div className="form-grid">
-        <FormField label="name"><Input value={name} onChange={(event) => { editRevision.current += 1; setName(event.target.value); }} /></FormField>
-        <FormField label="seed"><Input type="number" value={seed} onChange={(event) => { editRevision.current += 1; setSeed(Number(event.target.value)); }} /></FormField>
+        <FormField label="name"><Input value={draft.name} onChange={(event) => {
+          editRevision.current += 1;
+          setDraft(current => ({ ...current, draft: { ...current.draft, name: event.target.value } }));
+        }} /></FormField>
+        <FormField label="seed"><Input type="number" value={draft.seed} onChange={(event) => {
+          editRevision.current += 1;
+          setDraft(current => ({ ...current, draft: { ...current.draft, seed: Number(event.target.value) } }));
+        }} /></FormField>
       </div>
       <ActionBar>
         <Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={() => { void save(); }}>保存 experiment.yaml</Button>

@@ -1,5 +1,5 @@
 import { experimentPath, request } from '../../shared/api/http';
-import type { Bundle, Config, MetaResponse } from '../../shared/api/types';
+import type { Bundle, Config, ExperimentMeta, MetaResponse } from '../../shared/api/types';
 
 export const experimentApi = {
   meta: (signal?: AbortSignal) => request<MetaResponse>('/api/meta', { signal }),
@@ -7,6 +7,8 @@ export const experimentApi = {
   getExperiment: (id: string, signal?: AbortSignal) => request<Bundle>(experimentPath(id), { signal }),
   createExperiment: (id: string, seed = 42, name = '') =>
     request<Bundle>('/api/experiments', { method: 'POST', body: JSON.stringify({ id, seed, name }) }),
+  updateExperiment: (id: string, data: Pick<ExperimentMeta, 'name' | 'seed'>) =>
+    request<Bundle>(experimentPath(id), { method: 'PUT', body: JSON.stringify({ data }) }),
   putSection: (id: string, section: 'meta' | 'llm' | 'rl' | 'harness', data: Config) =>
     request<Bundle>(`${experimentPath(id)}/${section}`, { method: 'PUT', body: JSON.stringify({ data }) }),
 };

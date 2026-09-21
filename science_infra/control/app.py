@@ -18,6 +18,7 @@ from science_infra.control.experiments import (
     HARNESS_PLUGINS,
     STUB_HARNESS,
     VALID_ALGOS,
+    create_experiment,
     ensure_experiment,
     list_experiments,
     load_bundle,
@@ -168,9 +169,9 @@ def create_app() -> FastAPI:
         return {"experiments": list_experiments()}
 
     @app.post("/api/experiments")
-    def create_experiment(body: CreateExperimentBody) -> Dict[str, Any]:
+    def create_experiment_endpoint(body: CreateExperimentBody) -> Dict[str, Any]:
         try:
-            ensure_experiment(body.id, seed=body.seed, name=body.name)
+            create_experiment(body.id, seed=body.seed, name=body.name)
             return load_bundle(body.id)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
