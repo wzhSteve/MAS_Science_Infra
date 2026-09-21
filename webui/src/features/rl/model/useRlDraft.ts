@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../api/client';
-import type { RlConfig } from '../../../shared/api/types';
+import type { RlConfig, SamplingSpec } from '../../../shared/api/types';
 import { useAction } from '../../../shared/hooks/useAction';
 import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
 import { normalizeRlPayload } from './normalizeRlPayload';
 import { applyRlRecommendation, applyTrainSignal } from './rlPrefills';
 
-export function useRlDraft(expId: string, initial: RlConfig, onReload: () => void, onStartTrain: () => Promise<void>) {
+export function useRlDraft(
+  expId: string,
+  initial: RlConfig,
+  onReload: () => void,
+  onStartTrain: () => Promise<void>,
+  sampling?: SamplingSpec,
+) {
   const [{ rl, savedRl }, setDraft] = useState(() => ({
     rl: structuredClone(initial), savedRl: JSON.stringify(initial),
   }));
@@ -37,7 +43,7 @@ export function useRlDraft(expId: string, initial: RlConfig, onReload: () => voi
 
   const persist = useCallback(async () => {
     const submittedRevision = editRevision.current;
-    const payload = normalizeRlPayload(rl);
+    const payload = normalizeRlPayload(rl, [0], sampling);
     await api.putSection(expId, 'rl', payload);
     if (mounted.current) {
       // Editing while a save is in flight must not discard the newer draft.
@@ -49,7 +55,7 @@ export function useRlDraft(expId: string, initial: RlConfig, onReload: () => voi
       onReload();
     }
     return submittedRevision;
-  }, [rl, expId, onReload]);
+  }, [rl, expId, onReload, sampling]);
 
   const save = useCallback(async () => {
     let submittedRevision: number | undefined;
@@ -70,22 +76,22 @@ export function useRlDraft(expId: string, initial: RlConfig, onReload: () => voi
       const response = await api.gpus();
       if (mounted.current) {
         editRevision.current += 1;
-        setDraft((current) => ({ ...current, rl: applyRlRecommendation(current.rl, response.recommend || {}) }));
+        setDraft((current) => ({ ...current, rl: applyRlRecommendation(current.rl, response.recommend || {}, sampling) }));
       }
       return '已按当前机器推荐档位（需点保存）';
     });
-  }, [run]);
+  }, [run, sampling]);
 
   const prefill = useCallback(() => {
     void run('prefill', async () => {
       const response = await api.monitor(expId);
       if (mounted.current) {
         editRevision.current += 1;
-        setDraft((current) => ({ ...current, rl: applyTrainSignal(current.rl, response.train_signal || {}) }));
+        setDraft((current) => ({ ...current, rl: applyTrainSignal(current.rl, response.train_signal || {}, sampling) }));
       }
       return 'prefilled from TrainSignal（需点保存）';
     });
-  }, [expId, run]);
+  }, [expId, run, sampling]);
 
   useUnsavedChanges('rl-settings', {
     label: 'RL 配置', resource: 'rl', dirty, busy: pending !== null, save,

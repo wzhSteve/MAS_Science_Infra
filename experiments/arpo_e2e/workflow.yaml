@@ -1,9 +1,12 @@
-schema_version: 0.1.0
+schema_version: '0.3'
 topology: hub_react
 hub:
   role: orchestrator
   skills:
   - react_loop
+  verify: null
+  max_feedback_hops: 1
+  system_prompt: ''
 tools:
 - web_search
 - wikipedia_search
@@ -28,7 +31,34 @@ agents:
   - wikipedia_search
   - execute_python
   trainable: true
-edges: []
+  kind: hub
+  memory_scope: agent
+  system_prompt: ''
+  model: inherit
+  profile: {}
+  meta: {}
+edges:
+- from: hub
+  to: web_search
+  kind: tool_call
+  meta:
+    ui:
+      sourceHandle: bottom
+      targetHandle: top
+- from: hub
+  to: wikipedia_search
+  kind: tool_call
+  meta:
+    ui:
+      sourceHandle: bottom
+      targetHandle: top
+- from: hub
+  to: execute_python
+  kind: tool_call
+  meta:
+    ui:
+      sourceHandle: right
+      targetHandle: left
 sampling:
   mode: arpo
   group_n: 4
@@ -81,3 +111,4 @@ sampling:
       k_min: 2
       epsilon_f: 0.001
     priority: 10
+routers: []

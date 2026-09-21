@@ -385,7 +385,9 @@ def apply_gpu_selection(rl: Dict[str, Any], ids: List[int]) -> Dict[str, Any]:
     ids = [int(x) for x in ids]
     if not ids:
         ids = [0]
-    out["devices"] = {"ids": ids}
+    devices = dict(out.get("devices") or {})
+    devices["ids"] = ids
+    out["devices"] = devices
     n = len(ids)
     trainer = dict(out.get("trainer") or {})
     trainer["n_gpus_per_node"] = n

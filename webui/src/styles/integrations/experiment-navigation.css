@@ -12,6 +12,31 @@
   .experiment-session-divider { height: 15px; width: 1px; background: var(--border-subtle); }
   .experiment-session-id { color: var(--text-secondary); font-size: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 25ch; }
   .experiment-session-location { color: var(--text-secondary); font-size: 11px; }
+  .gpu-status-control { display: flex; align-items: center; gap: 2px; flex: none; }
+  .gpu-status-trigger { display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 4px 7px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface); color: var(--text-secondary); font-size: 11px; cursor: pointer; }
+  .gpu-status-trigger:hover, .gpu-status-trigger[data-state="open"] { border-color: #b7c5d8; background: var(--surface-subtle); color: var(--text-primary); }
+  .gpu-status-trigger.has-warning { color: var(--warning); }
+  .gpu-status-meter, .gpu-status-device-meter { display: block; overflow: hidden; border-radius: 4px; background: var(--border-subtle); }
+  .gpu-status-meter { width: 34px; height: 3px; }
+  .gpu-status-meter > span, .gpu-status-device-meter > span { display: block; height: 100%; background: var(--accent); }
+  .gpu-status-dirty { width: 5px; height: 5px; border-radius: 50%; background: var(--warning); }
+  .gpu-status-refresh { width: 28px; padding: 0; }
+  .gpu-status-popover { z-index: 70; width: 330px; max-height: var(--radix-dropdown-menu-content-available-height); overflow-y: auto; padding: 7px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 30px #20252b1a; }
+  .gpu-status-title { padding: 7px 9px 9px; color: var(--text-secondary); font-size: 10px; }
+  .gpu-status-device { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 9px; border-radius: 6px; outline: none; cursor: pointer; }
+  .gpu-status-device[data-highlighted] { background: var(--surface-subtle); }
+  .gpu-status-check { display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--accent); }
+  .gpu-status-device-main { display: grid; min-width: 0; gap: 2px; }
+  .gpu-status-device-main strong { font-size: 11px; }
+  .gpu-status-device-main > span:not(.gpu-status-device-meter) { overflow: hidden; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .gpu-status-device-meter { width: 100%; height: 3px; margin-top: 3px; }
+  .gpu-status-device-meta { color: var(--text-secondary); font-size: 9px; line-height: 1.5; text-align: right; white-space: nowrap; }
+  .gpu-status-empty, .gpu-status-warning { display: grid; gap: 5px; margin: 2px; padding: 10px; border-radius: 6px; font-size: 10px; line-height: 1.5; }
+  .gpu-status-empty { background: var(--surface-subtle); color: var(--text-secondary); }
+  .gpu-status-empty strong { color: var(--text-primary); }
+  .gpu-status-warning { background: var(--warning-subtle); color: var(--warning); }
+  .gpu-status-separator { height: 1px; margin: 6px 2px; background: var(--border-subtle); }
+  .gpu-status-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 3px 4px 3px 9px; color: var(--text-secondary); font-size: 10px; }
   .workspace-navigation { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
   .workspace-navigation-menu { z-index: 60; width: 220px; max-height: var(--radix-dropdown-menu-content-available-height); overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 24px #20252b14; }
   .workspace-navigation-label { padding: 6px 9px 8px; color: var(--text-secondary); font-size: 10px; }
@@ -30,5 +55,7 @@
   @media (max-width: 767px) {
     .experiment-session-id { display: none; }
     .experiment-session-bar { gap: 7px; }
+    .gpu-status-meter { display: none; }
+    .gpu-status-trigger > span:nth-child(2) { max-width: 105px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
 }

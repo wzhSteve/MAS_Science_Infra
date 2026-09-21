@@ -70,18 +70,57 @@ export interface RlConfig extends Config {
   rollout_per_gpu?: number;
   n_runners?: number;
   devices?: { ids?: number[]; [key: string]: unknown };
-  trainer?: { n_gpus_per_node?: number; total_epochs?: number; experiment_name?: string; [key: string]: unknown };
-  data?: { train_batch_size?: number; [key: string]: unknown };
+  algorithm?: Config & {
+    adv_estimator?: string;
+    use_kl_in_reward?: boolean;
+    tir_algo?: string;
+    tir?: Config;
+  };
+  trainer?: Config & {
+    n_gpus_per_node?: number;
+    total_epochs?: number;
+    total_training_steps?: number;
+    experiment_name?: string;
+    project_name?: string;
+    nnodes?: number;
+    test_freq?: number;
+  };
+  data?: Config & {
+    train_files?: string;
+    val_files?: string;
+    train_batch_size?: number;
+    val_batch_size?: number | null;
+    max_prompt_length?: number;
+    max_response_length?: number;
+    truncation?: string;
+  };
   actor_rollout_ref?: {
     actor?: {
       optim?: { lr?: number; [key: string]: unknown };
+      ppo_mini_batch_size?: number;
+      ppo_micro_batch_size_per_gpu?: number;
+      use_kl_loss?: boolean;
       clip_ratio_low?: number;
       clip_ratio_high?: number;
       entropy_coeff?: number;
       kl_loss_coef?: number;
       [key: string]: unknown;
     };
-    rollout?: { n?: number; gpu_memory_utilization?: number; [key: string]: unknown };
+    rollout?: {
+      n?: number;
+      tensor_model_parallel_size?: number;
+      log_prob_micro_batch_size_per_gpu?: number;
+      gpu_memory_utilization?: number;
+      name?: string;
+      [key: string]: unknown;
+    };
+    ref?: { log_prob_micro_batch_size_per_gpu?: number; [key: string]: unknown };
+    model?: {
+      path?: string;
+      use_remove_padding?: boolean;
+      enable_gradient_checkpointing?: boolean;
+      [key: string]: unknown;
+    };
     [key: string]: unknown;
   };
 }

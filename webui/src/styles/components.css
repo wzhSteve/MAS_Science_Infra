@@ -34,6 +34,9 @@
   .checkbox-label:has(input:disabled) { cursor: not-allowed; color: var(--text-secondary); }
   .form-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .form-field > label { font-size: 13px; font-weight: 500; }
+  .help-label { display: inline-flex; align-items: center; gap: 5px; }
+  .help-label__trigger { display: inline-flex; align-items: center; justify-content: center; color: var(--text-tertiary); cursor: help; transition: color .14s ease, transform .14s ease; }
+  .help-label__trigger:hover, .help-label__trigger:focus-visible { color: var(--accent); outline: none; transform: translateY(-1px); }
   .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }
   .field-hint, .section-description { color: var(--text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
   .field-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }

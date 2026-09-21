@@ -1,4 +1,5 @@
-import type { RlConfig, TrainSignal } from '../../../shared/api/types';
+import type { RlConfig, SamplingSpec, TrainSignal } from '../../../shared/api/types';
+import { applyWorkflowSampling } from './normalizeRlPayload';
 
 export function rolloutPatch(rl: RlConfig, n: number): Partial<RlConfig> {
   return {
@@ -10,7 +11,7 @@ export function rolloutPatch(rl: RlConfig, n: number): Partial<RlConfig> {
   };
 }
 
-export function applyRlRecommendation(rl: RlConfig, recommendation: RlConfig): RlConfig {
+export function applyRlRecommendation(rl: RlConfig, recommendation: RlConfig, sampling?: SamplingSpec): RlConfig {
   let next = { ...rl, ...recommendation };
   const n = recommendation['actor_rollout_ref.rollout.n'];
   const gpuMemory = recommendation['actor_rollout_ref.rollout.gpu_memory_utilization'];
@@ -35,10 +36,10 @@ export function applyRlRecommendation(rl: RlConfig, recommendation: RlConfig): R
     };
   }
   if (gpuCount != null) next = { ...next, trainer: { ...next.trainer, n_gpus_per_node: Number(gpuCount) } };
-  return next;
+  return applyWorkflowSampling(next, sampling);
 }
 
-export function applyTrainSignal(rl: RlConfig, signal: TrainSignal): RlConfig {
+export function applyTrainSignal(rl: RlConfig, signal: TrainSignal, sampling?: SamplingSpec): RlConfig {
   let next = { ...rl };
   if (signal.advantage?.name) next.algo = signal.advantage.name;
   const loss = signal.loss;
@@ -50,5 +51,5 @@ export function applyTrainSignal(rl: RlConfig, signal: TrainSignal): RlConfig {
     if (loss.kl_loss_coef != null) actor.kl_loss_coef = loss.kl_loss_coef;
     if (Object.keys(actor).length) next = { ...next, actor_rollout_ref: { ...next.actor_rollout_ref, actor } };
   }
-  return next;
+  return applyWorkflowSampling(next, sampling);
 }

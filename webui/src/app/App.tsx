@@ -7,9 +7,11 @@ import { LoadingState } from '../shared/components/LoadingState';
 import { InlineNotice } from '../shared/components/InlineNotice';
 import { Button } from '../shared/ui/button';
 import { WorkspaceMenu } from './layout/WorkspaceMenu';
+import { GpuStatusControl } from './layout/GpuStatusControl';
 import { TrainingBanner } from './layout/TrainingBanner';
 import { StatusBar } from './layout/StatusBar';
 import { RuntimeProvider } from './providers/RuntimeProvider';
+import { TrainingConfigProvider } from './providers/TrainingConfigProvider';
 import { NavigationGuardProvider } from './providers/NavigationGuard';
 import { PageBoundary } from './layout/PageBoundary';
 import { ExperimentHome } from '../pages/ExperimentHome';
@@ -48,23 +50,26 @@ const Workspace = memo(function Workspace({ expId, tab, visible, meta, setExpId,
     </>}</div>;
   }
   return <RuntimeProvider expId={expId} onReload={refresh} active={visible}>
-    <div className="experiment-session-bar">
-      <Button size="sm" variant="ghost" onClick={onHome}><ArrowLeft size={14} />实验首页</Button>
-      <span className="experiment-session-divider" />
-      <Network size={14} aria-hidden="true" />
-      <strong title={bundle.meta.name || bundle.id}>{bundle.meta.name || bundle.id}</strong>
-      {bundle.meta.name && bundle.meta.name !== bundle.id && <span className="experiment-session-id mono">{bundle.id}</span>}
-      {!isCanvasPanel(tab) && <span className="experiment-session-location">{NAVIGATION.find(item => item.id === tab)?.description}</span>}
-      <div className="workspace-navigation"><Button size="sm" variant="ghost" onClick={() => onResources('models')}><Database size={14} />资源</Button>
-        <WorkspaceMenu active={tab} onChange={onChangePanel} /></div>
-    </div>
-    <TrainingBanner />
-    {error && <div className="runtime-error"><InlineNotice tone="warning">实验刷新失败，草稿保持不变：{error}</InlineNotice></div>}
-    <PageBoundary><Suspense fallback={<LoadingState label="加载实验工作区…" />}>
-      <WorkspacePanels active={tab} visible={visible} bundle={bundle} meta={meta} onReload={refresh} setExpId={setExpId} onWorkspace={onWorkspace}
-        settings={settings} onResources={onResources} onSettings={onSettings} selectedResource={selectedResource} />
-    </Suspense></PageBoundary>
-    {!isCanvasPanel(tab) && <StatusBar />}
+    <TrainingConfigProvider bundle={bundle} onReload={refresh} active={visible}>
+      <div className="experiment-session-bar">
+        <Button size="sm" variant="ghost" onClick={onHome}><ArrowLeft size={14} />实验首页</Button>
+        <span className="experiment-session-divider" />
+        <Network size={14} aria-hidden="true" />
+        <strong title={bundle.meta.name || bundle.id}>{bundle.meta.name || bundle.id}</strong>
+        {bundle.meta.name && bundle.meta.name !== bundle.id && <span className="experiment-session-id mono">{bundle.id}</span>}
+        <GpuStatusControl />
+        {!isCanvasPanel(tab) && <span className="experiment-session-location">{NAVIGATION.find(item => item.id === tab)?.description}</span>}
+        <div className="workspace-navigation"><Button size="sm" variant="ghost" onClick={() => onResources('models')}><Database size={14} />资源</Button>
+          <WorkspaceMenu active={tab} onChange={onChangePanel} /></div>
+      </div>
+      <TrainingBanner />
+      {error && <div className="runtime-error"><InlineNotice tone="warning">实验刷新失败，草稿保持不变：{error}</InlineNotice></div>}
+      <PageBoundary><Suspense fallback={<LoadingState label="加载实验工作区…" />}>
+        <WorkspacePanels active={tab} visible={visible} bundle={bundle} meta={meta} onReload={refresh} setExpId={setExpId} onWorkspace={onWorkspace}
+          settings={settings} onResources={onResources} onSettings={onSettings} selectedResource={selectedResource} />
+      </Suspense></PageBoundary>
+      {!isCanvasPanel(tab) && <StatusBar />}
+    </TrainingConfigProvider>
   </RuntimeProvider>;
 });
 

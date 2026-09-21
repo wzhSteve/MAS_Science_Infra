@@ -62,8 +62,7 @@ const TrainingConnection = memo(function TrainingConnection(props: {
   onManageModels: () => void; suggestedResourceId?: string;
   onSuggestionApplied?: () => void;
 }) {
-  const { startTrain } = useRuntimeCommands();
-  return <TrainingSettings {...props} onStartTrain={startTrain} renderRuntime={renderTrainingRuntime} />;
+  return <TrainingSettings {...props} renderRuntime={renderTrainingRuntime} />;
 });
 
 function EnvironmentStatus({ readiness, error }: {
