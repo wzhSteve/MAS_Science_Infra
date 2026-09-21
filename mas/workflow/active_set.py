@@ -139,7 +139,25 @@ class ActiveSetSession:
 
     def _sites(self) -> List[BranchSite]:
         if self.config.sites:
-            return [s for s in self.config.sites if s.enabled]
+            resolved: List[BranchSite] = []
+            for site in self.config.sites:
+                if not site.enabled:
+                    continue
+                params = dict(site.gate.params or {})
+                if site.gate.type in ("entropy_delta", "arpo"):
+                    params = {
+                        "use_official_arpo_gate": self.config.use_official_arpo_gate,
+                        "branch_probability": self.config.branch_probability,
+                        "entropy_weight": self.config.entropy_weight,
+                        "entropy_threshold": self.config.entropy_threshold,
+                        **params,
+                    }
+                elif site.gate.type == "dual_entropy":
+                    params = {"probe_k": self.config.probe_k, **params}
+                resolved.append(site.model_copy(update={
+                    "gate": site.gate.model_copy(update={"params": params}),
+                }))
+            return resolved
         # legacy single entropy gate as one synthetic site
         return [
             BranchSite(

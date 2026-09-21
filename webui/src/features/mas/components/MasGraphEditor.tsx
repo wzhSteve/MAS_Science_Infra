@@ -14,6 +14,7 @@ import { NodeInspector } from './NodeInspector';
 import { EdgeInspector } from './EdgeInspector';
 import { ConnectionPicker } from './ConnectionPicker';
 import { GraphInteractionContext } from './GraphInteractionContext';
+import { deriveBranchCandidates, effectiveSites, findCandidateSite } from '../../sampling/model/branchSites';
 
 type Props = {
   workflow: WorkflowSpec;
@@ -41,14 +42,27 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
   const reconnectRef = useRef<GraphEdge | null>(null);
   const executable = useMemo(() => executableInfo(workflow), [workflow]);
   const selectedEdge = graph.selectedEdge;
+  const branchCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    const sampling = workflow.sampling;
+    if (!sampling) return counts;
+    const candidates = deriveBranchCandidates(workflow);
+    const sites = effectiveSites(sampling, candidates);
+    for (const candidate of candidates) {
+      const site = findCandidateSite(sites, candidate);
+      if (site && site.enabled !== false) counts.set(candidate.nodeId, (counts.get(candidate.nodeId) || 0) + 1);
+    }
+    return counts;
+  }, [workflow]);
   const nodes = useMemo(() => graph.nodes.map((node) => ({
     ...node,
     data: {
       ...node.data,
       issue: node.id === executable.nodeId ? executable.reason : undefined,
       related: selectedEdge?.source === node.id || selectedEdge?.target === node.id,
+      branchCount: branchCounts.get(node.id) || 0,
     },
-  })), [graph.nodes, executable, selectedEdge]);
+  })), [graph.nodes, executable, selectedEdge, branchCounts]);
   const lanes = useMemo(() => edgeLanes(graph.edges), [graph.edges]);
   const edges = useMemo(() => graph.edges.map((edge) => ({
     ...edge, reconnectable: Boolean(edge.selected),

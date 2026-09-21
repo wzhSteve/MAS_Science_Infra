@@ -82,6 +82,7 @@
 .mas-node__role { color: var(--text-secondary); font-size: 10px; margin-top: 3px; }
 .mas-node__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; padding-top: 8px; border-top: 1px solid #eef0f3; color: var(--text-secondary); font-size: 10px; }
 .mas-node__entry { display: inline-flex; align-items: center; gap: 4px; color: var(--success); }
+.mas-node__branch { display: inline-flex; align-items: center; gap: 3px; color: #715b9e; }
 .mas-node__issue { margin-top: 8px; color: var(--danger); font-size: 10px; }
 .mas-workbench .react-flow { --xy-edge-stroke-default: #a2afbf; --xy-edge-stroke-selected-default: var(--accent); --xy-edge-stroke-width-default: 1.4; --xy-edge-label-background-color-default: var(--canvas); --xy-edge-label-color-default: var(--text-secondary); --xy-minimap-background-color-default: var(--surface); --xy-attribution-background-color-default: var(--surface); }
 .mas-workbench .react-flow__edge-text { font-size: 10px; }

@@ -37,8 +37,42 @@ export interface SamplingSpec extends Config {
   group_n?: number;
   beam_size?: number;
   initial_rollouts?: number;
+  max_branch_depth?: number;
+  expand_in_runner?: boolean;
   barriers?: string[];
-  sites?: Config[];
+  sites?: BranchSiteSpec[];
+  extra?: Config;
+}
+
+export type BranchAnchorKind = 'after_agent_turn' | 'after_tool' | 'after_verifier' | 'on_edge' | 'on_token';
+
+export interface BranchSiteSpec extends Config {
+  id: string;
+  enabled?: boolean;
+  anchor: Config & {
+    kind: BranchAnchorKind;
+    agent_id?: string | null;
+    tool_id?: string | null;
+    edge_id?: string | null;
+    skill_id?: string | null;
+  };
+  when?: 'first' | 'every' | 'nth';
+  nth?: number;
+  gate: Config & { type: string; params?: Config };
+  fork?: Config & {
+    beam_size?: number | null;
+    share_observation?: boolean;
+    resume_mode?: string;
+    probe_max_tokens?: number;
+  };
+  reward?: Config & {
+    scheme?: string;
+    p_plus?: number;
+    k_min?: number;
+    epsilon_f?: number;
+    dead_end_backprop?: number;
+  };
+  priority?: number;
 }
 
 export interface WorkflowSpec extends Config {
@@ -184,6 +218,8 @@ export interface Palette {
     llm_required: boolean;
     description?: string;
   }>;
+  sampling_modes?: string[];
+  gate_types?: string[];
   templates?: Array<{ id: string; label: string; workflow?: WorkflowSpec }>;
 }
 

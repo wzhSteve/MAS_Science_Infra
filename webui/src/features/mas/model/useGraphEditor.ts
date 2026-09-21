@@ -5,7 +5,7 @@ import {
 } from '@xyflow/react';
 import type { AgentKind, Palette, WorkflowSpec } from '../../../shared/api/types';
 import type { EdgeKind, EdgePatch, GraphNodeData, GraphNode, GraphEdge, GraphNodePreset, GraphSelection } from '../types';
-import { flowToWorkflow, graphEdge, workflowToFlow } from './workflowGraph';
+import { flowToWorkflow, graphEdge, workflowGraphRevision, workflowToFlow } from './workflowGraph';
 import { createEdgeRules, edgeConnection } from './edgeRules';
 import { defaultHandles, resolveHandles, serializeEdges } from './edgeGeometry';
 
@@ -17,6 +17,7 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
   const [notice, setNotice] = useState('');
   const graphRef = useRef(graph);
   const workflowRef = useRef(workflow);
+  const graphRevisionRef = useRef(workflowGraphRevision(workflow));
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const rules = useMemo(() => createEdgeRules(graph.nodes, graph.edges, palette), [graph.nodes, graph.edges, palette]);
@@ -31,6 +32,9 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
   useEffect(() => {
     if (workflow === workflowRef.current) return;
     workflowRef.current = workflow;
+    const revision = workflowGraphRevision(workflow);
+    if (revision === graphRevisionRef.current) return;
+    graphRevisionRef.current = revision;
     const next = workflowToFlow(workflow);
     const previous = new Map(graphRef.current.nodes.map((node) => [node.id, node]));
     next.nodes = next.nodes.map((node) => ({
@@ -63,6 +67,7 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
       ? { ...workflowRef.current, edges: serializeEdges(next.edges) }
       : flowToWorkflow(next.nodes, next.edges, workflowRef.current);
     workflowRef.current = value;
+    graphRevisionRef.current = workflowGraphRevision(value);
     rulesRef.current = createEdgeRules(next.nodes, next.edges, palette);
     replaceGraph(next);
     onChangeRef.current(value);
@@ -257,6 +262,7 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
   const applyTemplate = useCallback((template: WorkflowSpec) => {
     const next = { ...workflowRef.current, ...template };
     workflowRef.current = next;
+    graphRevisionRef.current = workflowGraphRevision(next);
     replaceGraph(workflowToFlow(next));
     setSelection(null);
     setNotice('');

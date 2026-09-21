@@ -12,6 +12,18 @@ export function graphEdge(source: string, target: string, kind: EdgeKind, id = `
   return { id, source, target, type: 'workflow', data: { kind } };
 }
 
+export function workflowGraphRevision(workflow: WorkflowSpec): string {
+  return JSON.stringify({
+    topology: workflow.topology,
+    entry_agent: workflow.entry_agent,
+    hub: workflow.hub,
+    tools: workflow.tools,
+    agents: workflow.agents,
+    routers: workflow.routers,
+    edges: workflow.edges,
+  });
+}
+
 function inferredKind(agent: AgentSpec): AgentKind {
   const role = (agent.role || '').toLowerCase();
   if (agent.id === 'hub' || role === 'hub' || role === 'orchestrator') return 'hub';

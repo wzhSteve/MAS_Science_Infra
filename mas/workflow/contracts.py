@@ -147,13 +147,7 @@ def barriers_to_default_sites(barriers: List[str]) -> List[BranchSite]:
                 priority=10 + i,
             )
         )
-    return out or [
-        BranchSite(
-            id="legacy_after_tool",
-            anchor=BranchAnchor(kind="after_tool"),
-            gate=BranchGate(type="entropy_delta"),
-        )
-    ]
+    return out
 
 
 class SamplePolicy(BaseModel):
@@ -176,7 +170,7 @@ class SamplePolicy(BaseModel):
         enabled = [s for s in self.sites if s.enabled]
         if enabled:
             return sorted(enabled, key=lambda s: (-int(s.priority), s.id))
-        return barriers_to_default_sites(list(self.barriers or ["after_tool"]))
+        return barriers_to_default_sites(list(self.barriers))
 
 
 class MemoryItem(BaseModel):
@@ -300,5 +294,4 @@ class WindowEndEvent(BaseModel):
     metrics: Dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}
-
 

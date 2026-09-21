@@ -254,6 +254,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
             "tir_beam_size": int(self.tir_config.get("beam_size", 2)),
             "tir_branch_probability": float(self.tir_config.get("branch_probability", 0.5)),
             "tir_entropy_weight": float(self.tir_config.get("entropy_weight", 0.5)),
+            "tir_entropy_threshold": float(self.tir_config.get("entropy_threshold", 0.15)),
             "tir_use_official_arpo_gate": bool(self.tir_config.get("use_official_arpo_gate", True)),
             "ready_batch": bool(self.tir_config.get("ready_batch", False)),
             # NOTE: no force_local_expand — training hot path keeps
@@ -284,6 +285,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 sample["tir_beam_size"] = int(self.tir_config.get("beam_size", 2))
                 sample["tir_branch_probability"] = float(self.tir_config.get("branch_probability", 0.5))
                 sample["tir_entropy_weight"] = float(self.tir_config.get("entropy_weight", 0.5))
+                sample["tir_entropy_threshold"] = float(self.tir_config.get("entropy_threshold", 0.15))
                 sample["tir_use_official_arpo_gate"] = bool(self.tir_config.get("use_official_arpo_gate", True))
                 sample["ready_batch"] = bool(self.tir_config.get("ready_batch", False))
 

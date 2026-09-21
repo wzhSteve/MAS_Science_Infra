@@ -33,7 +33,7 @@ function MASWorkspace(props: MASPanelProps) {
   const readiness = useModelReadiness(props.expId, props.bundle?.llm.config_revision, props.active ?? true);
   const [panel, setPanel] = useState<EditorPanel>(props.requestedSettings ? 'settings' : null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(props.requestedSettings || 'model');
-  const [libraryOpen, setLibraryOpen] = useState(true);
+  const [libraryOpen, setLibraryOpen] = useState(!props.requestedSettings);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [consoleTab, setConsoleTab] = useState<ConsoleTab>('config');
   const [consoleMode, setConsoleMode] = useState<'rollout' | 'collect' | 'demo'>('rollout');
@@ -46,6 +46,7 @@ function MASWorkspace(props: MASPanelProps) {
     if (!props.active || lastRequested.current === props.requestedSettings) return;
     lastRequested.current = props.requestedSettings;
     if (props.requestedSettings) {
+      setLibraryOpen(false);
       setSettingsSection(props.requestedSettings);
       setPanel('settings');
     } else setPanel(null);
@@ -56,6 +57,7 @@ function MASWorkspace(props: MASPanelProps) {
   }, [props.requestedSettings, props.onWorkspace]);
   const openSettings = useCallback((section: SettingsSection) => {
     settingsTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setLibraryOpen(false);
     setSettingsSection(section);
     setPanel('settings');
     props.onSettings(section);
@@ -104,8 +106,10 @@ function MASWorkspace(props: MASPanelProps) {
   const settings = useMemo(() => props.bundle && <ExperimentSettings bundle={props.bundle} meta={props.meta} onReload={props.onReload}
     open={panel === 'settings'} active={props.active ?? true} section={settingsSection} onSectionChange={changeSettingsSection}
     onClose={closeSettings} onCollect={openCollect} onDemo={openDemo} onResources={props.onResources} readiness={readiness.data} readinessError={readiness.error}
-    selectedResource={props.selectedResource} suggestedPurpose={props.requestedSettings === 'model' ? 'inference' : 'training'} onSuggestionApplied={consumeResourceSelection} />,
-  [props.bundle, props.meta, props.onReload, props.active, props.onResources, props.selectedResource, props.requestedSettings, consumeResourceSelection, panel, settingsSection, changeSettingsSection, closeSettings, openCollect, openDemo, readiness.data, readiness.error]);
+    selectedResource={props.selectedResource} suggestedPurpose={props.requestedSettings === 'model' ? 'inference' : 'training'} onSuggestionApplied={consumeResourceSelection}
+    workflow={workflow!} palette={draft.palette} onWorkflowChange={draft.onWorkflowChange}
+    onSaveWorkflow={draft.save} savingWorkflow={draft.savingWorkflow} />,
+  [props.bundle, props.meta, props.onReload, props.active, props.onResources, props.selectedResource, props.requestedSettings, consumeResourceSelection, panel, settingsSection, changeSettingsSection, closeSettings, openCollect, openDemo, readiness.data, readiness.error, workflow, draft.palette, draft.onWorkflowChange, draft.save, draft.savingWorkflow]);
   const locate = useCallback((target: Omit<TraceFocusRequest, 'token'>) => {
     setTraceFocus({ ...target, token: ++focusSequence.current });
   }, []);

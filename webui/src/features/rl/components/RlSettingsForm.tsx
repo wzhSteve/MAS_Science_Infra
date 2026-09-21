@@ -42,27 +42,27 @@ export const RlSettingsForm = memo(function RlSettingsForm({
     {!advancedOnly && <div className="form-grid">
       <FormField label={<HelpLabel help={samplingAlgorithm
         ? '当前值由画布中的采样策略决定。'
-        : '选择训练使用的优势估计与分支策略。'}>训练算法</HelpLabel>}>
+        : '选择训练使用的 Advantage 与 Branch 策略。'}>Algorithm</HelpLabel>}>
         <Select value={algorithm} disabled={Boolean(samplingAlgorithm)}
           onChange={(event) => onPatch({ ...rl, algo: event.target.value })}>
           {(meta?.algos || ['grpo']).map((algo) => <option key={algo} value={algo}>{algo.toUpperCase()}</option>)}
         </Select>
       </FormField>
-      <FormField label={<HelpLabel help="根据机器规模选择一组训练启动默认值，实际设备仍以执行环境中的选择为准。">运行档位</HelpLabel>}>
+      <FormField label={<HelpLabel help="根据机器规模选择训练启动 Preset。">运行档位</HelpLabel>}>
         <Select value={rl.profile || 'fast'} onChange={(event) => onPatch({ ...rl, profile: event.target.value })}>
           {(meta?.profiles || ['fast']).map((profile) => <option key={profile} value={profile}>{profile}</option>)}
         </Select>
       </FormField>
       <FormField label={<HelpLabel help={samplingGroup != null
         ? '当前值由画布中的采样策略决定。'
-        : '每道题生成多少条候选轨迹，用于组内比较。'}>每题候选数</HelpLabel>}>
+        : '每道题生成多少条候选 Rollout，用于组内比较。'}>group_n</HelpLabel>}>
         <Input type="number" min={1} value={rolloutCount} disabled={samplingGroup != null}
           onChange={(event) => onPatch({ ...rl, ...rolloutPatch(rl, Number(event.target.value)) })} />
       </FormField>
-      <FormField label={<HelpLabel help="同时执行轨迹采集的任务数。">并行采集数</HelpLabel>}>
+      <FormField label={<HelpLabel help="同时执行 Rollout 采集的 Runner 数。">并行采集数</HelpLabel>}>
         <Input type="number" min={1} value={rl.n_runners ?? 1} onChange={(event) => onPatch({ ...rl, n_runners: Number(event.target.value) })} />
       </FormField>
-      {!modelBound && <FormField label={<HelpLabel help="没有绑定训练模型资源时使用的本地模型目录。">训练模型路径</HelpLabel>}>
+      {!modelBound && <FormField label={<HelpLabel help="没有绑定训练模型资源时使用的本地模型目录。">模型路径</HelpLabel>}>
         <Input value={rl.model_path || ''} onChange={(event) => onPatch({ ...rl, model_path: event.target.value })} />
       </FormField>}
     </div>}

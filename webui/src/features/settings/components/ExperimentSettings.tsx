@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Settings2, X } from 'lucide-react';
-import type { Bundle, MetaResponse, ModelReadinessResponse } from '../../../shared/api/types';
+import type { Bundle, MetaResponse, ModelReadinessResponse, Palette, WorkflowSpec } from '../../../shared/api/types';
 import { Button } from '../../../shared/ui/button';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { Section } from '../../../shared/components/Section';
@@ -15,6 +15,7 @@ import { useSettingsStatus } from './SettingsStatus';
 import { TrainingSettings } from './TrainingSettings';
 import type { ResourceCategory } from '../../../app/navigation';
 import type { ModelResourceType } from '../../resources/api';
+import { SamplingSettings } from '../../sampling/components/SamplingSettings';
 
 function RetainedSettings({ visible, children }: { visible: boolean; children: ReactNode }) {
   const [visited, setVisited] = useState(visible);
@@ -92,6 +93,7 @@ function EnvironmentStatus({ readiness, error }: {
 export const ExperimentSettings = memo(function ExperimentSettings({
   bundle, meta, onReload, open, active, section, onSectionChange, onClose, onCollect, onDemo,
   readiness, readinessError, onResources, selectedResource, suggestedPurpose, onSuggestionApplied,
+  workflow, palette, onWorkflowChange, onSaveWorkflow, savingWorkflow,
 }: {
   bundle: Bundle; meta: MetaResponse | null; onReload: () => void;
   open: boolean; active: boolean; section: SettingsSection; onSectionChange: (section: SettingsSection) => void;
@@ -99,6 +101,10 @@ export const ExperimentSettings = memo(function ExperimentSettings({
   onResources: (category: ResourceCategory) => void;
   selectedResource?: string; suggestedPurpose?: ModelResourceType;
   onSuggestionApplied?: () => void;
+  workflow: WorkflowSpec; palette: Palette;
+  onWorkflowChange: (workflow: WorkflowSpec) => void;
+  onSaveWorkflow: () => Promise<void>;
+  savingWorkflow: boolean;
 }) {
   const visible = open && active;
   const tabs = useRef<HTMLDivElement>(null);
@@ -143,6 +149,8 @@ export const ExperimentSettings = memo(function ExperimentSettings({
       {section === 'data' && <Section title="数据集采集">
         <Button size="sm" onClick={onCollect}>打开数据集采集</Button>
       </Section>}
+      {section === 'data' && <SamplingSettings workflow={workflow} palette={palette}
+        onChange={onWorkflowChange} onSave={onSaveWorkflow} saving={savingWorkflow} />}
       <RetainedSettings visible={modelVisible}>
         <InferenceSettings bundle={bundle} onReload={onReload} active={modelVisible} onManage={manageModels}
           view={section === 'environment' ? 'environment' : 'connection'}

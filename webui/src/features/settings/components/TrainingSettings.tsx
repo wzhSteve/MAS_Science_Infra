@@ -52,12 +52,12 @@ export const TrainingSettings = memo(function TrainingSettings({
       <StatusBadge tone={draft.dirty ? 'warning' : 'neutral'}>{pending ? '训练配置处理中…' : '训练配置未保存'}</StatusBadge>
     </div>}
     {draft.notice && <InlineNotice tone={draft.notice.tone}>{draft.notice.message}</InlineNotice>}
-    <div hidden={section === 'data'}>
+    {section !== 'data' && <div>
       <ModelBinding experimentId={expId} purpose="training" active={active} onReload={onReload}
         onManage={onManageModels} onState={setBinding} legacyDirty={draft.dirty || pending !== null} suggestedId={suggestedResourceId} onSuggestionApplied={onSuggestionApplied} />
-    </div>
+    </div>}
 
-    <div hidden={section !== 'training'}>
+    {section === 'training' && <div>
       <ActionBar>
         <div className="experiment-settings-view-switch" role="group" aria-label="训练参数模式">
           <Button size="sm" variant={mode === 'quick' ? 'primary' : 'ghost'} aria-pressed={mode === 'quick'} onClick={() => setMode('quick')}>基础设置</Button>
@@ -82,9 +82,9 @@ export const TrainingSettings = memo(function TrainingSettings({
       {section === 'training' && renderRuntime({
         onStart: draft.start, pending: !binding.loaded || binding.error ? 'binding-unavailable' : pending, active: trainingVisible,
       })}
-    </div>
+    </div>}
 
-    <div hidden={section !== 'data'}>
+    {section === 'data' && <div>
       <Section title="训练数据">
         <div className="form-grid">
           {DATA_FIELDS.map((field) => <FormField key={field.path}
@@ -94,18 +94,18 @@ export const TrainingSettings = memo(function TrainingSettings({
           </FormField>)}
         </div>
       </Section>
-    </div>
+    </div>}
 
-    <div hidden={section !== 'environment'}>
+    {section === 'environment' && <div>
       <Section title="训练环境">
         <div className="form-grid">
-          <FormField label={<HelpLabel help="根据服务器规模选择启动预设；实际使用设备以当前 GPU 选择为准。">运行档位</HelpLabel>}>
+          <FormField label={<HelpLabel help="根据服务器规模选择启动 Preset；实际设备以当前 GPU 选择为准。">运行档位</HelpLabel>}>
             <Select value={rl.profile || 'fast'} onChange={(event) => patch({ ...rl, profile: event.target.value })}>
               {(meta?.profiles || ['fast']).map((profile) =>
                 <option key={profile} value={profile}>{PROFILE_LABELS[profile] || profile}</option>)}
             </Select>
           </FormField>
-          <FormField label={<HelpLabel help="同时执行轨迹采集的任务数，不等于 GPU 数量。">并行采集数</HelpLabel>}>
+          <FormField label={<HelpLabel help="同时执行 Rollout 采集的 Runner 数，不等于 GPU 数量。">并行采集数</HelpLabel>}>
             <Input type="number" min={1} value={rl.n_runners ?? 1} onChange={(event) => patch({ ...rl, n_runners: Number(event.target.value) })} />
           </FormField>
           {ENVIRONMENT_FIELDS.map((field) => <FormField key={field.path}
@@ -115,7 +115,7 @@ export const TrainingSettings = memo(function TrainingSettings({
           </FormField>)}
         </div>
       </Section>
-    </div>
+    </div>}
 
     {(section !== 'training' || mode === 'full') && <ActionBar>
       <Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={save}>保存训练配置</Button>

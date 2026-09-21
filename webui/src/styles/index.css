@@ -9,5 +9,6 @@
 @import "./integrations/react-flow.css";
 @import "./integrations/mas-console.css";
 @import "./integrations/mas-trajectory.css";
+@import "./integrations/sampling-settings.css";
 
 @source "../";

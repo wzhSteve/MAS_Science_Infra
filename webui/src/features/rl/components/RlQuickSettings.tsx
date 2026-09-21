@@ -37,7 +37,7 @@ export const RlQuickSettings = memo(function RlQuickSettings({
     <div className="form-grid">
       <FormField label={<HelpLabel help={samplingAlgorithm
         ? '当前值由画布中的采样策略决定。如需修改，请在采样设置中调整。'
-        : ALGORITHM_HINTS[algorithm]}>训练算法</HelpLabel>}>
+        : ALGORITHM_HINTS[algorithm]}>Algorithm</HelpLabel>}>
         <Select value={algorithm} disabled={Boolean(samplingAlgorithm)}
           onChange={(event) => onPatch({ ...rl, algo: event.target.value })}>
           {(meta?.algos || ['grpo']).map((algo) => <option key={algo} value={algo}>{algo.toUpperCase()}</option>)}
@@ -45,21 +45,21 @@ export const RlQuickSettings = memo(function RlQuickSettings({
       </FormField>
       <FormField label={<HelpLabel help={samplingGroup != null
         ? '当前值由画布中的采样策略决定。'
-        : '每道题生成多少条候选轨迹，用于组内比较。'}>每题候选数</HelpLabel>}>
+        : '每道题生成多少条候选 Rollout，用于组内比较。'}>group_n</HelpLabel>}>
         <Input type="number" min={1} value={rolloutCount} disabled={samplingGroup != null}
           onChange={(event) => onPatch({ ...rl, ...rolloutPatch(rl, Number(event.target.value)) })} />
       </FormField>
-      <FormField label={<HelpLabel help="同时执行轨迹采集的任务数。提高后会增加吞吐，也会占用更多 CPU、显存和模型并发。">并行采集数</HelpLabel>}>
+      <FormField label={<HelpLabel help="同时执行 Rollout 采集的 Runner 数。">并行采集数</HelpLabel>}>
         <Input type="number" min={1} value={rl.n_runners ?? 1}
           onChange={(event) => onPatch({ ...rl, n_runners: Number(event.target.value) })} />
       </FormField>
-      <FormField label={<HelpLabel help="完整遍历训练数据的次数。">训练轮次</HelpLabel>}>
+      <FormField label={<HelpLabel help="完整遍历训练数据的次数。">Epochs</HelpLabel>}>
         <Input type="number" min={1} value={rl.trainer?.total_epochs ?? 1}
           onChange={(event) => onPatch({
             ...rl, trainer: { ...rl.trainer, total_epochs: Number(event.target.value) },
           })} />
       </FormField>
-      <FormField label={<HelpLabel help="控制模型每次参数更新的幅度。数值过大可能导致训练不稳定。">学习率</HelpLabel>}>
+      <FormField label={<HelpLabel help="Actor Optimizer 的 Learning Rate。">学习率</HelpLabel>}>
         <Input type="number" min={0} step="any" value={rl.actor_rollout_ref?.actor?.optim?.lr ?? 1e-6}
           onChange={(event) => onPatch({
             ...rl,

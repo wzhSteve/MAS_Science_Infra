@@ -4,7 +4,7 @@
   .experiment-settings-tabs > button { flex: 1 0 auto; border: 0; border-radius: 5px; padding: 7px 8px; background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
   .experiment-settings-tabs > button[aria-selected="true"] { background: var(--accent-subtle); color: var(--accent); font-weight: 600; }
   .experiment-settings-tabs > button:hover { background: var(--surface-subtle); }
-  .experiment-settings-body { display: flex; flex-direction: column; gap: 16px; }
+  .experiment-settings-body { display: flex; flex-direction: column; gap: 16px; contain: layout paint; scrollbar-gutter: stable; }
   .experiment-settings-body > * { flex-shrink: 0; min-width: 0; }
   .experiment-settings-intro { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--text-secondary); }
   .experiment-settings-status { flex: none; white-space: nowrap; padding: 2px 6px; border-radius: 4px; background: var(--warning-subtle); color: var(--warning); font-size: 10px; }

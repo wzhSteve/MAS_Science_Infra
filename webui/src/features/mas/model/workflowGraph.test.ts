@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { WorkflowSpec } from '../../../shared/api/types';
+import type { SamplingSpec, WorkflowSpec } from '../../../shared/api/types';
 import { createEdgeRules } from './edgeRules';
 import { executableInfo, flowToWorkflow, workflowToFlow } from './workflowGraph';
 
-const sampling = {
+const sampling: SamplingSpec = {
   mode: 'arpo',
   group_n: 4,
   sites: [{

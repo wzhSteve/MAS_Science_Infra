@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { NodeProps } from '@xyflow/react';
-import { Wrench } from 'lucide-react';
+import { GitBranch, Wrench } from 'lucide-react';
 import type { GraphNode } from '../types';
 import { NodeHandles } from './NodeHandles';
 
@@ -12,6 +12,8 @@ function ToolNode({ id, data: d, selected }: NodeProps<GraphNode>) {
       <div className="mas-node__heading"><span className="mas-node__icon"><Wrench size={17} /></span>
         <div><div className="mas-node__name">{d.label || 'Tool'}</div><div className="mas-node__role">内置工具 · 按需调用</div></div>
       </div>
+      {d.branchCount ? <div className="mas-node__footer"><span>Branch Site</span>
+        <span className="mas-node__branch"><GitBranch size={10} />{d.branchCount}</span></div> : null}
       {d.issue && <div className="mas-node__issue">{d.issue}</div>}
     </div>
   );

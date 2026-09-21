@@ -137,6 +137,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     max_branch_depth=max(1, int(task_run.get("max_branch_depth") or 2)),
                     branch_probability=float(task_run.get("tir_branch_probability") or 0.5),
                     entropy_weight=float(task_run.get("tir_entropy_weight") or 0.5),
+                    entropy_threshold=float(task_run.get("tir_entropy_threshold") or 0.15),
                     use_official_arpo_gate=bool(task_run.get("tir_use_official_arpo_gate", True)),
                     execute_local=local_expand,
                     parallel_local=ready_batch,

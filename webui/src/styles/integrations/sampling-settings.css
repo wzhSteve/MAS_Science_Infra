@@ -1,0 +1,15 @@
+@layer components {
+  .sampling-settings { display: grid; gap: 14px; }
+  .branch-site-list { display: grid; gap: 6px; }
+  .branch-site-item { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; padding: 8px 9px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface); color: var(--text-primary); text-align: left; cursor: pointer; }
+  .branch-site-item:hover { background: var(--surface-subtle); }
+  .branch-site-item.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-subtle); }
+  .branch-site-item > span:nth-child(3) { display: grid; min-width: 0; }
+  .branch-site-item strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .branch-site-item small { margin-top: 2px; color: var(--text-secondary); font-size: 9px; }
+  .branch-site-icon { display: grid; place-items: center; color: var(--text-secondary); }
+  .branch-site-editor { display: grid; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle); }
+  .branch-site-editor-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; }
+  .branch-site-editor-title > span { color: var(--text-secondary); }
+  .branch-gate-parameters { margin-top: 2px; padding-top: 13px; border-top: 1px dashed var(--border-subtle); }
+}

@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { NodeProps } from '@xyflow/react';
-import { Route } from 'lucide-react';
+import { GitBranch, Route } from 'lucide-react';
 import type { GraphNode } from '../types';
 import { NodeHandles } from './NodeHandles';
 
@@ -17,7 +17,8 @@ function RouterNode({ id, data, selected }: NodeProps<GraphNode>) {
         <div className="mas-node__role">{data.strategy || 'llm_choice'}</div></div>
     </div>
     <div className="mas-node__footer">
-      <span>Router</span><span>{data.candidates?.length || 0} 个候选</span>
+      <span>Router</span><span>{data.branchCount ? <span className="mas-node__branch"><GitBranch size={10} />{data.branchCount}</span>
+        : `${data.candidates?.length || 0} 个候选`}</span>
     </div>
     {data.issue && <div className="mas-node__issue">{data.issue}</div>}
   </div>;

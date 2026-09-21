@@ -22,6 +22,7 @@ export type GraphNodeData = Record<string, unknown> & {
   backend?: string;
   llm_required?: boolean;
   description?: string;
+  branchCount?: number;
   issue?: string;
   related?: boolean;
 };
