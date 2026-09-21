@@ -5,22 +5,34 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test:traj": "vitest run src/features/sampling/trajectoryGraph.test.ts"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest"
   },
   "dependencies": {
     "@xyflow/react": "^12.4.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "1.44.0",
+    "radix-ui": "1.6.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "recharts": "^2.15.0"
+    "recharts": "^2.15.0",
+    "tailwind-merge": "3.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@tailwindcss/vite": "4.1.13",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^26.1.0",
+    "tailwindcss": "4.1.13",
     "typescript": "~5.6.2",
     "vite": "^5.4.11",
-    "vitest": "^2.1.9"
+    "vitest": "2.1.9"
   }
 }

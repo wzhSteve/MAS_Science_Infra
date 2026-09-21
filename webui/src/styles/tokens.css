@@ -1,0 +1,40 @@
+@layer theme {
+  :root {
+    color-scheme: light;
+    --canvas: #f7f8fa;
+    --surface: #ffffff;
+    --surface-subtle: #f1f3f5;
+    --text-primary: #20252b;
+    --text-secondary: #59636e;
+    --border-subtle: #dde1e6;
+    --border-control: #8e98a4;
+    --accent: #245db5;
+    --accent-hover: #1b4c97;
+    --accent-subtle: #edf3fc;
+    --success: #237547;
+    --success-subtle: #eff8f2;
+    --warning: #8a5b12;
+    --warning-subtle: #fff8e9;
+    --danger: #b63737;
+    --danger-subtle: #fff2f2;
+    --focus-ring: #245db5;
+    --chart-collect: #245db5;
+    --chart-train: #237547;
+    --log-background: #1e252e;
+    --log-text: #dbe2eb;
+    --font-ui: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --font-code: "Cascadia Code", Consolas, ui-monospace, monospace;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-subtle: var(--surface-subtle);
+  --color-foreground: var(--text-primary);
+  --color-muted: var(--text-secondary);
+  --color-accent: var(--accent);
+  --color-line: var(--border-subtle);
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+}

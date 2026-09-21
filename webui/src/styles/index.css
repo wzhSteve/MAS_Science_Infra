@@ -1,0 +1,13 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "./tokens.css";
+@import "./base.css";
+@import "./components.css";
+@import "./layout.css";
+@import "@xyflow/react/dist/style.css";
+@import "./integrations/react-flow.css";
+@import "./integrations/mas-console.css";
+@import "./integrations/mas-trajectory.css";
+
+@source "../";
