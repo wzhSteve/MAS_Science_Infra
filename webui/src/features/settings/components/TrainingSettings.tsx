@@ -80,7 +80,7 @@ export const TrainingSettings = memo(function TrainingSettings({
           modelBound sampling={bundle.workflow.sampling} advancedOnly />
       </div>
       {section === 'training' && renderRuntime({
-        onStart: draft.start, pending: !binding.loaded || binding.error ? 'binding-unavailable' : pending, active: trainingVisible,
+        onStart: draft.start, pending: !binding.loaded ? 'binding-unavailable' : pending, active: trainingVisible,
       })}
     </div>}
 

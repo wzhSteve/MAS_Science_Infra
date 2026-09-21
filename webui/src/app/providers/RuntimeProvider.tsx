@@ -4,6 +4,7 @@ import { harnessApi } from '../../features/harness/api';
 import { rlApi } from '../../features/rl/api';
 import { monitorApi } from '../../features/monitor/api';
 import { runtimeApi } from '../../features/runtime/api';
+import { trainingApi } from '../../features/training/api';
 import { useTrainingRun, type TrainingSnapshot } from '../../features/runtime/model/useTrainingRun';
 import { useExperimentEvents, type ExperimentEvents } from '../../features/runtime/model/useExperimentEvents';
 import { usePollingResource, type Resource } from '../../shared/hooks/usePollingResource';
@@ -57,8 +58,9 @@ export function RuntimeProvider({ expId, onReload, active = true, children }: {
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const startTrain = useCallback(async () => {
-    if (!(await confirm()) || !alive.current) return;
     await run('train', async () => {
+      const preflight = await trainingApi.preflight(expId);
+      if (!(await confirm(preflight)) || !alive.current) return;
       await rlApi.train(expId, { stop_llm: true, confirm_gpu: true });
       if (!alive.current) return;
       setStatus('train_started');

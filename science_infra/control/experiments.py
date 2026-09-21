@@ -244,6 +244,13 @@ def list_experiments() -> List[str]:
     return out
 
 
+def load_llm_section(exp_id: str) -> Dict[str, Any]:
+    root = require_experiment(exp_id)
+    raw = _read_yaml(root / "experiment.yaml")
+    meta = ExperimentMeta.model_validate(raw.get("experiment") or raw)
+    return _read_yaml(root / meta.refs.get("llm", "llm.yaml"))
+
+
 def load_bundle(exp_id: str) -> Dict[str, Any]:
     root = require_experiment(exp_id)
     meta_raw = _read_yaml(root / "experiment.yaml")
@@ -253,13 +260,46 @@ def load_bundle(exp_id: str) -> Dict[str, Any]:
     workflow = _read_yaml(root / meta.refs.get("workflow", "workflow.yaml"))
     rl = _read_yaml(root / meta.refs.get("rl", "rl.yaml"))
     harness = _read_yaml(root / meta.refs.get("harness", "harness.yaml"))
-    # Never expose raw API keys; only whether set in env / sidecar
+    from .llm_config import (
+        public_endpoint,
+        resolve_legacy_llm_config,
+        resource_llm_config,
+    )
+    from .model_resources import binding_context
+
+    bindings, resource = binding_context(exp_id)
+    binding_error = bindings["inference"].get("error")
+    if binding_error:
+        model_summary = {
+            "kind": "api",
+            "model": "",
+            "base_url": "",
+            "api_key_set": False,
+            "credential_source": "none",
+            "config_revision": "",
+            "resource_id": bindings["inference"]["resource_id"],
+            "resource_revision": None,
+            "resource_name": None,
+            "binding_error": binding_error,
+        }
+    else:
+        model_summary = (
+            resource_llm_config(resource)
+            if resource
+            else resolve_legacy_llm_config(exp_id, llm=llm)
+        ).public()
     llm = dict(llm)
     llm.pop("api_key", None)
-    llm["api_key_set"] = bool(
-        __import__("os").environ.get("OPENAI_API_KEY")
-        or (root / ".secrets.env").is_file()
-    )
+    llm["base_url"] = public_endpoint(str(llm.get("base_url") or ""))
+    if resource:
+        llm = dict(resource.data["config"])
+    llm.update(model_summary)
+    if isinstance(workflow.get("llm"), dict):
+        workflow["llm"] = dict(workflow["llm"])
+        workflow["llm"].pop("api_key", None)
+        workflow["llm"]["base_url"] = public_endpoint(
+            str(workflow["llm"].get("base_url") or "")
+        )
     return {
         "id": meta.id,
         "meta": meta.model_dump(),
@@ -269,6 +309,7 @@ def load_bundle(exp_id: str) -> Dict[str, Any]:
         "harness": harness,
         "path": str(root),
         "executable": workflow_executable(workflow),
+        "model_bindings": bindings,
     }
 
 
@@ -289,9 +330,25 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
             document = meta.model_dump()
         _write_yaml(root / "experiment.yaml", document)
     elif section == "llm":
+        from .model_resources import ResourceError, resolve_binding
+
+        if resolve_binding(exp_id, "inference") is not None:
+            raise ResourceError(
+                "当前实验已绑定模型资源，请编辑资源或先解除绑定。",
+                409,
+            )
         clean = dict(data)
         api_key = clean.pop("api_key", None)
-        clean.pop("api_key_set", None)
+        for field in (
+            "api_key_set",
+            "credential_source",
+            "config_revision",
+            "resource_id",
+            "resource_revision",
+            "resource_name",
+            "binding_error",
+        ):
+            clean.pop(field, None)
         _write_yaml(root / meta.refs.get("llm", "llm.yaml"), clean)
         if isinstance(api_key, str) and api_key.strip() and not api_key.startswith("••"):
             _write_secret(root, "OPENAI_API_KEY", api_key.strip())
@@ -305,14 +362,14 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
         }
         _write_yaml(wf_path, wf)
     elif section == "workflow":
-        _write_yaml(root / meta.refs.get("workflow", "workflow.yaml"), data)
-        # Keep llm.yaml kind in sync if workflow carries llm
-        if isinstance(data.get("llm"), dict):
-            llm = _read_yaml(root / meta.refs.get("llm", "llm.yaml"))
-            llm["kind"] = data["llm"].get("kind", llm.get("kind", "api"))
-            llm["model"] = data["llm"].get("model", llm.get("model", ""))
-            llm["base_url"] = data["llm"].get("base_url", llm.get("base_url", ""))
-            _write_yaml(root / meta.refs.get("llm", "llm.yaml"), llm)
+        current_llm = _read_yaml(root / meta.refs.get("llm", "llm.yaml"))
+        workflow = dict(data)
+        workflow["llm"] = {
+            "kind": current_llm.get("kind", "api"),
+            "model": current_llm.get("model", ""),
+            "base_url": current_llm.get("base_url") or "",
+        }
+        _write_yaml(root / meta.refs.get("workflow", "workflow.yaml"), workflow)
     elif section == "rl":
         data = normalize_rl_data_paths(data)
         _write_yaml(root / meta.refs.get("rl", "rl.yaml"), data)

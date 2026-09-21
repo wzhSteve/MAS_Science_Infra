@@ -28,6 +28,10 @@ from science_infra.control.experiments import (
 from science_infra.control.paths import webui_dist
 from science_infra.control.process_manager import PROCS
 from science_infra.control import services
+from science_infra.control.model_resource_api import router as model_resource_router
+from science_infra.control.model_resources import ResourceError
+from science_infra.control.readiness import model_readiness
+from science_infra.control.training import training_preflight
 
 
 class CreateExperimentBody(BaseModel):
@@ -70,6 +74,8 @@ class TrainBody(BaseModel):
 class LlmHealthBody(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    model: Optional[str] = None
+    kind: Optional[str] = None
 
 
 def create_app() -> FastAPI:
@@ -82,6 +88,15 @@ def create_app() -> FastAPI:
         yield
 
     app = FastAPI(title="Science Control Plane", version="0.1.0", lifespan=lifespan)
+    app.include_router(model_resource_router)
+
+    @app.exception_handler(ResourceError)
+    async def resource_error(_request: Request, error: ResourceError) -> Response:
+        return Response(
+            content=json.dumps({"detail": str(error)}, ensure_ascii=False),
+            status_code=error.status,
+            media_type="application/json",
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -261,10 +276,21 @@ def create_app() -> FastAPI:
 
     @app.post("/api/llm/health")
     async def llm_health(body: LlmHealthBody, experiment_id: str = Query("demo")) -> Dict[str, Any]:
-        base = body.base_url
-        if not base:
-            base = str(load_bundle(experiment_id)["llm"].get("base_url") or "")
-        return await services.llm_health(base, body.api_key)
+        return await services.llm_health(
+            body.base_url,
+            body.api_key,
+            experiment_id=experiment_id,
+            model=body.model,
+            kind=body.kind,
+        )
+
+    @app.get("/api/mas/readiness")
+    def mas_readiness(experiment_id: str = Query("demo")) -> Dict[str, Any]:
+        return model_readiness(experiment_id)
+
+    @app.get("/api/rl/preflight")
+    def rl_preflight(experiment_id: str = Query("demo")) -> Dict[str, Any]:
+        return training_preflight(experiment_id)
 
     @app.post("/api/llm/start")
     def llm_start(experiment_id: str = Query("demo")) -> Dict[str, Any]:

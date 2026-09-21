@@ -15,6 +15,13 @@ def experiments_root() -> Path:
     return repo_root() / "experiments"
 
 
+def model_resources_db() -> Path:
+    override = os.environ.get("SCIENCE_MODEL_RESOURCES_DB", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return repo_root() / "artifacts" / "control" / "model_resources.sqlite3"
+
+
 def tir_agent_root() -> Path:
     """MAS layer root (formerly agent-lightning/examples/tir_agent)."""
     return repo_root() / "mas"

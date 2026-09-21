@@ -288,6 +288,40 @@ export interface ModelReadinessResponse {
   probe: HealthResponse | null;
 }
 
+export interface TrainingCheck {
+  id: string;
+  label: string;
+  status: 'pass' | 'warning' | 'error';
+  message: string;
+}
+
+export interface TrainingPreflightResponse {
+  experiment_id: string;
+  ready: boolean;
+  revision: string;
+  effective: {
+    algorithm: string;
+    algorithm_source: 'workflow.sampling' | 'rl';
+    profile: string;
+    model: {
+      source: 'resource' | 'legacy';
+      model_path: string;
+      resource_id?: string | null;
+      resource_revision?: number | null;
+      resource_name?: string | null;
+    };
+    gpu_ids: number[];
+    group_n: number;
+    branch_site_count: number;
+    trainable_agents: string[];
+    data: Config;
+  };
+  checks: TrainingCheck[];
+  blocking_issues: ReadinessIssue[];
+  warnings: ReadinessIssue[];
+  launch_preview: string[];
+}
+
 export interface AglHealth {
   ok: boolean;
   error?: string;

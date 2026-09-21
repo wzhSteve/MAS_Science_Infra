@@ -56,6 +56,7 @@ class Collector:
         n: int = 1,
         archive_root: Optional[str] = None,
         spec_path: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> None:
         self.mock = mock
         self.endpoint = endpoint or os_environ_endpoint()
@@ -67,6 +68,7 @@ class Collector:
         self.n = max(1, int(n))
         self.archive_root = archive_root
         self.spec_path = spec_path
+        self.api_key = api_key
         self.spec = load_spec(spec_path)
 
     def _service(self) -> ExecutionService:
@@ -83,6 +85,7 @@ class Collector:
                 max_tokens=self.max_tokens,
                 max_model_len=int(mlen) if mlen else None,
                 enabled_tools=list(self.spec.tools),
+                api_key=self.api_key,
             )
         return ExecutionService(
             mock=self.mock,

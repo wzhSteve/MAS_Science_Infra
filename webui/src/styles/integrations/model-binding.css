@@ -3,4 +3,8 @@
   .model-binding-search .ui-input { flex: 1; min-width: 0; }
   .model-binding-pages { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 10px; }
   .model-binding-summary { background: var(--surface-subtle); padding: 10px 12px; border-radius: 6px; margin-top: 12px; font-size: 12px; overflow-wrap: anywhere; }
+  .local-model-candidates { display: grid; gap: 8px; margin-top: 14px; }
+  .local-model-candidate { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 6px; }
+  .local-model-candidate > div { display: grid; min-width: 0; gap: 2px; }
+  .local-model-candidate span, .local-model-candidate small { color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
 }

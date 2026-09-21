@@ -30,6 +30,7 @@ class LLMConfig:
     request_logprobs: bool = False
     enabled_tools: Optional[Sequence[str]] = None
     langchain_callbacks: Optional[List[Any]] = None
+    api_key: Optional[str] = field(default=None, repr=False)
 
 
 @dataclass
@@ -367,6 +368,7 @@ def run_episode(
             enabled_tools=enabled,
             system_prompt=system_prompt,
             agent_id=agent_id,
+            api_key=llm.api_key,
         )
     else:
         agent = tir.TirAgent(
@@ -380,6 +382,7 @@ def run_episode(
             enabled_tools=enabled,
             system_prompt=system_prompt,
             agent_id=agent_id,
+            api_key=llm.api_key,
         )
     # agent-framework A1: test mode (llm.kind=api) may use epc_aw LLM-in-tool
     # backends for tool-agents declaring profile.llm_required; training/collect

@@ -326,6 +326,7 @@ class TirAgent:
         max_model_len: Optional[int] = None,
         routers: Optional[Dict[str, Any]] = None,
         agent_id: str = "hub",
+        api_key: Optional[str] = None,
     ) -> None:
         self.max_turns = max_turns
         self.model_name = model_name
@@ -375,7 +376,7 @@ class TirAgent:
         llm_kwargs: Dict[str, Any] = dict(
             model_provider="openai",
             openai_api_base=endpoint,
-            openai_api_key=os.environ.get("OPENAI_API_KEY", "dummy"),
+            openai_api_key=api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "dummy"),
             temperature=temperature,
             max_retries=0,
             max_tokens=max_tokens,

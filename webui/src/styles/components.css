@@ -93,6 +93,17 @@
   .dialog-title { font-size: 19px; font-weight: 600; margin: 4px 0 12px; }
   .dialog-description { font-size: 14px; color: var(--text-secondary); line-height: 1.8; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+  .training-preflight { display: grid; gap: 14px; margin-top: 18px; }
+  .training-preflight dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }
+  .training-preflight dl > div { min-width: 0; padding: 10px 12px; border-radius: 6px; background: var(--surface-subtle); }
+  .training-preflight dt { color: var(--text-secondary); font-size: 11px; }
+  .training-preflight dd { margin: 4px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+  .training-preflight-checks { display: grid; gap: 6px; }
+  .training-preflight-check { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; padding: 7px 9px; border-left: 3px solid var(--border-control); background: var(--canvas); font-size: 12px; }
+  .training-preflight-check.is-pass { border-left-color: var(--success); }
+  .training-preflight-check.is-warning { border-left-color: var(--warning); }
+  .training-preflight-check.is-error { border-left-color: var(--danger); }
+  .training-preflight-check span { color: var(--text-secondary); overflow-wrap: anywhere; }
   @media (max-width: 767px) {
     .form-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
     .ui-section { padding: 18px 16px; }
@@ -101,6 +112,8 @@
     .ui-button, .ui-button--sm { min-height: 40px; }
     .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
     .metric, .metric:first-child { padding: 0; border: 0; }
+    .training-preflight dl { grid-template-columns: minmax(0, 1fr); }
+    .training-preflight-check { grid-template-columns: minmax(0, 1fr); }
   }
   @media (pointer: coarse) { .ui-button, .ui-button--sm, .ui-input { min-height: 44px; } }
 }

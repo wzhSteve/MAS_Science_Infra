@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { modelResourcesApi, type ModelBindings, type ModelResource, type ModelResourceType } from '../api';
+import { modelResourcesApi, type LocalModelCandidate, type ModelBindings, type ModelResource, type ModelResourceType } from '../api';
 import { usePollingResource } from '../../../shared/hooks/usePollingResource';
 import { useAction } from '../../../shared/hooks/useAction';
 import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
@@ -33,6 +33,8 @@ export const ModelBinding = memo(function ModelBinding({
   const remote = usePollingResource(`bindings:${experimentId}:${purpose}`, loadBindings, undefined, active);
   const loadList = useCallback((signal: AbortSignal) => modelResourcesApi.list({ type: purpose, q: search, offset, limit: 20 }, signal), [purpose, search, offset]);
   const list = usePollingResource(`binding-options:${purpose}:${search}:${offset}`, loadList, undefined, active);
+  const loadLocalModels = useCallback((signal: AbortSignal) => modelResourcesApi.discoverLocal(signal), []);
+  const localModels = usePollingResource('local-training-models', loadLocalModels, undefined, active && purpose === 'training');
   const [draft, setDraft] = useState<{ base: ModelBindings; selected: string | null } | null>(null);
   const action = useAction();
   const handledSuggestion = useRef<string>();
@@ -70,8 +72,8 @@ export const ModelBinding = memo(function ModelBinding({
   useEffect(() => {
     onState?.(draft ? {
       loaded: true, bound: Boolean(saved?.resource_id), resource: saved?.resource || null, error,
-    } : { ...UNLOADED, error: remote.error });
-  }, [draft?.base, purpose, onState, error, remote.error]);
+    } : { ...UNLOADED, loaded: !remote.loading, error: remote.error });
+  }, [draft?.base, purpose, onState, error, remote.error, remote.loading]);
 
   const save = useCallback(async () => {
     const submitted = latestDraft.current;
@@ -104,6 +106,22 @@ export const ModelBinding = memo(function ModelBinding({
       return '已重新载入模型绑定。';
     });
   };
+  const registerLocal = useCallback(async (candidate: LocalModelCandidate) => {
+    const submitted = latestDraft.current;
+    if (!submitted || purpose !== 'training') return;
+    await action.run('register-local', async () => {
+      const { resource, bindings } = await modelResourcesApi.registerLocal(experimentId, {
+        revision: submitted.base.revision,
+        name: candidate.name,
+        model_path: candidate.path,
+      });
+      if (!mounted.current) return;
+      setDraft({ base: bindings, selected: bindings.training.resource_id });
+      await list.refresh();
+      onReload();
+      return `已绑定本地模型 ${resource.name}`;
+    });
+  }, [action.run, experimentId, list.refresh, onReload, purpose]);
 
   return <Section title={purpose === 'inference' ? '默认推理模型' : '训练模型来源'} actions={
     <StatusBadge tone={dirty ? 'warning' : 'neutral'}>{action.pending ? '处理中' : !draft ? '读取绑定中' : dirty ? '绑定未保存' : saved?.resource_id ? '个人资源' : '实验内配置'}</StatusBadge>
@@ -133,6 +151,18 @@ export const ModelBinding = memo(function ModelBinding({
     {candidate && <div className="model-binding-summary">
       <p>{purpose === 'inference' ? `${candidate.config.model || '未命名模型'} · ${candidate.config.base_url || ''}` : candidate.config.model_path}</p>
     </div>}
+    {purpose === 'training' && localModels.data?.items.length ? <div className="local-model-candidates">
+      <p className="field-hint">服务器检测到的本地模型</p>
+      {localModels.data.items.map(model => <div className="local-model-candidate" key={model.path}>
+        <div><strong>{model.name}</strong><span className="mono">{model.path}</span>
+          <small>{model.architectures.join(', ') || model.model_type || 'Hugging Face model'}</small></div>
+        <Button size="sm" disabled={action.pending !== null} loading={action.pending === 'register-local'}
+          onClick={() => void registerLocal(model)}>
+          {model.registered_resource_id ? '绑定' : '登记并绑定'}
+        </Button>
+      </div>)}
+    </div> : null}
+    {purpose === 'training' && localModels.error && <InlineNotice tone="warning">本地模型发现失败：{localModels.error}</InlineNotice>}
     {!candidateValid && draft?.selected && <InlineNotice tone="warning">所选资源尚未读取或类型不适用，不能保存绑定。</InlineNotice>}
     {legacyDirty && <InlineNotice tone="warning">实验配置还有未保存修改，请先保存后再切换模型来源。</InlineNotice>}
     <div className="action-bar">

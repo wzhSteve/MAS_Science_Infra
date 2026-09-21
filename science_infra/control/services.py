@@ -9,8 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import httpx
+from urllib.parse import urlsplit
 
 from science_infra.control.events import BUS
 from science_infra.control.experiments import (
@@ -21,7 +20,6 @@ from science_infra.control.experiments import (
     ensure_experiment,
     exp_dir,
     load_bundle,
-    load_secrets_env,
     normalize_rl_data_paths,
     workflow_executable,
     write_json,
@@ -29,6 +27,13 @@ from science_infra.control.experiments import (
 from science_infra.control.paths import tir_agent_root
 from science_infra.env import repo_root
 from science_infra.control.process_manager import PROCS
+from science_infra.control.llm_config import (
+    resolve_legacy_llm_config,
+    resolve_llm_config,
+    resource_llm_config,
+)
+from science_infra.control.model_resources import resolve_binding
+from science_infra.control.readiness import probe_llm
 
 
 def _ensure_tir_on_path() -> None:
@@ -38,50 +43,36 @@ def _ensure_tir_on_path() -> None:
 
 
 def _llm_env(exp_id: str, llm: Dict[str, Any]) -> Dict[str, str]:
-    env: Dict[str, str] = {}
-    secrets = load_secrets_env(exp_id)
-    if secrets.get("OPENAI_API_KEY"):
-        env["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
-    base = str(llm.get("base_url") or "").strip()
-    model = str(llm.get("model") or "").strip()
-    if base:
-        env["OPENAI_API_BASE"] = base
-        env["OPENAI_BASE_URL"] = base
-    if model:
-        env["OPENAI_MODEL"] = model
-        env["MODEL"] = model
-    return env
+    return resolve_llm_config(exp_id, llm=llm).subprocess_env()
 
 
-async def llm_health(base_url: str, api_key: Optional[str] = None) -> Dict[str, Any]:
-    base = base_url.rstrip("/")
-    if not base:
-        return {"ok": False, "error": "empty base_url"}
-    url = f"{base}/models"
-    headers = {}
-    key = api_key or os.environ.get("OPENAI_API_KEY")
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.get(url, headers=headers)
-            ok = r.status_code < 500
-            body: Any
-            try:
-                body = r.json()
-            except Exception:
-                body = r.text[:500]
-            models = []
-            if isinstance(body, dict) and isinstance(body.get("data"), list):
-                models = [m.get("id") for m in body["data"] if isinstance(m, dict)]
-            return {"ok": ok, "status_code": r.status_code, "models": models, "url": url}
-    except Exception as e:
-        return {"ok": False, "error": str(e), "url": url}
+async def llm_health(
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    *,
+    experiment_id: str = "demo",
+    model: Optional[str] = None,
+    kind: Optional[str] = None,
+) -> Dict[str, Any]:
+    config = resolve_llm_config(
+        experiment_id,
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        kind=kind,
+    )
+    return await probe_llm(config, experiment_id=experiment_id)
 
 
 def start_local_llm(exp_id: str, *, stop_if_running: bool = True) -> Dict[str, Any]:
     bundle = load_bundle(exp_id)
-    llm = bundle["llm"]
+    resource = resolve_binding(exp_id, "inference")
+    llm = resource.data["config"] if resource else bundle["llm"]
+    effective = (
+        resource_llm_config(resource)
+        if resource
+        else resolve_legacy_llm_config(exp_id, llm=llm)
+    )
     if llm.get("kind") != "local":
         raise ValueError("llm.kind must be 'local' to start vLLM")
     model_path = str(llm.get("model_path") or llm.get("model") or "").strip()
@@ -114,14 +105,27 @@ def start_local_llm(exp_id: str, *, stop_if_running: bool = True) -> Dict[str, A
             str(gpu_mem),
         ]
     base_url = f"http://127.0.0.1:{port}/v1"
-    # Persist endpoint back
-    from science_infra.control.experiments import save_section
+    if resource is not None:
+        endpoint = urlsplit(effective.base_url)
+        if (
+            endpoint.scheme != "http"
+            or endpoint.hostname not in ("127.0.0.1", "localhost")
+            or (endpoint.port or 80) != port
+            or endpoint.path.rstrip("/") != "/v1"
+        ):
+            raise ValueError(
+                "本地模型资源端点必须与配置端口匹配，例如 "
+                "http://127.0.0.1:8000/v1。"
+            )
+        base_url = effective.base_url
+    if resource is None:
+        from science_infra.control.experiments import save_section
 
-    llm2 = dict(llm)
-    llm2["base_url"] = base_url
-    if not llm2.get("model"):
-        llm2["model"] = model_path
-    save_section(exp_id, "llm", llm2)
+        llm2 = dict(llm)
+        llm2["base_url"] = base_url
+        if not llm2.get("model"):
+            llm2["model"] = model_path
+        save_section(exp_id, "llm", llm2)
 
     if stop_if_running and PROCS.active("train"):
         raise RuntimeError("train is running; stop train or confirm GPU conflict before starting local LLM")
@@ -131,7 +135,13 @@ def start_local_llm(exp_id: str, *, stop_if_running: bool = True) -> Dict[str, A
         experiment_id=exp_id,
         argv=argv,
         cwd=tir_agent_root(),
-        meta={"base_url": base_url, "model_path": model_path, "port": port},
+        env=effective.subprocess_env(),
+        meta={
+            "base_url": base_url,
+            "model_path": model_path,
+            "port": port,
+            "model_binding": effective.public(),
+        },
         replace=True,
     )
     BUS.publish(exp_id, "llm_status", {"state": "starting", "run_id": mp.run_id, "base_url": base_url})
@@ -560,13 +570,7 @@ def run_collect(
     from workflow.contracts import TrajectoryBatch
 
     spec_path = str(exp_dir(exp_id) / "workflow.yaml")
-    llm = bundle["llm"]
-    env = _llm_env(exp_id, llm)
-    # Prefer process/.env key when experiment secrets absent
-    if not env.get("OPENAI_API_KEY") and os.environ.get("OPENAI_API_KEY"):
-        env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
-    for k, v in env.items():
-        os.environ[k] = v
+    effective = resolve_llm_config(exp_id, llm=bundle["llm"])
 
     if tasks is not None:
         task_list = list(tasks)
@@ -586,8 +590,9 @@ def run_collect(
 
     collector = Collector(
         mock=mock,
-        endpoint=str(llm.get("base_url") or "") or None,
-        model=str(llm.get("model") or "") or None,
+        endpoint=effective.base_url or None,
+        model=effective.model or None,
+        api_key=effective.api_key,
         n=1,
         spec_path=spec_path,
         archive_root=str(exp_dir(exp_id) / "artifacts" / "archives"),
@@ -925,24 +930,28 @@ def start_train(
     stop_llm: bool = True,
     confirm_gpu: bool = False,
 ) -> Dict[str, Any]:
-    ensure_experiment(exp_id)
-    bundle = load_bundle(exp_id)
-    rl = bundle["rl"]
-    gpu_info = list_gpus()
-    ids = list((rl.get("devices") or {}).get("ids") or [0])
-    ids = [int(x) for x in ids]
-    if gpu_info["count"] and any(i >= gpu_info["count"] for i in ids):
-        raise ValueError(f"GPU ids {ids} exceed machine count {gpu_info['count']}")
-    from science_infra.control.experiments import apply_gpu_selection, save_section
+    from science_infra.control.experiments import save_section
+    from science_infra.control.training import build_training_plan, persisted_rl
 
-    rl = apply_gpu_selection(rl, ids)
-    rl = normalize_rl_data_paths(rl)
-    rl = _sync_workflow_sampling_into_rl(rl, bundle.get("workflow") or {})
-    save_section(exp_id, "rl", {k: v for k, v in rl.items() if not str(k).startswith("_")})
-    algo = str(rl.get("algo") or "grpo").lower()
+    plan = build_training_plan(exp_id)
+    if not plan.ready:
+        raise RuntimeError(
+            "训练启动检查未通过："
+            + "；".join(issue["message"] for issue in plan.blocking_issues)
+        )
+    bundle = plan.bundle
+    rl = plan.rl
+    ids = plan.gpu_ids
+    saved_rl = persisted_rl(plan)
+    save_section(
+        exp_id,
+        "rl",
+        {key: value for key, value in saved_rl.items() if not str(key).startswith("_")},
+    )
+    algo = plan.algorithm
     if algo not in VALID_ALGOS:
         raise ValueError(f"algo must be one of {VALID_ALGOS}")
-    profile = str(rl.get("profile") or "fast")
+    profile = plan.profile
     if profile not in ("fast", "a800", "a800_2gpu"):
         raise ValueError("profile must be fast|a800|a800_2gpu")
 
@@ -966,7 +975,7 @@ def start_train(
     ]
     if rl.get("n_runners") is not None:
         argv.extend(["--n-runners", str(int(rl["n_runners"]))])
-    model_path = rl.get("model_path") or (rl.get("actor_rollout_ref") or {}).get("model", {}).get("path")
+    model_path = plan.source.model_path
     if model_path:
         argv.extend(["--model", str(model_path)])
 
@@ -1003,6 +1012,8 @@ def start_train(
             "cuda_visible_devices": env["CUDA_VISIBLE_DEVICES"],
             "n_gpus": len(ids),
             "downgrade": note,
+            "training_source": plan.source.public(),
+            "preflight_revision": plan.revision,
         },
         replace=True,
     )

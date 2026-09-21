@@ -48,6 +48,14 @@ export interface ResourceList {
 export interface ResourceDetail extends ModelResource {
   references: Array<{ experiment_id: string; purpose: ModelResourceType }>;
 }
+export interface LocalModelCandidate {
+  path: string;
+  name: string;
+  architectures: string[];
+  model_type?: string | null;
+  torch_dtype?: string | null;
+  registered_resource_id?: string | null;
+}
 
 const path = (id: string) => `/api/model-resources/${encodeURIComponent(id)}`;
 const bindingPath = (id: string) => `${experimentPath(id)}/model-bindings`;
@@ -67,6 +75,12 @@ export const modelResourcesApi = {
   bindings: (id: string, signal?: AbortSignal) => request<ModelBindings>(bindingPath(id), { signal }),
   bind: (id: string, revision: number, purpose: ModelResourceType, resource_id: string | null) =>
     request<ModelBindings>(bindingPath(id), { method: 'PUT', body: JSON.stringify({ revision, purpose, resource_id }) }),
+  registerLocal: (id: string, body: { revision: number; name: string; model_path: string }) =>
+    request<{ resource: ModelResource; bindings: ModelBindings }>(`${bindingPath(id)}/register-local`, {
+      method: 'POST', body: JSON.stringify(body),
+    }),
   migrate: (id: string, body: { revision: number; purpose: ModelResourceType; name: string; credential_mode: 'copy' | 'service' }) =>
     request<{ resource: ModelResource; bindings: ModelBindings }>(`${bindingPath(id)}/migrate`, { method: 'POST', body: JSON.stringify(body) }),
+  discoverLocal: (signal?: AbortSignal) =>
+    request<{ items: LocalModelCandidate[] }>('/api/model-resources/discover-local', { signal }),
 };
