@@ -45,6 +45,25 @@
 
 4. 不需要验证
 
+### 可选：交互式更新启动脚本
+
+首次取得 `scripts/deploy_webui.sh` 后，在服务器项目根目录运行：
+
+```bash
+bash scripts/deploy_webui.sh
+```
+
+依次选择是否拉取最新 `integration/new-webui`、是否 rebuild，再确认训练已停止后重启网站。也可预设前两项：
+
+```bash
+bash scripts/deploy_webui.sh --pull --rebuild
+bash scripts/deploy_webui.sh --pull --no-rebuild
+```
+
+脚本复用 `run.sh`，FastAPI 在 8787 同时提供 API 与构建后的前端，无需另起 Vite。不会自动安装依赖、覆盖服务器修改或清理训练进程；不 rebuild 时要求已有构建产物。
+
+Windows 使用已配置的 SSH 别名：`ssh seetacloud`。仅建立转发可用 `ssh -N seetacloud`；两者选一个，不同时占用本地 18787。浏览器访问 `http://127.0.0.1:18787/`，而不是服务器终端中的 localhost 地址。
+
 
 # Main 核心功能清单
 
