@@ -1,397 +1,165 @@
-# MAS infra 修改实施方案（P0–P3）
+# 合并迁移功能步骤
 
-日期：2026-09-17
+本地修改 → 经确认后提交推送 → 服务器拉取 → 按改动类型启动或重建 → 验证 GPU 和真实训练。
 
-依据：[NEW_FRAMEWORK_DESIGN.md](./NEW_FRAMEWORK_DESIGN.md)（最优架构与 §3 修改清单）。本文把设计文档的文件级清单展开为**函数级修改方案**：每个改动给出目标文件、插入点（现有代码锚点）、新代码骨架、测试与验收命令。
+- **服务器项目目录**：`/root/autodl-tmp/MAS_Science_Infra`
+- **分支**：在 `integration/new-webui` 进行迁移合并。
 
-原则（同设计文档 §2.0）：层独立不破坏；合同先行；糖而非删；AGL 黑盒不动。**本文只是方案，不含已实施代码。**
+## 服务器操作
 
-```mermaid
-flowchart LR
-  P0["P0 树合同 增量"] --> P2["P2 窗口事件 + 两级 reward"]
-  P1["P1 tool agent 化 破坏性"] --> P2
-  P0 --> P3["P3 实时 Harness"]
-  P2 --> P3
-```
+1. 在代码同步终端拉取已确认并推送的提交：
 
-| 阶段 | 主题 | 破坏性 | 回滚开关 |
-|------|------|--------|---------|
-| P0 | RolloutTree 合同 + daemon 写树 + UI 树页 | 无 | expansion JSON 的 `tree` 键可选，读方全部 fallback 到 `plans` |
-| P1 | tool agent 化 + RouterSpec + 适配器 | 高 | `tools:` 糖展开开关 `spec_normalization: legacy`；`ToolMessage` 包装层保留 |
-| P2 | WindowEndEvent + CreditAssignmentSpec | 中 | `raw.window_events` 缺失时 `plan_forks` 降级旧自匹配语义 |
-| P3 | SSE 实时 Harness | 中 | 事件流旁路，`diagnose` 拉模式保留为兜底 |
+   ```bash
+   cd /root/autodl-tmp/MAS_Science_Infra
+   git pull --ff-only origin integration/new-webui
+   ```
 
----
+2. 根据改动类型启动服务：
 
-## P0 — RolloutTree 合同（增量，先做）
+   ```bash
+   # 仅重新启动已有版本，不重新构建
+   ./run.sh ui --daemon
 
-目标：把散在 `ForkPlan.meta` 与 Daemon `non_tensor` 的树形信息收敛为显式 `RolloutTree` 合同；`.local_expansion` 升级双格式；UI 加树可视化页。
+   # Python 后端代码有更新：先停再启动，不重新构建前端
+   ./run.sh ui --stop
+   ./run.sh ui --daemon
 
-### P0.1 新合同（[mas/workflow/contracts.py](../mas/workflow/contracts.py) 末尾追加）
+   # webui 前端源码有更新：停止后重新构建并启动
+   ./run.sh ui --stop
+   ./run.sh ui --rebuild --daemon
+   ```
 
-```python
-class RolloutTreeNode(BaseModel):
-    node_id: str                           # rollout_id 或 f"{parent}:{i}" 合成 id
-    parent_id: Optional[str] = None        # None = root（query 级）
-    depth: int = 0
-    role: str = "root"                     # root | child | probe
-    agent_path: List[str] = []             # root→该节点经过的 agent 序列
-    boundary_snapshot_ref: Optional[str] = None
-    metrics: Dict[str, Any] = {}           # h_root/h_tool/consecutive_high/event_kind...
-    reward: Optional[float] = None         # P2 节点级 credit 挂靠点
-    verdict: Optional[str] = None          # P2 RAE verdict 挂靠点
+3. 不要每次都重新安装依赖。只有 `node_modules` 缺失、不完整，或 `package.json`
+   的依赖发生变化时，才执行一次依赖安装。服务器安装 npm 依赖必须使用公网镜像，
+   并忽略锁文件中可能存在的内网镜像地址：
 
+   ```bash
+   cd /root/autodl-tmp/MAS_Science_Infra/webui
+   npm install --include=dev --package-lock=false \
+     --registry=https://registry.npmmirror.com/ \
+     --no-audit --no-fund
+   ```
 
-class RolloutTree(BaseModel):
-    tree_id: str                           # f"{data_id}:{group}"
-    query: str = ""
-    nodes: List[RolloutTreeNode] = []
-    outcomes: Dict[str, Any] = {}          # leaf node_id → {answer, reward}
-
-    def leaves(self) -> List[str]:
-        parents = {n.parent_id for n in self.nodes if n.parent_id}
-        return [n.node_id for n in self.nodes if n.node_id not in parents]
-
-    def path_to_root(self, node_id: str) -> List[str]:
-        by_id = {n.node_id: n for n in self.nodes}
-        out, cur = [], node_id
-        while cur is not None:
-            out.append(cur)
-            cur = (by_id.get(cur).parent_id if by_id.get(cur) else None)
-        return out  # [node, ..., root]
-
-
-class RolloutTreeEvent(BaseModel):
-    event: Literal["node_added", "outcome", "reward", "loss"] = "node_added"
-    tree_id: str
-    node_id: Optional[str] = None
-    payload: Dict[str, Any] = {}
-```
-
-### P0.2 树构建辅助 + expansion 双格式（[mas/workflow/active_set.py](../mas/workflow/active_set.py)）
-
-新函数（放在 `expansion_payload_from_result` 前）：
-
-```python
-def tree_from_plans(parent_id: str, plans: List[ForkPlan], *, task: Optional[Dict[str, Any]] = None) -> RolloutTree:
-    root = RolloutTreeNode(node_id=str(parent_id), role="root", depth=0)
-    nodes = [root]
-    for i, p in enumerate(plans):
-        m = p.meta or {}
-        nodes.append(RolloutTreeNode(
-            node_id=f"{parent_id}:{i}",
-            parent_id=str(parent_id),
-            depth=p.depth,
-            role=p.role or "child",
-            metrics={k: m[k] for k in ("h_root", "h_tool", "event_kind", "gate", "site_id") if k in m},
-            boundary_snapshot_ref=m.get("action_key"),
-        ))
-    return RolloutTree(tree_id=str(parent_id), nodes=nodes)
-```
-
-改 `expansion_payload_from_result`（现 L498）——输出 dict 追加 `tree` 键：
-
-```python
-def expansion_payload_from_result(result: ActiveSetResult) -> Dict[str, Any]:
-    plans = result.plans
-    return {
-        "branch_local_count": int(result.branch_local_count),   # 旧键全保留
-        "global_fill_count": int(result.global_fill_count),
-        "metrics": dict(result.metrics),
-        "tree": tree_from_plans(...).model_dump(),              # 新增
-        "plans": [ ...原有平铺... ],                             # 保留（scan_expansions 读它）
-    }
-```
-
-兼容性已验证：`scripts/branch_rollout_ui_test.py` 的 `scan_expansions` 只读 `plans`/`branch_local_count`，加 `tree` 键不破坏。
-
-### P0.3 Daemon 写树（[rl/hooks/daemon.py](../rl/hooks/daemon.py)）
-
-`_enqueue_from_runner_expansions`（L255 起）三处改动：
-
-1. `__init__` 加实例字典：`self._rollout_trees: Dict[str, RolloutTree] = {}`（data_id → 树）；
-2. 读取 expansion 时（L304 附近）同时取树并按 store 返回的真实 rollout_id 重写节点 id：
-
-```python
-expansion = load_local_expansion(rid) or {}
-plans = list(expansion.get("plans") or [])
-tree = RolloutTree.model_validate(expansion["tree"]) if expansion.get("tree") else None
-```
-
-3. `enqueue_many_rollouts` 返回后（L370 附近）旁路更新：
-
-```python
-if tree is not None:
-    # 把合成节点 id 替换为 store rollout_id（按 sample 顺序 zip）
-    for node, rollout in zip([n for n in tree.nodes if n.role != "root"], rollouts):
-        node.node_id = rollout.rollout_id
-    self._rollout_trees[data_id] = tree   # 后续 wave 追加节点
-```
-
-`get_train_data_batch` 的 `non_tensor`（role/resume_boundary/verdict_list）**不动**——树是旁路写，训练路径零风险。
-
-### P0.4 新 API（[science_infra/control/app.py](../science_infra/control/app.py)）
-
-```python
-@app.get("/api/mas/rollout-trees")
-async def list_rollout_trees(experiment_id: str):
-    # 扫 mas/.local_expansion/*.json，返回 [{"tree": {...}, "file": name}]
-    # 只读，无状态；文件缺失返回 {"trees": []}
-```
-
-### P0.5 UI 树页（[webui/src/App.tsx](../webui/src/App.tsx) + 新 `pages/RolloutTree.tsx`）
-
-- `App.tsx` tab 数组（L13 附近）加 `{ id: 'rollout-tree', label: 'RolloutTree' }`；
-- 新页面（静态读取版）：`GET /api/mas/rollout-trees?experiment_id=` → React Flow 渲染节点（root 在左，child 按 depth 分层）；节点徽标显示 `event_kind`/`h_tool`；页头标注「Collect 产出为单链树；branch 见 [BRANCH_ROLLOUT_UI_TEST.md](./BRANCH_ROLLOUT_UI_TEST.md) L0 原则」（风险 R4）。
-
-### P0.6 测试与验收
-
-| 项 | 内容 |
-|----|------|
-| 新 `mas/tests/test_rollout_tree.py` | `leaves()`/`path_to_root()` 正确性；`expansion_payload_from_result` 含 `tree` 键且 `plans` 不变；JSON round-trip |
-| 扩展 `test_phase_abcd_rae_activeset.py` | 断言 P0.2 payload 兼容 |
-| 验收命令 | `./run.sh branch-ui-test --train` → `mas/.local_expansion/*.json` 含 `tree`；`.venv/bin/python -m unittest mas.tests.test_rollout_tree` 绿；UI 树页可渲染 |
+   依赖完整且 `webui/dist` 已对应当前前端源码时，直接运行
+   `./run.sh ui --daemon`，不要重复安装或重建。
 
 ---
 
-## P1 — tool agent 化（破坏性最大，糖保兼容）
+# 实施方案：恢复 main 的 arpo_e2e 在新版入口下正常训练
 
-目标：`AgentNodeSpec` 统一容纳 tool-agent（schema 0.3）；新增 `RouterSpec`；`tir_agent` 用适配器调用 tool-agent 且对 AGL 仍序列化 tool 协议。**验收红线：旧 `experiments/*/workflow.yaml` 零改动仍可 Collect + Train。**
+更新日期：2026-09-22。
 
-### P1.1 spec 扩展（[mas/workflow/spec.py](../mas/workflow/spec.py)）
-
-`AgentNodeSpec`（现 L46）加两个字段（`extra: forbid` 下新增字段对旧 YAML 无影响——缺失走默认值）：
+**功能基准固定为 main 的 `735b1140f6b80cdac04f9678288b3921a3fc7a3b`。目标是在新 UI 中保留这版 main 的训练行为，不在此轮建设完整新框架。**
 
-```python
-class AgentNodeSpec(BaseModel):
-    id: str
-    kind: Literal["hub", "planner", "tool", "verifier", "blank"] = "blank"
-    profile: Dict[str, Any] = Field(default_factory=dict)
-    # ...现有字段全保留：role/skills/tools/memory_scope/system_prompt/model/trainable/meta
-```
+本方案依据该基准与当前 `integration/new-webui` 的代码差异直接安排修改，不设置“先收集现场”的前置阶段。只修改接线和兼容性缺口，保留已经完成的新 UI、资源选择、运行快照和日志。
 
-新增 `RouterSpec` 与 `MASSpec.routers`：
+## 一、已经查清的接线变化
 
-```python
-class RouterSpec(BaseModel):
-    id: str
-    candidates: List[str] = []
-    strategy: Literal["llm_choice", "score", "round_robin"] = "llm_choice"
-    scorer: Optional[str] = None
-    model_config = {"extra": "forbid"}
+| 改动 | 与 main 的差异 | 本轮处理 |
+| --- | --- | --- |
+| `3400cf5`：模型配置解析 | 原 `_llm_env()` 只条件覆盖实验配置；现在使用 `resolve_llm_config().subprocess_env()`，默认推理资源参与训练环境，空密钥也会覆盖原环境 | 训练启动恢复 main 的条件覆盖规则，与独立推理资源解析分开 |
+| `95fb48d`：训练入口替换 | main 的 `services.start_train()` 实现被改为调用新 `training.py`；新 UI 改用 `/api/rl/runs`。旧 URL 虽保留，内部也不再是原实现 | 恢复原启动参数生成语义，让新旧 API 共享同一个启动核心；仅把按钮改回旧 URL 不足以恢复 |
+| 配置同步路径分叉 | main 使用 `_sync_workflow_sampling_into_rl()` 同步顶层 `algo`、`tir_algo` 与采样数；新计划构造直接调用 `apply_sample_policy()`，没有完全复用原同步步骤 | 复用原同步逻辑，避免快照、CLI 参数和训练脚本各自决定算法 |
+| `95fb48d`：重启后停止能力缩减 | main 的 `ProcessManager.stop()` 可从磁盘运行记录查找存活 PID；当前旧活动记录统一显示 `interrupted`，停止只查内存进程 | 恢复可验证的运行识别与定向停止，不让遗留训练/模型服务被当作不存在 |
+| 模型来源扩展 | main 读取 RL 模型路径；当前 training resource 优先 | 保留资源选择，但只把所选权重转换成原训练入口使用的模型路径 |
+| Gate 参数扩展 | `rl/hooks/daemon.py`、`lit_tir_agent.py` 增加 entropy threshold 传递，`ActiveSetSession._sites()` 增加参数继承 | 不继续扩大采样语义；按 main 基准核对本次 ARPO 的实际站点参数 |
 
-class MASSpec(BaseModel):
-    schema_version: str = "0.3"     # 从 0.1.0 升
-    routers: List[RouterSpec] = Field(default_factory=list)
-    # tools: 保留为糖（见 load_spec 归一化）
-```
+以下部分没有缺失，不重写：Agent-Lightning 整个目录、ARPO trainer/advantage/loss 主体、模型训练主体。仓库 `arpo_e2e` 的 RL、LLM 和 Sampling 配置与 main 语义一致；服务器数据路径也已经恢复。
 
-`load_spec`（现 L106）加糖展开（在 `MASSpec.model_validate(raw)` 前）：
+**确定的问题是：迁移改变了训练入口的行为，而不只是 UI 对接。上述差异应直接修复；但不能把其中某一项未经运行确认就写成 503 的唯一原因。**
 
-```python
-# 糖：顶层 tools: [t1, t2] → 隐式 kind=tool 的 AgentNodeSpec（已存在同名 agent 则跳过）
-agent_ids = {a.get("id") for a in (raw.get("agents") or [])}
-for t in (raw.get("tools") or []):
-    if t not in agent_ids:
-        raw.setdefault("agents", []).append({"id": t, "kind": "tool", "trainable": False})
-# 兼容：无 kind 的旧 agents 按 role 推断 kind（planner/verifier/hub→同名，其余 blank）
-```
+## 二、阶段一：恢复 main 的模型与训练启动接线
 
-### P1.2 compiler（[mas/workflow/compiler.py](../mas/workflow/compiler.py)）
+目标：相同实验配置得到与 main 等价的训练命令和环境，资源库只提供明确选择的训练权重。
 
-1. `KNOWN_TOOLS`（L17）→ 函数化：
+### 1. 恢复训练专用环境构造
 
-```python
-def tool_agent_ids(spec: MASSpec) -> set:
-    return {a.id for a in spec.agents if a.kind == "tool"} | set(spec.tools)  # 糖集合并入
-```
+修改 `science_infra/control/training.py` 的 `_launch_training()`：
 
-2. `tool_call` 边分支（L99）：**保留分支与告警语义**，但 `dst` 判定改用 `tool_agent_ids(spec)`；命中后写入 `tools_for[src]`（改语义注释：agent 可路由到的 tool-agent id），`CompiledWorkflow.tools_for` 字段保留旧名做 alias，新读方用属性 `routable_to`；
-3. `_agent_map`（L47）：默认 hub 节点补 `kind="hub"`；`hub.verify` 造出的 verifier 补 `kind="verifier"`；
-4. `compile_spec` 加校验：`RouterSpec.candidates ⊆ {a.id for a in agents}`，违者进 `issues`；路由器 id 也计入图节点（`multi_agent` 判定排除 router）。
+- 不再用 `resolve_llm_config(...).subprocess_env()` 直接构造训练环境。
+- 用局部训练环境函数复用 main `_llm_env()` 的规则：读取原实验 LLM 配置与实验密钥；只有非空值才覆盖，未设置的值继续继承启动进程环境。
+- 读取原实验 LLM section，而不是 `load_bundle()` 中已经被 inference resource 替换的展示配置。
+- 保持 main 的 `PYTHONPATH`、`CUDA_VISIBLE_DEVICES`、`VLLM_USE_V1`、Python 可执行文件和工作目录行为。
+- 不改通用推理资源的凭据策略；单题调试与模型资源管理继续使用当前解析方式。
+- 训练主模型的实际服务端点和服务模型名仍由 AGL `main_llm` 注入，不能被页面的默认推理资源替换。
 
-### P1.3 tir_agent 适配器（[mas/tir_agent.py](../mas/tir_agent.py)）——AGL 兼容关键（风险 R1）
-
-`call_tools`（L400 起）重构为**两层**：
-
-```python
-# 新：tool-agent 调用层（输入输出契约）
-class ToolAgentInvoker:
-    def __init__(self, spec: MASSpec, tool_map: Dict[str, Any]): ...
-    def invoke(self, agent_id: str, args: Dict[str, Any]) -> str:
-        # kind=tool 节点：走 agent 契约（profile.input_schema → 原函数/LLM-in-tool → output）
-        # 未注册的 id：回退 self.tool_map（旧 @tool 路径，保底）
+### 2. 恢复原参数同步与启动核心
 
-# call_tools 内部：tool_fn.invoke(args) → invoker.invoke(name, args)
-# 输出仍包 ToolMessage(content, tool_call_id) —— LangGraph/AGL span/GRPO tokens 完全不变
-```
+修改 `training.build_training_plan()`、`services._sync_workflow_sampling_into_rl()` 和 `services.start_train()`：
 
-`branch_messages`（L448–450）→ `window_snapshots` **双写**：
-
-```python
-window_snapshots = list(state.get("window_snapshots") or [])
-if tool_messages and not branch:
-    branch = serialize_messages(new_messages)                       # 旧字段保留（熵估计读它）
-    window_snapshots.append({                                       # 新：通用窗口快照
-        "agent_id": "hub", "turn": state.get("num_turns"), 
-        "messages": branch, "kind": "post_first_tool",
-    })
-```
+- 新计划构造复用 main 的 GPU 应用、服务器路径处理、Sampling 同步和算法/profile 校验。
+- 统一写入一致的 `algo`、`algorithm.tir_algo`、`rollout_per_gpu` 和 `actor_rollout_ref.rollout.n`。
+- 没有 training resource 时保留原 `rl.model_path` / `actor_rollout_ref.model.path` 语义；有绑定时仅明确覆盖这两个权重字段及 `--model`。
+- 保留 `--n-runners`、`--active-agent` 和 main 的 profile 行为，不擅自调整 batch、显存比例、Runner 数、模型名称或分支参数。
+- 保留当前运行快照；`--rl-yaml` 指向本次 RL 快照，`--workflow-yaml` 指向本次 Sampling 来源。改变文件位置，不改变配置含义。
+- `/api/rl/train` 与 `/api/rl/runs` 最终调用同一个启动核心，不增加 main 模式、新模式两套实现。
 
-`should_continue` / 熵估计路径不动——`h_tool` 仍读 `branch_messages`（R1 缓解：双写过渡，P2 再切到 `WindowEndEvent.metrics`）。
-
-### P1.4 runtime / lit_tir_agent / tools 注册表
-
-- [mas/workflow/runtime.py](../mas/workflow/runtime.py)：`run_episode` 的 `tools_override` 参数保留，内部语义改为「可路由到的 tool-agent 子集」传给 `ToolAgentInvoker`；mock 路径（`run_mock_episode`）同步产出 `window_snapshots`；
-- [mas/lit_tir_agent.py](../mas/lit_tir_agent.py)：dump 条件 `raw.branch_messages` → `raw.window_snapshots or raw.branch_messages`（兼容两代字段）；
-- [mas/tools/langchain_tools.py](../mas/tools/langchain_tools.py)：加 `TOOL_AGENTS` 注册表（id → agent 契约壳：`{id, kind: "tool", invoke}`，内部仍调原函数；原 `TOOLS`/`TOOL_MAP` 导出不动）；`epc_aw/tools/python_coder` 同法包壳（内部 `create_llm_engine` 零改动）。
+### 3. 冻结算法执行层
 
-### P1.5 webui
+`mas/train_tir_agent.py` 保留 main 的 profile 合并、AGL/VERL 构造与 `trainer.fit()` 主体；不改 Agent-Lightning。
 
-- [webui/src/features/graph/workflowGraph.ts](../webui/src/features/graph/workflowGraph.ts)：节点渲染统一 Agent 形状 + `kind` 徽标；palette 去 Tool 分类（DragItem 只留 Agent）；
-- `RolloutSamplingPanel` 的 `trajectoryGraph.ts`：`tool` 节点渲染保留（视觉），candidate 生成逻辑不变（`after_tool` anchor 在 P2 才归一化）。
+此次不把完整 Workflow spec 接入训练，不扩大多 Agent 训练范围，不把 Gate 继承或其他框架演进混进恢复补丁。对基准实验，将新增参数映射与 main 的实际取值对齐即可，不整体回退新 UI 或已保存 schema。
 
-### P1.6 测试与验收
+**本阶段交付：新版入口使用 main 等价的启动核心，模型资源不再隐式改变训练推理环境；不需要先完成其他框架阶段。**
 
-| 项 | 内容 |
-|----|------|
-| compiler 0.3 round-trip | 旧 `experiments/arpo_e2e/workflow.yaml` 展开后：tool 糖 → 3 个 `kind: tool` agent；`tool_call` 边进 `tools_for` 不变 |
-| tool-agent invoke | `ToolAgentInvoker.invoke("execute_python", {...})` round-trip == 旧 `tool_map` 结果 |
-| 回归 | `./run.sh smoke`（含 `check_workflow_deps` AST 扫描，R6）+ `./run.sh ui-test` + `./run.sh traj-test` 全绿 |
-| 验收红线 | 旧 YAML 零改动 Collect + Train 可跑（`./run.sh branch-ui-test --train`） |
+### 阶段一实施记录
 
----
+代码已接入，服务器真实训练结果待确认：
 
-## P2 — 工作窗口事件 + 两级 reward
+- `_launch_training()` 改用训练专用 `_training_env()`，读取原始实验 LLM section 和实验密钥；只有非空值覆盖父进程环境。独立 inference resource 不再参与训练环境构造，通用推理凭据逻辑不变。
+- `build_training_plan()` 复用 main 的 `_sync_workflow_sampling_into_rl()`。有 Sampling 时由它决定算法；无 Sampling 时按 main 的顶层 `algo` 决定，同时对齐 `tir_algo` 与两处采样数。
+- 补回算法与 profile 检查。保留单 GPU 的原 profile 降档行为并显示警告；内部 `_profile_downgraded` 标记不再进入训练快照，避免成为 Hydra 未知配置。
+- 模型权重、GPU、Runner、active Agent 和快照传参保留；Preflight 命令预览补齐 Workflow 快照和 active Agent，与真实命令一致。
+- 新旧 API 仍共用 `build_training_plan()` / `launch_training()`。没有增加入口或兼容开关，没有修改 AGL/VERL、算法、Gate、UI 或进程管理。
 
-目标：runtime 发真实 `WindowEndEvent`；`plan_forks` 从自匹配升级事件匹配（消除 [ROLLOUT_SAMPLING_UI_TEST.md](./ROLLOUT_SAMPLING_UI_TEST.md) 标注旧债）；节点级 credit 统一挂 `RolloutTreeNode`（R3 缓解）。
+服务器更新本轮 Python 代码后，按上方流程停止并重启 Control 即可，无需重建前端或安装依赖。使用未改参数的 `arpo_e2e`，预期启动摘要为 `fast / arpo`、GPU `0`、Runner `1`、候选数 `4`、初始 Rollout `2`，模型使用原 Qwen3-4B 路径（若显式绑定了其他训练模型，以绑定为准）。
 
-### P2.1 WindowEndEvent（[mas/workflow/contracts.py](../mas/workflow/contracts.py)）
+阶段一已消除上述启动接线差异，但不等于已经证明 503 消失。成功运行应有真实响应及有效 token，并越过 `compute_log_prob` 进入参数更新；如果仍持续 503，则仍未达到 ARPO 恢复判据，不能把空响应任务的 Completed 计数当成成功。
 
-```python
-class WindowEndEvent(BaseModel):
-    kind: Literal["window_end"] = "window_end"
-    agent_id: str
-    turn: int = 0
-    output_digest: str = ""
-    metrics: Dict[str, Any] = {}     # {h, ok, tool}
-    snapshot_ref: Optional[str] = None
-```
+## 三、阶段二：补回 main 的运行识别与停止对接
 
-### P2.2 事件发射（[mas/tir_agent.py](../mas/tir_agent.py) / [runtime.py](../mas/workflow/runtime.py)）
+目标：保留当前按 run 停止和子进程清理，同时恢复 main 原有的重启后运行识别能力。
 
-- `call_tools` 组装 `window_snapshots` 时同步 emit：`state["window_events"].append(WindowEndEvent(agent_id="hub", turn=..., metrics={"h": last_entropy, "tool": tname}).model_dump())`；
-- PEV 图路径（`runtime.py` mock/真实）在每个 agent 节点 return 前 emit `WindowEndEvent(agent_id=<该节点>)`；
-- 事件同时写 Archive（`ExecutionEvent` 的 `payload` 复用现有事件通道，不新增存储）。
+修改 `science_infra/control/process_manager.py` 和 `training.stop_training_run()`：
 
-### P2.3 事件匹配（[mas/workflow/gates.py](../mas/workflow/gates.py) L107 `site_matches_event`）
+- 新运行持久化 PID、进程创建时间、进程组和必要的命令身份，关联 experiment ID 与 run ID。
+- 读取磁盘活动记录时，校验实际进程身份；不能不作判断就把所有旧活动运行变成 `running=False`。
+- 对确认仍存活、属于本应用的训练和模型服务，恢复活动冲突识别及按 run 定向停止。
+- 复用已有的中断、终止、强杀和已识别后代清理，不新增进程管理框架。
+- 无法验证身份的旧记录明确提示处理，不能仅凭历史 PID 杀进程；禁止按名称全局结束 Ray、vLLM 或 Python。
+- 启动前发现旧训练仍活动时阻止重复启动；需要释放本地模型服务时，仅停止已确认的目标服务，不影响新训练内部的 vLLM。
 
-签名扩展（**渐进迁移**，回滚开关在调用侧）：
+**本阶段交付：重启 Control 后不会把可识别的旧运行当作不存在，也不会因新 UI 的停止入口改成 run ID 而丢失原有停止能力。**
 
-```python
-def site_matches_event(site, *, event_kind, agent_id=None, tool_id=None, edge_id=None, hit_count=0,
-                       window_events: Optional[List[Dict]] = None) -> bool:
-    if window_events:   # 新路径：真实事件匹配
-        return any(
-            (ev.get("agent_id") == (anchor.agent_id or ev.get("agent_id")))
-            and _kind_matches(anchor.kind, ev)      # after_agent_turn/after_tool/after_verifier 统一
-            for ev in window_events
-        )
-    # 旧路径：kind 字符串匹配（现有逻辑不动，fallback）
-```
+## 四、阶段三：新 UI 薄适配与 ARPO 恢复确认
 
-`after_tool` 归一化：`_kind_matches` 里 `after_tool` 与 `after_agent_turn` **同义**（tool-agent 的窗口即 agent 窗口）——在 gates 层完成别名，YAML 不改。
+目标：新 UI 只保存配置、调用恢复后的后端函数、显示对应 run，不另行推导训练行为。
 
-### P2.4 plan_forks 切换（[mas/workflow/active_set.py](../mas/workflow/active_set.py) L217 `plan_forks_from_raw`）
+### 接线收口
 
-```python
-window_events = list(getattr(raw, "window_events", None) or [])
-# ek_site 自匹配块改为：
-if window_events:
-    matched = site_matches_event(site, event_kind="", window_events=window_events,
-                                 agent_id=cfg.agent_id, tool_id=cfg.tool_id, hit_count=hits)
-else:
-    matched = site_matches_event(site, event_kind=ek_site, ...)   # 旧语义 fallback
-```
+- `RuntimeProvider.startTrain()` 保留“保存 → Preflight → 确认 → 创建 run”，但后端检查与启动必须使用阶段一的同一套参数生成逻辑。
+- 创建成功后只使用服务端返回的 run ID 打开日志；停止同一个 run，不重新寻找或替换训练目标。
+- 顶栏“已启动”只表示进程启动，不代表已经完成有效采样或参数更新。
+- 失败通过已有 run 状态和完整日志显示，不再扩展页面布局或增加管理层级。
+- 启动日志只补必要的实际模型、算法、GPU、Runner、端点摘要和原始异常，不建立额外诊断系统，不输出密钥。
 
-`raw.window_events` 缺失（mock/旧测试）时行为与现状完全一致——`TestPlanForksTrajectorySites` 既有断言不改，**新增**事件匹配版用例。
+### 完成判据
 
-### P2.5 两级 reward
+本地只编译受影响代码；按开头流程同步服务器，由用户在新 UI 显式运行 `arpo_e2e`：
 
-- [rl/loss.py](../rl/loss.py) 新增：
+1. 使用与 main 基准一致的权重、数据、GPU 和 ARPO 参数。
+2. 模型实际返回有效响应及 token，不是持续 503 后以 `None` 答案完成任务。
+3. 至少完成一个真实训练 step，越过 `compute_log_prob` 并执行参数更新，正常运行最终退出成功。
+4. 停止当前运行后，目标训练及已识别子进程退出，可以再次启动。
 
-```python
-class CreditAssignmentSpec(BaseModel):
-    level: Literal["rollout", "node"] = "node"
-    method: Literal["node_state", "k_hop_cumulative"] = "node_state"
-    k_hop: int = 3
-    inherit_from_site: bool = True    # BranchSiteReward 作为节点默认策略
-```
+运行记录、快照和日志沿用现有产物，不把另行收集材料设为实施前置任务。若按上述接线恢复后仍有 503，则针对已保存的原始异常修复具体请求环节，不能宣称接口接通就已完成恢复。
 
-- [rl/hooks/rae_advantage.py](../rl/hooks/rae_advantage.py)：`adjudicate_action_group` / `apply_dead_end_backprop_verdicts` 结果写回 `RolloutTreeNode.verdict`；节点 `reward` 初值 = site reward 策略（`inherit_from_site=True`）；
-- `k_hop_cumulative`（新纯函数）：`path_to_root(node)[:k_hop]` 等权平均节点 reward——v1 等权，v2 可学权重；
-- Daemon `_rollout_trees[data_id]` 成为 verdict/reward 的读写载体（P0.3 已建）。
+**本阶段交付：main 已能完成的 ARPO 训练可从新版入口启动、更新、结束和停止。**
 
-### P2.6 测试与验收
+## 五、本轮不混入的工作
 
-| 项 | 内容 |
-|----|------|
-| 事件匹配 | `TestPlanForksTrajectorySites` 新用例：`raw.window_events=[{agent_id:"hub", kind:"window_end"}]` + after_agent_turn site → plan 出且 `event_kind=after_agent_turn`；空 events 走旧 fallback |
-| after_tool 别名 | `after_tool` site 匹配 tool-agent 的 `window_end` 事件（同构断言） |
-| k-hop | `k_hop_cumulative` 等权均值单测 |
-| RAE 挂树 | verdict 写回后 `RolloutTree` 节点带 `verdict`/`reward` |
-| 验收命令 | `./run.sh traj-test` 绿；`.venv/bin/python -m unittest mas.tests.test_phase_abcd_rae_activeset` 绿；`branch-ui-test --train` 后树节点带 reward/verdict |
+- P0–P3、完整 Workflow 快照执行、多 Agent 独立训练、两级 reward、实时 Harness、树页面与其他算法留到 ARPO 恢复之后。
+- 模型异常转 `None`、空 token 仅告警是 main 已存在的异常处理缺陷，不是已经确认的迁移新增原因。不能用“更早拒绝空样本”代替恢复模型服务；需要处理时限定在我方训练适配层，不重写 AGL/VERL。
+- 不重新安装整个训练环境，不自动跑真实 GPU 训练，不为 Windows 的 GPU 或服务器路径报错追加适配。
 
----
-
-## P3 — 双态实时 Harness
-
-目标：`RolloutTreeEvent` 流打通 Daemon→Control SSE→Diagnoser；测试态流式错误归因、训练态 reward hacking 监控。
-
-### P3.1 事件通道（[science_infra/control/app.py](../science_infra/control/app.py)）
-
-- Daemon 侧（[rl/hooks/daemon.py](../rl/hooks/daemon.py)）：树更新点（P0.3/P2.5）追加 `_emit_tree_event(RolloutTreeEvent(...))`——写到子进程 stdout 的 JSONL 行（`{"__rollout_tree_event__": {...}}` 标记前缀，复用现有 stdout 解析通道，无新依赖）；
-- Control 侧：`/api/events` SSE 循环里透传该标记为 `event: rollout_tree` 帧；`ProcessManager` 已有子进程 stdout tail 机制，挂接点在 train 进程的日志泵；
-- 兜底：SSE 不可用/事件丢失时，P0.4 的 `GET /api/mas/rollout-trees` 拉模式仍在（回滚开关）。
-
-### P3.2 Diagnoser 订阅式接口（[mas/workflow/harness.py](../mas/workflow/harness.py)）
-
-```python
-class Diagnoser(Protocol):
-    def diagnose(self, trajectories) -> List[Hypothesis]: ...    # 保留（拉模式兜底）
-    def consume(self, event: RolloutTreeEvent) -> Optional[Hypothesis]: ...  # 新增，默认 no-op
-```
-
-- `log_error`：`consume` 里对 `event="node_added"` 且 `metrics.error` 的节点即时产出 Hypothesis；
-- `loss_volatility`：消费 `event="loss"`（RL 回传的累计序列）；
-- 新插件 `reward_hacking_monitor`：对 `event="reward"`，同 `parent_id` 兄弟节点 reward 序列做 z-score 异常检测（某节点持续高于同层兄弟而 outcome 不变）；
-- `HARNESS.diagnose` 聚合改为：流式 Hypothesis 增量写 `artifacts/diagnose.json`（append-only jsonl + 读取时聚合）。
-
-### P3.3 RL 回传
-
-训练 loop（`rl/hooks/trainer.py` 或 Daemon `get_train_data_batch` 后）：每 step 末 emit `RolloutTreeEvent(event="loss", payload={"loss": ..., "step": ...})`——走 P3.1 同一 stdout JSONL 通道。
-
-### P3.4 测试与验收
-
-| 项 | 内容 |
-|----|------|
-| 端到端单测 | 合成 stdout JSONL → Control 解析 → Diagnoser `consume` 收到事件（不起真训练进程） |
-| reward_hacking | 构造同层兄弟 reward 序列异常 → Hypothesis 产出 |
-| 验收命令 | `./run.sh ui-test` 绿；手动：`./run.sh branch-ui-test --train` 期间 UI 树页节点实时新增、reward 更新；`diagnose.json` 训练中持续追加 |
-
----
-
-## 5. 总验收矩阵与风险引用
-
-| 阶段 | 命令 | 判据 |
-|------|------|------|
-| P0 | `./run.sh branch-ui-test --train`；`unittest mas.tests.test_rollout_tree` | expansion 含 `tree`；树页渲染 |
-| P1 | `./run.sh smoke`；`./run.sh ui-test`；`./run.sh traj-test` | 旧 YAML 零改动可跑（红线） |
-| P2 | `./run.sh traj-test`；`unittest mas.tests.test_phase_abcd_rae_activeset` | 事件匹配绿；树节点带 reward/verdict |
-| P3 | `./run.sh ui-test`；手动树页实时 | SSE 事件流；`diagnose.json` 流式追加 |
-
-风险引用（详见 [NEW_FRAMEWORK_DESIGN.md](./NEW_FRAMEWORK_DESIGN.md) §3.5）：R1 熵估计双写过渡（P1.3）；R2 executor_strategy 判据（后续可选）；R3 credit 单挂靠（P2.5）；R4 树页假绿标注（P0.5）；R5 路由 `agent_path` 分桶（P1 编译器校验 + P2 metrics）；R6 `check_workflow_deps` 把关（P1.6）。
-
-每阶段独立可回滚（见开头回滚开关表）；P0 与 P1 可并行启动。
-
-
+**执行顺序：先改回训练入口的兼容行为，再补运行管理对接，最后由新 UI 完成 ARPO 闭环。阶段一代码已接入；阶段二、三尚未实施，服务器恢复尚未确认。**

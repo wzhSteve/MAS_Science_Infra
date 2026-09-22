@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from science_infra.control.events import BUS
 from science_infra.control.experiments import (
@@ -935,7 +936,7 @@ def start_train(
     plan = build_training_plan(exp_id)
     return launch_training(
         exp_id,
-        request_id=__import__("uuid").uuid4().hex,
+        request_id=uuid4().hex,
         preflight_revision=plan.revision,
         stop_local_llm=bool(stop_llm or confirm_gpu),
     )

@@ -21,8 +21,11 @@ import yaml
 from science_infra.env import repo_root
 
 from .experiments import (
+    VALID_ALGOS,
     apply_gpu_selection,
     load_bundle,
+    load_llm_section,
+    load_secrets_env,
     normalize_rl_data_paths,
     workflow_executable,
 )
@@ -218,16 +221,20 @@ def local_model_candidate(model_path: str) -> dict[str, Any]:
     return candidate
 
 
-def _apply_sampling(
-    rl: dict[str, Any], workflow: dict[str, Any]
-) -> tuple[dict[str, Any], str]:
-    sampling = workflow.get("sampling") if isinstance(workflow, dict) else None
-    if not sampling:
-        return rl, "rl"
-    _workflow_path()
-    from rl.hooks.overlay import apply_sample_policy
-
-    return apply_sample_policy(rl, sampling), "workflow.sampling"
+def _training_env(exp_id: str) -> dict[str, str]:
+    """Match main's overrides without using the independent inference binding."""
+    llm = load_llm_section(exp_id)
+    secrets = load_secrets_env(exp_id)
+    env: dict[str, str] = {}
+    if secrets.get("OPENAI_API_KEY"):
+        env["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
+    base = str(llm.get("base_url") or "").strip()
+    model = str(llm.get("model") or "").strip()
+    if base:
+        env.update(OPENAI_API_BASE=base, OPENAI_BASE_URL=base)
+    if model:
+        env.update(OPENAI_MODEL=model, MODEL=model)
+    return env
 
 
 def _dependency_status() -> tuple[list[str], list[str]]:
@@ -260,7 +267,7 @@ def _data_path(value: Any) -> Path | None:
 
 def build_training_plan(exp_id: str) -> TrainingPlan:
     from .process_manager import PROCS
-    from .services import list_gpus
+    from .services import _sync_workflow_sampling_into_rl, list_gpus
 
     bundle = load_bundle(exp_id)
     raw_rl = deepcopy(bundle["rl"])
@@ -270,7 +277,16 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
         rl = normalize_rl_data_paths(apply_gpu_selection(raw_rl, ids))
     except ValueError as error:
         raise TrainingError("invalid_data_path", str(error)) from error
-    rl, algorithm_source = _apply_sampling(rl, bundle.get("workflow") or {})
+    workflow = bundle.get("workflow") or {}
+    rl = _sync_workflow_sampling_into_rl(rl, workflow)
+    algorithm_source = "workflow.sampling" if workflow.get("sampling") else "rl"
+    # The script reads top-level algo first; Sampling has already synchronized it.
+    algorithm = str(rl.get("algo") or "grpo").lower()
+    rl["algo"] = algorithm
+    rl["algorithm"] = {**(rl.get("algorithm") or {}), "tir_algo": algorithm}
+    profile = str(rl.get("profile") or "fast")
+    profile_note = rl.get("_profile_downgraded")
+    rl = {key: value for key, value in rl.items() if not str(key).startswith("_")}
     rl["model_path"] = source.model_path
     actor_rollout_ref = dict(rl.get("actor_rollout_ref") or {})
     model = dict(actor_rollout_ref.get("model") or {})
@@ -278,12 +294,11 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     actor_rollout_ref["model"] = model
     rl["actor_rollout_ref"] = actor_rollout_ref
 
-    algorithm = str(
-        (rl.get("algorithm") or {}).get("tir_algo") or rl.get("algo") or "grpo"
-    ).lower()
-    profile = str(rl.get("profile") or "fast")
-    rollout = actor_rollout_ref.get("rollout") or {}
-    group_n = int(rollout.get("n") or rl.get("rollout_per_gpu") or 1)
+    rollout = dict(actor_rollout_ref.get("rollout") or {})
+    group_n = int(rollout.get("n") or rl.get("rollout_per_gpu") or (2 if profile == "fast" else 4))
+    rollout["n"] = group_n
+    actor_rollout_ref["rollout"] = rollout
+    rl["rollout_per_gpu"] = group_n
     sites = (
         ((rl.get("algorithm") or {}).get("tir") or {}).get("sites")
         or ((bundle.get("workflow") or {}).get("sampling") or {}).get("sites")
@@ -318,6 +333,18 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
             if hint:
                 warning["hint"] = hint
             warnings.append(warning)
+
+    record(
+        "algorithm", "训练算法",
+        "pass" if algorithm in VALID_ALGOS else "error",
+        algorithm.upper() if algorithm in VALID_ALGOS else f"训练算法必须是 {' / '.join(VALID_ALGOS)}。",
+    )
+    valid_profile = profile in ("fast", "a800", "a800_2gpu")
+    record(
+        "profile", "运行档位",
+        "error" if not valid_profile else "warning" if profile_note else "pass",
+        "运行档位必须是 fast / a800 / a800_2gpu。" if not valid_profile else str(profile_note or profile),
+    )
 
     model_path = Path(source.model_path).expanduser() if source.model_path else None
     if model_path and model_path.is_dir() and (model_path / "config.json").is_file():
@@ -431,11 +458,15 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
         algorithm,
         "--rl-yaml",
         f"<effective:{exp_id}:rl.yaml>",
+        "--workflow-yaml",
+        f"<effective:{exp_id}:workflow.yaml>",
         "--model",
         source.model_path or "<missing>",
     ]
     if rl.get("n_runners") is not None:
         launch_preview.extend(["--n-runners", str(int(rl["n_runners"]))])
+    if trainable_agents:
+        launch_preview.extend(["--active-agent", trainable_agents[0]])
     revision_payload = {
         "experiment_id": exp_id,
         "rl": rl,
@@ -531,7 +562,6 @@ def _launch_training(
     preflight_revision: str,
     stop_local_llm: bool,
 ) -> dict[str, Any]:
-    from .llm_config import resolve_llm_config
     from .process_manager import PROCS
 
     request_id = request_id.strip()
@@ -612,6 +642,7 @@ def _launch_training(
     )
 
     try:
+        env = _training_env(exp_id)
         _write_yaml(rl_path, plan.rl)
         _write_yaml(workflow_path, plan.bundle["workflow"])
         train_script = tir_agent_root() / "train_tir_agent.py"
@@ -659,8 +690,6 @@ def _launch_training(
                 reason="stopped_for_training",
             )
 
-        effective_llm = resolve_llm_config(exp_id, llm=plan.bundle["llm"])
-        env = effective_llm.subprocess_env()
         root = str(tir_agent_root().parent)
         env["PYTHONPATH"] = os.pathsep.join(
             [root, str(tir_agent_root()), env.get("PYTHONPATH", "")]
