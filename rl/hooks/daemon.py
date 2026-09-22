@@ -17,6 +17,7 @@ from .arpo_rollout import (
 from .branch_policy import distribute_root_budgets
 from workflow.active_set import load_local_expansion, resume_boundary_from_messages
 from workflow.archive import load_resume_messages
+from workflow.llm_diagnostics import log_model_route
 from rl.hooks.rae_advantage import adjudicate_action_group, apply_dead_end_backprop_verdicts
 
 
@@ -194,6 +195,9 @@ class TirAgentModeDaemon(AgentModeDaemon):
         return result_rollout
 
     async def _async_set_up(self, data: Dict[str, Any], server_addresses: List[str], is_train: bool = True):
+        model = str(self.train_information.get("model") or "")
+        for address in server_addresses:
+            log_model_route("daemon-to-vllm", f"http://{address}/v1/", model)
         orig_n = int(self.train_rollout_n)
         self._full_group_n = orig_n
         if is_train and self.tir_algo in ("arpo", "aepo", "rae"):
@@ -212,6 +216,13 @@ class TirAgentModeDaemon(AgentModeDaemon):
             await super()._async_set_up(data, server_addresses, is_train=is_train)
         finally:
             self.train_rollout_n = orig_n
+        if self.mode == "v1":
+            for item in self.llm_proxy.model_list:
+                log_model_route(
+                    "proxy-config",
+                    str(item["litellm_params"].get("api_base") or ""),
+                    str(item["model_name"]),
+                )
         self._pending_original_by_data_id = {}
         for _rid, sample in self._task_id_to_original_sample.items():
             did = str(sample.get("data_id", ""))

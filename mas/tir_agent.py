@@ -25,6 +25,7 @@ from rl.hooks.arpo_rollout import (
 )
 from rl.rewards import compute_outcome_reward, extract_answer_text, has_answer_format, normalize_qa, parse_alias_field
 from tools.langchain_tools import TOOL_MAP, TOOLS
+from workflow.llm_diagnostics import log_first_model_failure
 
 try:
     from workflow.env_load import load_repo_dotenv
@@ -330,6 +331,7 @@ class TirAgent:
     ) -> None:
         self.max_turns = max_turns
         self.model_name = model_name
+        self.endpoint = endpoint
         self.entropy_tokens = entropy_tokens
         self.entropy_threshold = entropy_threshold
         self.max_tokens = int(max_tokens)
@@ -512,9 +514,11 @@ class TirAgent:
                 try:
                     response = llm.bind(max_tokens=64).invoke(messages)
                 except Exception as e2:
+                    log_first_model_failure(e2, self.endpoint, self.model_name)
                     logger.error("LLM invoke failed after context retry: %s", e2)
                     response = AIMessage(content="<answer>None</answer>")
             else:
+                log_first_model_failure(e, self.endpoint, self.model_name)
                 logger.error("LLM invoke failed: %s", e)
                 response = AIMessage(content="<answer>None</answer>")
 

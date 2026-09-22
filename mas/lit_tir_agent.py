@@ -19,6 +19,7 @@ from workflow.active_set import (
 from workflow.archive import dump_resume_with_archive, register_archive, Archive
 from workflow.collector import default_reward_fn
 from workflow.env_load import load_repo_dotenv
+from workflow.llm_diagnostics import log_model_route
 from workflow.memory import MemoryStore
 from workflow.runtime import LLMConfig, TirRunner, apply_verifier_feedback, episode_to_trajectory, run_episode
 from workflow.spec import load_spec
@@ -50,6 +51,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
         self.max_model_len = int(max_model_len or (env_len or 0) or 0) or None
         self.multi_tool_bonus = multi_tool_bonus
         self.spec = load_spec(spec_path)
+        self._logged_model_route = False
 
     def rollout(
         self,
@@ -89,6 +91,9 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             )
 
         endpoint = llm.get_base_url(rollout.rollout_id, rollout.attempt.attempt_id)
+        if not self._logged_model_route:
+            log_model_route(f"runner rollout={rollout_id}", endpoint, llm.model)
+            self._logged_model_route = True
         request_logprobs = os.environ.get("TIR_REQUEST_LOGPROBS", "").strip().lower() in ("1", "true", "yes")
         handler = self.tracer.get_langchain_handler()
         cfg = LLMConfig(

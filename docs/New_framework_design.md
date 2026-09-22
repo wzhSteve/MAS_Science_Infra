@@ -350,93 +350,6 @@ class RolloutTreeEvent(BaseModel):
 - `RolloutSamplingPanel` 轨迹条：tool 子节点升级为一级 agent 节点（`buildTrajectoryGraph` 的 `tool` kind 保留为渲染细节）；
 - 新增 **RolloutTree 可视化页**：按 query（`tree_id`）查树、看节点 metrics / verdict / reward，复用 `GET /api/experiments/{id}` artifacts 读 `.local_expansion` 树。
 
-### 2.8 训练 Control Plane 与运行快照
-
-新框架的 MAS/RL 合同不能只定义“怎么算”，还必须定义“某次训练到底消费了哪一版配置、由哪个进程运行、如何安全停止和如何观察”。这些职责属于 `science_infra/control/`，不进入 `mas/workflow/`，也不改写 AGL/VERL。
-
-```mermaid
-flowchart LR
-  UI["WebUI 训练工作区"] --> PF["Training Preflight"]
-  PF --> SNAP["Run Snapshot\nRL + Workflow + Model + GPU"]
-  SNAP --> PM["ProcessManager\n状态机 / 冲突 / 定向停止"]
-  PM --> TRAIN["mas/train_tir_agent.py"]
-  TRAIN --> AGL["Agent-Lightning / VERL"]
-  AGL --> HOOKS["rl/hooks\nGRPO / ARPO / AEPO / IGPO / GIGPO / RAE"]
-  PM --> STREAM["Run Event Stream\nstate / stdout / metric / artifact"]
-  HOOKS --> STREAM
-  STREAM --> UI
-```
-
-职责边界：
-
-- **WebUI**：编辑配置、展示 Preflight、提交单一训练命令、观察指定 run；不计算 advantage，不猜测有效配置。
-- **Control**：解析模型来源、执行启动前检查、固定运行快照、管理生命周期、持久化状态和提供事件流。
-- **`mas/train_tir_agent.py`**：消费本次快照并适配 AGL/VERL；通过 Control 启动时不重新读取可编辑实验文件推导另一份配置。
-- **`rl/hooks/` / `rl/loss.py`**：实现算法行为；不感知浏览器页面和资源目录。
-- **AGL/VERL**：继续作为训练后端黑盒，不为 UI 产品化 fork 或复制训练循环。
-
-#### 有效训练配置
-
-唯一解析顺序：
-
-```text
-profile 基线
-  → 实验 rl.yaml
-  → Workflow Sampling / Branch Sites
-  → GPU 选择
-  → 训练模型来源
-  → algorithm overlay
-  → effective-rl.yaml
-```
-
-模型来源遵循：
-
-```text
-已绑定 training resource → 固定资源 id、revision 和 model_path
-没有绑定               → 兼容 rl.model_path / actor_rollout_ref.model.path
-绑定存在但损坏          → 明确失败，不静默回退 legacy
-```
-
-`algorithm.adv_estimator=grpo` 保持 VERL 兼容，真实算法由 `algorithm.tir_algo` 决定。Preflight、运行标题、日志、快照和历史都必须显示同一个最终算法及其来源。
-
-#### 不可变运行快照
-
-每次训练创建：
-
-```text
-experiments/<id>/artifacts/runs/<run_id>/
-├── status.json
-├── launch.json
-├── effective-rl.yaml
-├── effective-workflow.yaml
-├── stdout.log
-└── events.jsonl
-```
-
-运行期间继续编辑实验只影响下一次训练。停止必须校验 `experiment_id + run_id`；已有训练冲突时返回明确错误，不使用 `replace=True` 静默替换。
-
-状态机至少区分：
-
-```text
-preparing → starting → running → succeeded
-                         ├─────→ failed
-                         └─────→ stopping → cancelled
-```
-
-#### 运行事件流
-
-实验级 `/api/events` 保留轻量通知和跨层领域事件；大量 stdout 使用 run 级事件流。统一事件可以承载 `state`、`stdout`、`metric`、`artifact` 和 `RolloutTreeEvent`。日志以磁盘文件为恢复来源，客户端按 offset 重连，不能依赖内存 BUS 保存完整历史。
-
-#### 与 RolloutTree/Harness 的关系
-
-训练 Control Plane 不取代 P0–P3：
-
-- P0 的 `RolloutTree` 是算法与可视化的领域合同。
-- P2 的窗口事件与两级 reward 进入 run 事件流时仍保持原结构。
-- P3 Harness 消费领域事件，不解析纯文本日志推测 reward 或树节点。
-- Control 只负责把领域事件绑定到稳定 run 并可靠传输。
-
-
 ---
 
 
@@ -546,29 +459,6 @@ flowchart LR
 | P2  | `./run.sh traj-test` 绿（事件匹配版）；`mas.tests.*rae*` 绿（verdict 挂树）                     |
 | P3  | SSE 事件流端到端单测绿；UI 树页实时更新（手动验收）                                                     |
 
-### 3.7 训练启动、停止与 RL 算法迁移阶段
-
-训练产品闭环采用独立的 T1–T4 阶段。它们与上面的 P0–P3 是正交关系：P 阶段演进 MAS/RL 领域合同，T 阶段保证这些合同在一次真实训练中被固定、运行、停止和观察。
-
-```mermaid
-flowchart LR
-  T1["T1 模型来源 + Preflight"] --> T2["T2 快照 + 安全启停"]
-  T2 --> T3["T3 实时控制台"]
-  T3 --> T4["T4 六算法验收"]
-  P0["P0 RolloutTree"] -. "树事件接入" .-> T3
-  P2["P2 窗口事件 + Reward"] -. "算法证据" .-> T4
-  P3["P3 实时 Harness"] -. "Harness 事件接入" .-> T3
-```
-
-| 阶段 | 交付 | 详细实施文档 |
-| --- | --- | --- |
-| T1 | 模型资源后端、legacy 回退、本地模型发现、只读 Preflight | [训练运行第一阶段](../webui/plan/训练运行第一阶段-模型来源与启动前检查.md) |
-| T2 | 有效配置快照、运行状态机、冲突保护、run-specific stop | [训练运行第二阶段](../webui/plan/训练运行第二阶段-运行快照与安全启停.md) |
-| T3 | run 级 SSE、日志 offset、独立训练工作区 | [训练运行第三阶段](../webui/plan/训练运行第三阶段-实时控制台与训练工作区.md) |
-| T4 | 唯一算法解析、六算法配置收口和用户主导的 GPU 验收 | [训练运行第四阶段](../webui/plan/训练运行第四阶段-RL算法收口与真实训练验收.md) |
-
-T1–T3 的自动验证以 Python 编译和 WebUI build 为主，配合无 GPU 的纯配置/假进程检查。T4 的真实 VERL、vLLM 和 A800 训练由用户从 WebUI 明确触发，不能在普通开发验证中自动占用 GPU。
-
 
 ---
 
@@ -578,11 +468,6 @@ T1–T3 的自动验证以 Python 编译和 WebUI build 为主，配合无 GPU �
 
 `new_framework.md` 的本质是**把现有仓库三条成熟度不同的线（EPC-AW agent 化、BranchSite 采样、RAE 树形 credit）统一进"一切皆带工作窗口的 agent"心智模型**。最优架构 = 现有四层不动 + 三个新合同（`AgentNodeSpec(kind)`/`RouterSpec`、`WindowEndEvent`、`RolloutTree`）+ 一个降级（`BranchSiteReward` → 节点默认策略）。
 
-迁移路径由两条互补路线组成：
-
-- **领域合同**：P0 纯增量（树合同）→ P1 破坏性收敛（tool agent 化，糖保兼容）→ P2 语义升级（事件匹配 + 两级 reward）→ P3 实时化（Harness 双态）。
-- **训练运行**：T1 模型与 Preflight → T2 快照与安全启停 → T3 实时控制台 → T4 六算法真实验收。
-
-P0/P1 可并行启动；T1/T2 可以在不改变算法行为的前提下先完成。两条路线汇合后，[ROLLOUT_SAMPLING_UI_TEST.md](./ROLLOUT_SAMPLING_UI_TEST.md) 标注的“自匹配 vs 真实事件”旧债、Collect/Train 假绿问题，以及新 UI 中训练来源、运行身份和日志观察不可靠的问题才算同时解决。
+迁移路径对现有代码最友好：**P0 纯增量（树合同）→ P1 破坏性收敛（tool agent 化，糖保兼容）→ P2 语义升级（事件匹配 + 两级 reward）→ P3 实时化（Harness 双态）**。P0/P1 可并行启动；全部完成后，[ROLLOUT_SAMPLING_UI_TEST.md](./ROLLOUT_SAMPLING_UI_TEST.md) 标注的"自匹配 vs 真实事件"旧债与 Collect/Train 假绿问题被结构性消除。
 
 > **函数级实施方案**（插入点、代码骨架、测试与验收命令）见 [NEW_FRAMEWORK_MIGRATION_PLAN.md](./NEW_FRAMEWORK_MIGRATION_PLAN.md)。
