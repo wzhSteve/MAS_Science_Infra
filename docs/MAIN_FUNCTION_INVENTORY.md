@@ -45,7 +45,7 @@
 
 4. 不需要验证
 
-### 可选：交互式更新启动脚本
+### 一键更新启动脚本
 
 首次取得 `deploy_webui.sh` 后，在服务器项目根目录运行：
 
@@ -53,14 +53,13 @@
 bash deploy_webui.sh
 ```
 
-依次选择是否拉取最新 `integration/new-webui`、是否 rebuild，再确认训练已停止后重启网站。也可预设前两项：
+无需参数：自动拉取最新 `integration/new-webui` → 停止网站 → 清理本项目旧训练 → 按需构建 → 启动网站。首次运行、前端源码变化或构建产物缺失时自动 rebuild；只有后端变化时复用上次前端产物。构建版本记录在被 Git 忽略的 `artifacts/control/webui-build-trees`。
 
-```bash
-bash deploy_webui.sh --pull --rebuild
-bash deploy_webui.sh --pull --no-rebuild
-```
+脚本复用 `run.sh`，FastAPI 在 8787 同时提供 API 与构建后的前端，无需另起 Vite。不会自动安装依赖或覆盖服务器修改。
 
-脚本复用 `run.sh`，FastAPI 在 8787 同时提供 API 与构建后的前端，无需另起 Vite。不会自动安装依赖、覆盖服务器修改或清理训练进程；不 rebuild 时要求已有构建产物。
+清理时使用 `scripts/cleanup_training.py` 列出本项目训练入口、以项目为工作目录的已知 Ray/vLLM Worker 及其后代。只保留一次输入 `CLEAN` 的确认；没有待清理进程则直接继续。按 PID 依次中断、终止、强杀，使用 psutil 的进程身份校验避免 PID 复用误杀，不使用全局 `ray stop` 或按名称清理 Python。取消或失败时网站保持停止，不继续部署。不删除运行日志、快照或模型。
+
+仅查看待清理进程可运行 `.venv/bin/python scripts/cleanup_training.py --dry-run`。无法识别归属的进程不自动清理；以 `nvidia-smi` 的剩余占用为准，不能承诺整个服务器 GPU 一定空闲。手动单独执行清理时，先停止网站且不要同时启动新训练。
 
 Windows 使用已配置的 SSH 别名：`ssh seetacloud`。仅建立转发可用 `ssh -N seetacloud`；两者选一个，不同时占用本地 18787。浏览器访问 `http://127.0.0.1:18787/`，而不是服务器终端中的 localhost 地址。
 
