@@ -14,8 +14,8 @@ ask() {
 }
 
 main() {
-  local root branch pull="" rebuild=""
-  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  local root script_dir branch pull="" rebuild=""
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   branch="integration/new-webui"
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -24,7 +24,7 @@ main() {
       --rebuild) rebuild=1 ;;
       --no-rebuild) rebuild=0 ;;
       -h|--help)
-        echo "用法: bash scripts/deploy_webui.sh [--pull|--no-pull] [--rebuild|--no-rebuild]"
+        echo "用法: bash deploy_webui.sh [--pull|--no-pull] [--rebuild|--no-rebuild]"
         echo "未指定的选项逐项询问；启动前确认训练已停止。不安装依赖、不启动训练。"
         return 0
         ;;
@@ -32,6 +32,10 @@ main() {
     esac
     shift
   done
+  if ! root="$(git -C "${script_dir}" rev-parse --show-toplevel)"; then
+    echo "脚本不在 Git 仓库内，请放到项目根目录或 scripts 目录。" >&2
+    return 1
+  fi
   cd "${root}"
   if [[ "$(git branch --show-current)" != "${branch}" ]]; then
     echo "请先确认并切换到 ${branch}；脚本不自动切换分支。" >&2

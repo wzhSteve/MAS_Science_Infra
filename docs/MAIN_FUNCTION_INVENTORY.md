@@ -47,17 +47,17 @@
 
 ### 可选：交互式更新启动脚本
 
-首次取得 `scripts/deploy_webui.sh` 后，在服务器项目根目录运行：
+首次取得 `deploy_webui.sh` 后，在服务器项目根目录运行：
 
 ```bash
-bash scripts/deploy_webui.sh
+bash deploy_webui.sh
 ```
 
 依次选择是否拉取最新 `integration/new-webui`、是否 rebuild，再确认训练已停止后重启网站。也可预设前两项：
 
 ```bash
-bash scripts/deploy_webui.sh --pull --rebuild
-bash scripts/deploy_webui.sh --pull --no-rebuild
+bash deploy_webui.sh --pull --rebuild
+bash deploy_webui.sh --pull --no-rebuild
 ```
 
 脚本复用 `run.sh`，FastAPI 在 8787 同时提供 API 与构建后的前端，无需另起 Vite。不会自动安装依赖、覆盖服务器修改或清理训练进程；不 rebuild 时要求已有构建产物。
