@@ -20,21 +20,32 @@ export interface BindingView {
 const UNLOADED: BindingView = { loaded: false, bound: false, resource: null, error: null };
 
 export const ModelBinding = memo(function ModelBinding({
-  experimentId, purpose, active, onReload, onManage, onState, legacyDirty = false, suggestedId, onSuggestionApplied, children,
+  experimentId, purpose, active, onReload, onManage, onState, legacyDirty = false, suggestedId, onSuggestionApplied, children, saveInHeader = false, compact = false, fallbackName,
 }: {
   experimentId: string; purpose: ModelResourceType; active: boolean; onReload: () => void;
   onManage: () => void; onState?: (state: BindingView) => void; legacyDirty?: boolean;
   suggestedId?: string; onSuggestionApplied?: () => void; children?: ReactNode;
+  saveInHeader?: boolean;
+  compact?: boolean; fallbackName?: string;
 }) {
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
   const loadBindings = useCallback((signal: AbortSignal) => modelResourcesApi.bindings(experimentId, signal), [experimentId]);
   const remote = usePollingResource(`bindings:${experimentId}:${purpose}`, loadBindings, undefined, active);
-  const loadList = useCallback((signal: AbortSignal) => modelResourcesApi.list({ type: purpose, q: search, offset, limit: 20 }, signal), [purpose, search, offset]);
+  const loadList = useCallback(async (signal: AbortSignal) => {
+    if (!compact) return modelResourcesApi.list({ type: purpose, q: search, offset, limit: 20 }, signal);
+    const first = await modelResourcesApi.list({ type: purpose, limit: 100 }, signal);
+    const items = [...first.items];
+    for (let next = 100; next < first.total; next += 100) {
+      const page = await modelResourcesApi.list({ type: purpose, offset: next, limit: 100 }, signal);
+      items.push(...page.items);
+    }
+    return { ...first, items };
+  }, [purpose, search, offset, compact]);
   const list = usePollingResource(`binding-options:${purpose}:${search}:${offset}`, loadList, undefined, active);
   const loadLocalModels = useCallback((signal: AbortSignal) => modelResourcesApi.discoverLocal(signal), []);
-  const localModels = usePollingResource('local-training-models', loadLocalModels, undefined, active && purpose === 'training');
+  const localModels = usePollingResource('local-training-models', loadLocalModels, undefined, active && purpose === 'training' && !compact);
   const [draft, setDraft] = useState<{ base: ModelBindings; selected: string | null } | null>(null);
   const action = useAction();
   const handledSuggestion = useRef<string>();
@@ -71,9 +82,9 @@ export const ModelBinding = memo(function ModelBinding({
   const error = remote.error || saved?.error || null;
   useEffect(() => {
     onState?.(draft ? {
-      loaded: true, bound: Boolean(saved?.resource_id), resource: saved?.resource || null, error,
+      loaded: true, bound: Boolean(compact ? draft.selected : saved?.resource_id), resource: compact ? candidate : saved?.resource || null, error,
     } : { ...UNLOADED, loaded: !remote.loading, error: remote.error });
-  }, [draft?.base, purpose, onState, error, remote.error, remote.loading]);
+  }, [draft?.base, compact, compact ? draft?.selected : undefined, compact ? candidate : undefined, purpose, onState, error, remote.error, remote.loading]);
 
   const save = useCallback(async () => {
     const submitted = latestDraft.current;
@@ -81,7 +92,9 @@ export const ModelBinding = memo(function ModelBinding({
     if (!submitted.selected && submitted.base[purpose].resource_id
       && !window.confirm('解除资源引用并恢复本实验原先保存的配置？不会复制个人资源的当前值或密钥。')) return false;
     const success = await action.run('bind', async () => {
-      const result = await modelResourcesApi.bind(experimentId, submitted.base.revision, purpose, submitted.selected);
+      const current = await modelResourcesApi.bindings(experimentId);
+      if (current[purpose].resource_id !== submitted.base[purpose].resource_id) throw new Error('此用途的绑定已被修改，请刷新后重新选择。');
+      const result = await modelResourcesApi.bind(experimentId, current.revision, purpose, submitted.selected);
       if (!mounted.current) return;
       setDraft(previous => ({
         base: result, selected: previous?.selected === submitted.selected ? result[purpose].resource_id : previous?.selected ?? null,
@@ -108,7 +121,7 @@ export const ModelBinding = memo(function ModelBinding({
   };
   const registerLocal = useCallback(async (candidate: LocalModelCandidate) => {
     const submitted = latestDraft.current;
-    if (!submitted || purpose !== 'training') return;
+    if (!submitted || purpose !== 'training' || legacyDirty || submitted.selected !== submitted.base[purpose].resource_id) return;
     await action.run('register-local', async () => {
       const { resource, bindings } = await modelResourcesApi.registerLocal(experimentId, {
         revision: submitted.base.revision,
@@ -121,7 +134,31 @@ export const ModelBinding = memo(function ModelBinding({
       onReload();
       return `已绑定本地模型 ${resource.name}`;
     });
-  }, [action.run, experimentId, list.refresh, onReload, purpose]);
+  }, [action.run, experimentId, list.refresh, onReload, purpose, legacyDirty]);
+
+  if (compact) return <div className="model-resource-choice">
+    <FormField label={purpose === 'training' ? '初始权重' : '默认推理模型'}>
+      <Select value={draft?.selected || ''} disabled={!draft || action.pending !== null} onChange={event => {
+        if (event.target.value === '__manage__') { onManage(); return; }
+        setDraft(previous => previous && ({ ...previous, selected: event.target.value || null }));
+      }}>
+        <option value="">{saved?.resource_id ? '原有模型配置' : fallbackName || '选择已有模型'}</option>
+        {draft?.selected && !list.data?.items.some(item => item.id === draft.selected) &&
+          <option value={draft.selected}>{candidate?.name || draft.selected}</option>}
+        {list.data?.items.map(resource => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+        <option value="__manage__">在模型与数据中管理…</option>
+      </Select>
+    </FormField>
+    {(error || list.error || selectedResource.error) && <InlineNotice tone="danger">
+      {error || list.error || selectedResource.error}
+      <Button size="sm" onClick={() => {
+        void remote.refresh(); void list.refresh();
+        if (draft?.selected && !selected) void selectedResource.refresh();
+      }}>重试</Button>
+    </InlineNotice>}
+    {draft?.selected && !candidateValid && <p className="field-hint">所选模型尚未就绪，无法保存。</p>}
+    {action.notice?.tone === 'danger' && <InlineNotice tone="danger">{action.notice.message}</InlineNotice>}
+  </div>;
 
   return <Section title={purpose === 'inference' ? '默认推理模型' : '训练模型来源'} actions={
     <StatusBadge tone={dirty ? 'warning' : 'neutral'}>{action.pending ? '处理中' : !draft ? '读取绑定中' : dirty ? '绑定未保存' : saved?.resource_id ? '个人资源' : '实验内配置'}</StatusBadge>
@@ -156,7 +193,7 @@ export const ModelBinding = memo(function ModelBinding({
       {localModels.data.items.map(model => <div className="local-model-candidate" key={model.path}>
         <div><strong>{model.name}</strong><span className="mono">{model.path}</span>
           <small>{model.architectures.join(', ') || model.model_type || 'Hugging Face model'}</small></div>
-        <Button size="sm" disabled={action.pending !== null} loading={action.pending === 'register-local'}
+        <Button size="sm" disabled={!draft || dirty || legacyDirty || action.pending !== null} loading={action.pending === 'register-local'}
           onClick={() => void registerLocal(model)}>
           {model.registered_resource_id ? '绑定' : '登记并绑定'}
         </Button>
@@ -164,9 +201,9 @@ export const ModelBinding = memo(function ModelBinding({
     </div> : null}
     {purpose === 'training' && localModels.error && <InlineNotice tone="warning">本地模型发现失败：{localModels.error}</InlineNotice>}
     {!candidateValid && draft?.selected && <InlineNotice tone="warning">所选资源尚未读取或类型不适用，不能保存绑定。</InlineNotice>}
-    {legacyDirty && <InlineNotice tone="warning">实验配置还有未保存修改，请先保存后再切换模型来源。</InlineNotice>}
+    {legacyDirty && !saveInHeader && <InlineNotice tone="warning">实验配置还有未保存修改，请先保存后再切换模型来源。</InlineNotice>}
     <div className="action-bar">
-      <Button size="sm" variant="primary" loading={action.pending === 'bind'} disabled={!dirty || action.pending !== null || legacyDirty || !candidateValid} onClick={() => void save()}>保存模型绑定</Button>
+      {!saveInHeader && <Button size="sm" variant="primary" loading={action.pending === 'bind'} disabled={!dirty || action.pending !== null || legacyDirty || !candidateValid} onClick={() => void save()}>保存模型绑定</Button>}
       <Button size="sm" variant="ghost" onClick={onManage}>管理模型</Button>
       <Button size="sm" variant="ghost" disabled={action.pending !== null} onClick={() => void reload()}>刷新</Button>
     </div>

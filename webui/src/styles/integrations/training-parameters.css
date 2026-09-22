@@ -1,0 +1,67 @@
+.mas-workspace--parameters { flex-direction: row; }
+.parameter-panel-host { display: flex; min-width: 0; min-height: 0; flex: none; }
+.parameter-panel-host.is-expanded { flex: 1; }
+.training-parameters { display: flex; flex-direction: column; width: 324px; min-width: 0; min-height: 0; flex: none; border-right: 1px solid var(--border-subtle); background: var(--surface); }
+.training-parameters.is-expanded { width: 100%; flex: 1; border-right: 0; background: var(--canvas); }
+.training-parameters.is-collapsed { width: 44px; background: #f8f9fb; }
+.parameter-panel-heading { display: flex; align-items: center; gap: 4px; flex: none; min-height: 49px; padding: 10px 14px 8px 20px; border-bottom: 1px solid var(--border-subtle); background: var(--surface); }
+.parameter-panel-heading h2 { margin: 0 auto 0 0; color: var(--text-primary); font-size: 12px; font-weight: 500; }
+.parameter-panel-heading > .ui-button { padding: 4px; min-height: 26px; color: var(--text-secondary); font-size: 11px; }
+.training-parameters.is-collapsed .parameter-panel-heading { padding-inline: 8px; border-bottom: 0; justify-content: center; }
+.parameter-panel-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 20px 24px; scrollbar-width: thin; overscroll-behavior: contain; }
+.parameter-group { display: flex; flex-direction: column; gap: 13px; padding: 22px 0; min-width: 0; }
+.parameter-group + .parameter-group { border-top: 1px solid #e9ecf0; }
+.parameter-group > h3 { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 500; margin: 0 0 3px; min-height: 20px; }
+.parameter-group > h3 > span { color: #8993a1; font: 10px var(--font-code); }
+.parameter-group > h3 > .ui-button { margin-left: auto; min-height: 20px; padding: 2px 4px; color: var(--text-secondary); }
+.training-parameters .form-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.training-parameters .form-field { gap: 6px; }
+.training-parameters .form-field > label { font-size: 11px; color: var(--text-secondary); font-weight: 400; }
+.training-parameters .ui-input, .training-parameters .ui-select { min-width: 0; min-height: 32px; padding-block: 6px; font-size: 12px; border-color: #d4dbe4; border-radius: 5px; background-color: var(--surface); }
+.training-parameters .ui-input:focus, .training-parameters .ui-select:focus { border-color: var(--accent); }
+.parameter-agent-list { display: flex; align-items: flex-start; gap: 16px; font-size: 11px; color: var(--text-secondary); }
+.parameter-agent-list > span { padding-block: 5px; }
+.parameter-agent-list > div { display: flex; flex: 1; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.parameter-agent-list button { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 4px 8px; font-size: 11px; border: 1px solid #dce4f0; border-radius: 5px; background: #f4f7fc; color: var(--accent); cursor: pointer; overflow-wrap: anywhere; }
+.parameter-summary-row { display: flex; align-items: center; gap: 10px; font-size: 11px; min-height: 26px; }
+.parameter-summary-row > span:first-child { color: var(--text-secondary); margin-right: auto; }
+.parameter-summary-row > .ui-button { min-height: 24px; padding: 2px 5px; font-size: 11px; color: var(--accent); }
+.parameter-details { min-width: 0; font-size: 11px; }
+.parameter-details > summary { cursor: pointer; color: var(--text-secondary); padding: 4px 0; user-select: none; }
+.parameter-details[open] > summary { margin-bottom: 12px; color: var(--text-primary); }
+.parameter-details > .form-field + .form-field, .parameter-details > .form-field + .form-grid { margin-top: 12px; }
+.parameter-details > .ui-button { margin-top: 12px; }
+.parameter-execution-agent { display: flex; align-items: center; gap: 10px; margin-top: 10px; min-width: 0; }
+.parameter-execution-agent > span:nth-child(2) { margin-left: auto; color: var(--text-secondary); overflow-wrap: anywhere; }
+.training-parameters .page-stack { gap: 14px; }
+.training-parameters .ui-section { border: 0; border-radius: 0; box-shadow: none; padding: 0; background: transparent; }
+.training-parameters .section-header { margin-bottom: 12px; }
+.training-parameters .section-header h2 { font-size: 12px; font-weight: 500; }
+.training-parameters .sampling-settings { gap: 12px; }
+.training-parameters .sampling-settings > .ui-section:first-child > .section-header { display: none; }
+.training-parameters .sampling-generation { grid-column: 1 / -1; }
+.training-parameters .field-hint { font-size: 10px; line-height: 1.7; }
+.training-parameters .inline-notice { font-size: 11px; padding: 8px 10px; }
+.training-parameters .model-resource-choice { min-width: 0; }
+.training-parameters .model-resource-choice > .inline-notice { margin-top: 8px; }
+.training-parameters.is-expanded .parameter-panel-scroll { width: 100%; max-width: 920px; align-self: center; padding-inline: 36px; padding-bottom: 48px; }
+.training-parameters.is-expanded .parameter-group { padding-block: 28px; gap: 18px; }
+.training-parameters.is-expanded .parameter-group > h3 { font-size: 15px; }
+.training-parameters.is-expanded .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+.training-parameters.is-expanded .parameter-agent-list { justify-content: flex-start; }
+.training-parameters.is-expanded .parameter-agent-list > div { justify-content: flex-start; }
+.training-parameters.is-expanded .branch-site-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.training-parameters.is-expanded .branch-site-editor { padding: 20px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); }
+.training-parameters.is-expanded .parameter-details > .form-field { max-width: 500px; }
+.training-parameters.is-expanded .parameter-summary-row { justify-content: flex-start; }
+.training-parameters.is-expanded .parameter-summary-row > span:first-child { margin-right: 24px; }
+@media (max-width: 1000px) {
+  .training-parameters { width: 300px; }
+}
+@media (max-width: 700px) {
+  .training-parameters { width: 260px; }
+  .parameter-panel-scroll { padding-inline: 14px; }
+  .parameter-panel-heading { padding-inline: 12px; }
+  .training-parameters.is-expanded .parameter-panel-scroll { padding-inline: 20px; }
+  .training-parameters.is-expanded .form-grid, .training-parameters.is-expanded .branch-site-list { grid-template-columns: minmax(0, 1fr); }
+}

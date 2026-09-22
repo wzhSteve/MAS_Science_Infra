@@ -8,6 +8,7 @@ import { Button } from '../../../shared/ui/button';
 
 type Props = {
   trainRunId: string | null;
+  trainState?: string;
   trainRunning: boolean;
   aglOnline: boolean;
   pending: string | null;
@@ -15,10 +16,12 @@ type Props = {
   onStop: () => Promise<void>;
 };
 
-export const RlTrainingActions = memo(function RlTrainingActions({ trainRunId, trainRunning, aglOnline, pending, onStart, onStop }: Props) {
+export const RlTrainingActions = memo(function RlTrainingActions({ trainRunId, trainState, trainRunning, aglOnline, pending, onStart, onStop }: Props) {
   const stop = useAction();
   return <Section title="训练运行"
-    actions={<StatusBadge tone={trainRunning ? 'info' : 'neutral'}>{trainRunning ? 'running' : 'idle'}</StatusBadge>}>
+    actions={<StatusBadge tone={trainRunning ? 'info' : trainState === 'failed' ? 'danger' : 'neutral'}>
+      {trainState || (trainRunning ? 'running' : 'idle')}
+    </StatusBadge>}>
     {trainRunId && <p className="field-hint">run=<span className="mono break-all">{trainRunId}</span></p>}
     <ActionBar>
       <Button variant="primary" loading={pending === 'start'} disabled={trainRunning || pending !== null} onClick={onStart}>保存训练配置并确认启动</Button>

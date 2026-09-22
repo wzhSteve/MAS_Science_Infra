@@ -68,7 +68,6 @@ export const GpuStatusControl = memo(function GpuStatusControl() {
           <DropdownMenu.Separator className="gpu-status-separator" />
           <div className="gpu-status-footer">
             <span>{draft.dirty ? '设备选择尚未保存' : `目标设备 ${selectedIds.length} 张`}</span>
-            <Button size="sm" variant="ghost" onClick={() => { void draft.save(); }}>保存</Button>
           </div>
           <DropdownMenu.Arrow className="workspace-navigation-arrow" />
         </DropdownMenu.Content>

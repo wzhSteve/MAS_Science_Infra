@@ -15,10 +15,10 @@ export function RolloutHistory({ history, currentRunId, openRequest = 0, active 
   useEffect(() => { if (openRequest > 0) setOpen(true); }, [openRequest]);
   useEffect(() => { if (open && active) void history.load(); }, [open, active, currentRunId, history.load]);
   return <div className="mas-history">
-    <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}><History size={14} />最近运行</Button>
+    <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}><History size={14} />调试历史</Button>
     {history.selectedId && <Button size="sm" variant="ghost" onClick={() => void history.select(null)}>返回本页运行</Button>}
-    {open && <section className="mas-history-menu" aria-label="最近运行记录">
-      <div className="mas-history-heading"><strong>当前实验的运行</strong>
+    {open && <section className="mas-history-menu" aria-label="最近调试记录">
+      <div className="mas-history-heading"><strong>当前实验的单题调试</strong>
         <Button size="sm" variant="ghost" disabled={history.listLoading} aria-label="刷新运行列表" onClick={() => void history.load()}><RefreshCw size={13} /></Button></div>
       {history.items.map(item => <button type="button" key={item.run_id} className="mas-history-item"
         disabled={!item.run} aria-current={history.selectedId === item.run_id ? 'true' : undefined}

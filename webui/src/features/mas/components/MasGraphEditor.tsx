@@ -1,8 +1,8 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlowProvider, useReactFlow, type Connection, type XYPosition, type ReactFlowProps } from '@xyflow/react';
 import { AlertCircle, X } from 'lucide-react';
 import type { Palette, WorkflowSpec } from '../../../shared/api/types';
-import type { EditorPanel, GraphNode, GraphEdge, GraphNodePreset, TraceFocusRequest } from '../types';
+import type { GraphNode, GraphEdge, GraphNodePreset, TraceFocusRequest } from '../types';
 import { executableInfo } from '../model/workflowGraph';
 import { edgeConnection } from '../model/edgeRules';
 import { edgeLanes } from '../model/edgeGeometry';
@@ -21,16 +21,15 @@ type Props = {
   palette: Palette;
   onChange: (workflow: WorkflowSpec) => void;
   active: boolean;
-  panel: EditorPanel;
-  onPanelChange: (panel: EditorPanel) => void;
   libraryOpen: boolean;
   onLibraryOpenChange: (open: boolean) => void;
-  settingsContent: ReactNode;
   onModelResources: () => void;
+  inspectorVisible?: boolean;
+  onInspect?: () => void;
   traceFocus?: TraceFocusRequest | null;
 };
 
-function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelChange, libraryOpen, onLibraryOpenChange, settingsContent, onModelResources, traceFocus }: Props) {
+function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLibraryOpenChange, onModelResources, traceFocus, inspectorVisible = true, onInspect }: Props) {
   const graph = useGraphEditor(workflow, onChange, palette);
   const flow = useReactFlow<GraphNode, GraphEdge>();
   const root = useRef<HTMLDivElement>(null);
@@ -71,14 +70,9 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
   })), [graph.edges, graph.rules, lanes]);
 
   const closePanels = useCallback(() => {
-    onPanelChange(null);
-    if (panel !== 'settings') graph.select(null);
+    graph.select(null);
     setConnection(null);
-  }, [onPanelChange, graph.select, panel]);
-
-  useEffect(() => {
-    if (panel) setConnection(null);
-  }, [panel]);
+  }, [graph.select]);
 
   useEffect(() => { setConnection(null); }, [workflow]);
 
@@ -146,10 +140,9 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
     setTraceInfo(traceFocus.toolName && bindings.length !== 1
       ? '当前画布没有唯一对应的工具绑定，仅定位到调用者 Agent。'
       : `已定位历史执行涉及的实体${traceFocus.agentExecutionId ? ` · ${traceFocus.agentExecutionId}` : ''}，这不是实时执行状态。`);
-    onPanelChange(null);
     setConnection(null);
     revealNode(agent.id);
-  }, [active, traceFocus, graph.nodes, graph.edges, graph.select, graph.setNotice, onPanelChange, revealNode]);
+  }, [active, traceFocus, graph.nodes, graph.edges, graph.select, revealNode]);
 
   const add = (preset: GraphNodePreset, position?: XYPosition) => {
     const area = visibleArea();
@@ -166,16 +159,15 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
       }
     }
     const id = graph.addNode(preset, position || center);
-    onPanelChange(null);
     setConnection(null);
     if (id) revealNode(id);
   };
 
   const onSelectEdge = useCallback((id: string) => {
+    onInspect?.();
     graph.select({ kind: 'edge', id });
-    onPanelChange(null);
     setConnection(null);
-  }, [graph.select, onPanelChange]);
+  }, [graph.select, onInspect]);
   const interaction = useMemo(() => ({ rules: graph.rules, reconnecting, onSelectEdge }), [graph.rules, reconnecting, onSelectEdge]);
 
   const onConnect = (raw: Connection) => {
@@ -185,10 +177,8 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
     if (!valid.length) { graph.setNotice(options[0]?.reason || '没有可用的连线关系。'); return; }
     if (valid.length === 1) {
       graph.connect(value, valid[0].kind);
-      onPanelChange(null);
     } else {
       graph.select(null);
-      onPanelChange(null);
       const bounds = root.current?.getBoundingClientRect();
       const target = graph.rules.nodeById.get(value.target);
       const point = flow.flowToScreenPosition(target?.position || { x: 0, y: 0 });
@@ -244,9 +234,9 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
         if (!state.isValid && state.toNode) graph.setNotice('未改接到合法对象，原连线已保留。');
         reconnectRef.current = null; setReconnecting(null);
       }}
-      onNodeClick={(_, node) => { graph.select({ kind: 'node', id: node.id }); onPanelChange(null); setConnection(null); revealNode(node.id); }}
+      onNodeClick={(_, node) => { onInspect?.(); graph.select({ kind: 'node', id: node.id }); setConnection(null); revealNode(node.id); }}
       onEdgeClick={(_, edge) => onSelectEdge(edge.id)}
-      onPaneClick={() => { if (panel !== 'settings') closePanels(); else { graph.select(null); setConnection(null); } }}
+      onPaneClick={closePanels}
       onAdd={add} onOpenLibrary={openLibrary} onError={graph.setNotice} />
     {traceInfo && <div className="mas-trace-location" role="status"><span>{traceInfo}</span>
       <Button size="sm" variant="ghost" aria-label="关闭历史定位说明" onClick={() => setTraceInfo('')}><X size={14} /></Button>
@@ -255,24 +245,23 @@ function GraphWorkbench({ workflow, palette, onChange, active, panel, onPanelCha
       <AlertCircle size={15} /><span>{graph.notice || executable.reason}</span>
       {!graph.notice && executable.nodeId && <Button size="sm" variant="ghost" onClick={() => {
         if (executable.nodeId) {
-          graph.select({ kind: 'node', id: executable.nodeId }); onPanelChange(null); revealNode(executable.nodeId);
+          graph.select({ kind: 'node', id: executable.nodeId }); revealNode(executable.nodeId);
         }
       }}>定位</Button>}
       {graph.notice && <Button size="sm" variant="ghost" aria-label="关闭提示" onClick={() => graph.setNotice('')}><X size={14} /></Button>}
     </div>}
     {libraryOpen && <GraphPalette palette={palette} nodes={graph.nodes} tab={libraryTab} onTabChange={setLibraryTab} onAdd={add}
       onClose={() => onLibraryOpenChange(false)} onTemplate={(template) => {
-        graph.applyTemplate(template); onPanelChange(null); setConnection(null);
+        graph.applyTemplate(template); setConnection(null);
         requestAnimationFrame(() => void flow.fitView({ padding: 0.25, maxZoom: 1 }));
       }} />}
-    {settingsContent}
-    {panel === null && graph.selected ? <NodeInspector selected={graph.selected} nodes={graph.nodes} palette={palette} entryId={workflow.entry_agent || 'hub'}
+    {inspectorVisible && (graph.selected ? <NodeInspector selected={graph.selected} nodes={graph.nodes} palette={palette} entryId={workflow.entry_agent || 'hub'}
         onModelResources={onModelResources}
         onPatch={graph.updateSelected} onEntry={graph.setEntry} onDelete={graph.deleteSelected} onClose={closePanels} />
-      : panel === null && selectedEdge ? <EdgeInspector key={selectedEdge.id} edge={selectedEdge} nodes={graph.nodes}
+      : selectedEdge ? <EdgeInspector key={selectedEdge.id} edge={selectedEdge} nodes={graph.nodes}
         rules={graph.rules} topology={workflow.topology}
-        onChange={(patch) => graph.updateEdge(selectedEdge.id, patch)} onDelete={graph.deleteSelected} onClose={closePanels} /> : null}
-    {connection && panel === null && <ConnectionPicker connection={connection.value} anchor={connection.anchor}
+        onChange={(patch) => graph.updateEdge(selectedEdge.id, patch)} onDelete={graph.deleteSelected} onClose={closePanels} /> : null)}
+    {connection && <ConnectionPicker connection={connection.value} anchor={connection.anchor}
       workspace={root} options={graph.rules.options(connection.value)}
       onClose={() => { setConnection(null); root.current?.focus(); }}
       onChoose={(kind) => {

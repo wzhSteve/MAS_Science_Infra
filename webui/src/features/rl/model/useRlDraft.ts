@@ -4,7 +4,8 @@ import type { RlConfig, SamplingSpec } from '../../../shared/api/types';
 import { useAction } from '../../../shared/hooks/useAction';
 import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
 import { normalizeRlPayload } from './normalizeRlPayload';
-import { applyRlRecommendation, applyTrainSignal } from './rlPrefills';
+import { applyRlRecommendation } from './rlPrefills';
+import { HYDRA_FIELDS } from './hydraFields';
 
 export function useRlDraft(
   expId: string,
@@ -43,7 +44,20 @@ export function useRlDraft(
 
   const persist = useCallback(async () => {
     const submittedRevision = editRevision.current;
-    const payload = normalizeRlPayload(rl, [0], sampling);
+    for (const field of HYDRA_FIELDS) {
+      const value = field.read(rl);
+      if (field.type !== 'number' || value == null) continue;
+      const count = /batch_size|batch_size_per_gpu|length|total_epochs|parallel_size|nnodes/.test(field.path);
+      if (!Number.isFinite(value) || (count && (Number(value) < 1 || !Number.isInteger(value)))) {
+        throw new Error(`${field.label}需要${count ? '大于零的整数' : '有效数字'}。`);
+      }
+      if (/optim.lr|gpu_memory_utilization/.test(field.path) && Number(value) <= 0) throw new Error(`${field.label}必须大于零。`);
+      if (/gpu_memory_utilization/.test(field.path) && Number(value) > 1) throw new Error('vLLM 显存占比不能大于 1。');
+    }
+    if (rl.n_runners != null && (!Number.isInteger(rl.n_runners) || rl.n_runners < 1)) throw new Error('并行采集数需要大于零的整数。');
+    if (rl.rollout_per_gpu != null && (!Number.isInteger(rl.rollout_per_gpu) || rl.rollout_per_gpu < 1)) throw new Error('每题候选数需要大于零的整数。');
+    const saved = await api.getExperiment(expId);
+    const payload = normalizeRlPayload(rl, [0], saved.workflow.sampling);
     await api.putSection(expId, 'rl', payload);
     if (mounted.current) {
       // Editing while a save is in flight must not discard the newer draft.
@@ -55,7 +69,7 @@ export function useRlDraft(
       onReload();
     }
     return submittedRevision;
-  }, [rl, expId, onReload, sampling]);
+  }, [rl, expId, onReload]);
 
   const save = useCallback(async () => {
     let submittedRevision: number | undefined;
@@ -73,29 +87,30 @@ export function useRlDraft(
 
   const recommend = useCallback(() => {
     void run('recommend', async () => {
+      const revision = editRevision.current;
       const response = await api.gpus();
       if (mounted.current) {
+        if (editRevision.current !== revision) throw new Error('读取资源建议期间配置有新修改，请重新读取。');
+        const source = response.recommend || {};
+        const recommendation: RlConfig = {};
+        for (const key of ['profile', 'n_runners', 'actor_rollout_ref.rollout.gpu_memory_utilization',
+          'actor_rollout_ref.rollout.tensor_model_parallel_size']) {
+          if (source[key] != null) recommendation[key] = source[key];
+        }
+        const changes = Object.entries(recommendation).map(([key, after]) => ({
+          field: key, before: HYDRA_FIELDS.find(field => field.path === key)?.read(rl) ?? rl[key] ?? '继承', after,
+        }));
+        if (!window.confirm(`将以下资源建议应用到草稿（不会改变模型、算法或 GPU 选择）：\n${JSON.stringify(changes, null, 2)}\n仍需保存才生效。`)) return;
         editRevision.current += 1;
-        setDraft((current) => ({ ...current, rl: applyRlRecommendation(current.rl, response.recommend || {}, sampling) }));
+        setDraft((current) => ({ ...current, rl: applyRlRecommendation(current.rl, recommendation) }));
       }
       return '已按当前机器推荐档位（需点保存）';
     });
-  }, [run, sampling]);
-
-  const prefill = useCallback(() => {
-    void run('prefill', async () => {
-      const response = await api.monitor(expId);
-      if (mounted.current) {
-        editRevision.current += 1;
-        setDraft((current) => ({ ...current, rl: applyTrainSignal(current.rl, response.train_signal || {}, sampling) }));
-      }
-      return 'prefilled from TrainSignal（需点保存）';
-    });
-  }, [expId, run, sampling]);
+  }, [run, rl]);
 
   useUnsavedChanges('rl-settings', {
     label: 'RL 配置', resource: 'rl', dirty, busy: pending !== null, save,
   });
 
-  return { rl, dirty, pending, notice, patch, save, start, recommend, prefill };
+  return { rl, dirty, pending, notice, patch, save, start, recommend };
 }

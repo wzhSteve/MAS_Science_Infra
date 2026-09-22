@@ -1,34 +1,67 @@
-import { memo, useCallback, useMemo } from 'react';
-import { FlaskConical } from 'lucide-react';
+import { memo, useContext } from 'react';
+import { ArrowLeft, Circle, Database, FlaskConical, Play, Save } from 'lucide-react';
 import type { Bundle } from '../../shared/api/types';
-import { experimentApi } from '../../features/experiment/api';
-import GpuPicker from '../../features/gpu/GpuPicker';
-import { GlobalActionBar } from './GlobalActionBar';
+import { Button } from '../../shared/ui/button';
+import { InlineNotice } from '../../shared/components/InlineNotice';
+import { useAction } from '../../shared/hooks/useAction';
+import { DraftRegistryContext, useUnsavedChanges } from '../../shared/hooks/useUnsavedChanges';
+import { useSettingsStatus } from '../../features/settings/components/SettingsStatus';
+import { isExperimentDraft, saveExperimentDrafts } from '../../features/experiment/model/saveExperiment';
+import { useCommandStatus, useRuntimeCommands, useTraining } from '../providers/RuntimeProvider';
+import { GpuStatusControl } from './GpuStatusControl';
+import { WorkspaceMenu } from './WorkspaceMenu';
+import type { PanelId, ResourceCategory } from '../navigation';
+import type { SettingsSection } from '../../features/settings/model/sections';
 
-const DEFAULT_GPU_IDS = [0];
-
-export const WorkspaceHeader = memo(function WorkspaceHeader({ bundle, onReload }: { bundle: Bundle; onReload: () => Promise<void> }) {
-  const ids = bundle.rl.devices?.ids || DEFAULT_GPU_IDS;
-  const trainable = useMemo(() => bundle.workflow.agents?.filter(agent => agent.trainable !== false).map(agent => agent.id).join(', ')
-    || bundle.workflow.entry_agent || 'hub', [bundle.workflow]);
-  const saveGpus = useCallback(async (selected: number[]) => {
-    await experimentApi.putSection(bundle.id, 'rl', {
-      ...bundle.rl, devices: { ids: selected },
-      trainer: { ...bundle.rl.trainer, n_gpus_per_node: selected.length },
-    });
-    await onReload();
-  }, [bundle.id, bundle.rl, onReload]);
-  return <header className="workspace-header">
-    <div className="workspace-context">
-      <div className="experiment-heading"><FlaskConical size={16} aria-hidden="true" /><span className="field-hint">实验</span><strong>{bundle.id}</strong><span className="context-divider" /><span className="mono field-hint">seed {bundle.meta.seed ?? '—'}</span></div>
-      <dl className="contract-summary" aria-label="实验参数摘要">
-        <div><dt>入口</dt><dd>{bundle.workflow.entry_agent || 'hub'}</dd></div>
-        <div><dt>可训</dt><dd>{trainable}</dd></div>
-        <div><dt>GPU</dt><dd>{ids.join(', ')}</dd></div>
-        <div><dt>n</dt><dd>{bundle.rl.rollout_per_gpu ?? bundle.rl.actor_rollout_ref?.rollout?.n ?? 2}</dd></div>
-        <div><dt>runners</dt><dd>{bundle.rl.n_runners ?? 1}</dd></div>
-      </dl>
+const ExperimentActions = memo(function ExperimentActions({ onReload }: { onReload: () => Promise<void> }) {
+  const registry = useContext(DraftRegistryContext)!;
+  const entries = useSettingsStatus();
+  const drafts = entries.filter(isExperimentDraft);
+  const dirty = drafts.some(item => item.dirty);
+  const action = useAction();
+  const commands = useRuntimeCommands();
+  const runtime = useCommandStatus();
+  const training = useTraining();
+  const busy = entries.some(item => item.busy) || action.pending !== null || runtime.pending !== null;
+  useUnsavedChanges('experiment-save', { label: '保存实验', resource: 'runtime', dirty: false, busy: action.pending !== null });
+  const error = action.notice?.tone === 'danger' ? action.notice.message
+    : runtime.notice?.tone === 'danger' ? runtime.notice.message : training.error;
+  return <>
+    <span className={`experiment-save-status${dirty ? ' is-dirty' : ''}`} role="status">
+      <Circle size={6} fill="currentColor" />{action.pending ? '保存中' : dirty ? '未保存' : '已保存'}
+      {training.data?.running && <span>下次运行配置</span>}
+    </span>
+    <div className="experiment-header-actions">
+      <Button size="sm" disabled={busy || !dirty} loading={action.pending === 'save'} onClick={() => void action.run('save', async () => {
+        await saveExperimentDrafts(registry, onReload);
+      })}><Save size={14} />保存实验</Button>
+      <Button size="sm" variant="primary" disabled={busy} loading={runtime.pending === 'train'}
+        onClick={() => training.data?.running ? commands.viewTraining(training.data.runId || undefined) : void commands.startTrain()}>
+        <Play size={14} />{training.data?.running ? '查看训练' : '开始训练'}
+      </Button>
     </div>
-    <div className="workspace-actions"><GpuPicker compact selected={ids} onChange={saveGpus} /><GlobalActionBar executable={bundle.executable} /></div>
+    {error && <div className="experiment-header-error"><InlineNotice tone="danger">{error}</InlineNotice></div>}
+  </>;
+});
+
+export const WorkspaceHeader = memo(function WorkspaceHeader({ bundle, onReload, onHome, active, settings, onChangePanel, onResources }: {
+  bundle: Bundle; onReload: () => Promise<void>; onHome: () => void;
+  active: PanelId; settings?: SettingsSection; onChangePanel: (panel: PanelId) => void;
+  onResources: (category: ResourceCategory) => void;
+}) {
+  return <header className="experiment-header">
+    <Button size="sm" variant="ghost" onClick={onHome}><ArrowLeft size={15} /><span>实验</span></Button>
+    <span className="experiment-header-divider" />
+    <div className="experiment-header-name" title={bundle.meta.name || bundle.id}>
+      <FlaskConical size={16} aria-hidden="true" /><span>{bundle.meta.name || bundle.id}</span>
+    </div>
+    <GpuStatusControl />
+    <ExperimentActions onReload={onReload} />
+    <nav className="experiment-header-tools" aria-label="资源与工具">
+      <Button size="sm" variant="ghost" title="模型与数据" aria-label="模型与数据" onClick={() => onResources('models')}>
+        <Database size={15} /><span>模型与数据</span>
+      </Button>
+      <WorkspaceMenu active={settings === 'diagnostics' ? 'harness' : active} onChange={onChangePanel} />
+    </nav>
   </header>;
 });

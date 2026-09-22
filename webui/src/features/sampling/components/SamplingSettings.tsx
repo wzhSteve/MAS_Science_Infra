@@ -10,6 +10,7 @@ import { Button } from '../../../shared/ui/button';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { Input } from '../../../shared/ui/input';
 import { Select } from '../../../shared/ui/select';
+import { useTrainingConfig } from '../../../app/providers/TrainingConfigProvider';
 import {
   BRANCH_GATE_OPTIONS,
   SAMPLING_MODE_OPTIONS,
@@ -54,13 +55,16 @@ const CandidateRow = memo(function CandidateRow({ candidate, site, selected, onS
   </button>;
 });
 
-export const SamplingSettings = memo(function SamplingSettings({ workflow, palette, onChange, onSave, saving }: {
+export const SamplingSettings = memo(function SamplingSettings({ workflow, palette, onChange, onSave, saving, onLocate, compact = false, expanded = false, onExpand }: {
   workflow: WorkflowSpec;
   palette: Palette;
   onChange: (workflow: WorkflowSpec) => void;
-  onSave: () => Promise<void>;
-  saving: boolean;
+  onSave?: () => Promise<void>;
+  saving?: boolean;
+  onLocate?: (agentId: string) => void;
+  compact?: boolean; expanded?: boolean; onExpand?: () => void;
 }) {
+  const { draft: training } = useTrainingConfig();
   const sampling = useMemo(() => ({ ...DEFAULT_SAMPLING, ...(workflow.sampling || {}) }), [workflow.sampling]);
   const candidates = useMemo(() => deriveBranchCandidates(workflow),
     [workflow.agents, workflow.edges, workflow.hub, workflow.routers, workflow.tools]);
@@ -74,8 +78,8 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
   const branching = isBranchingMode(sampling.mode);
   const enabledCount = useMemo(() => sites.filter((site) => site.enabled !== false).length, [sites]);
   const modes = useMemo(() =>
-    Array.from(new Set([...(palette.sampling_modes || []), ...SAMPLING_MODE_OPTIONS.map((item) => item.value)])),
-  [palette.sampling_modes]);
+    Array.from(new Set([sampling.mode || 'grpo_n', ...(palette.sampling_modes || []), ...SAMPLING_MODE_OPTIONS.map((item) => item.value)])),
+  [palette.sampling_modes, sampling.mode]);
   const gates = useMemo(() => {
     if (!selected) return [];
     const compatible = gateOptionsFor(sampling.mode, selected.kind);
@@ -129,39 +133,72 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
     patchSite(selected, { gate: { ...selectedSite.gate, params } });
   };
 
+  if (!workflow.sampling) {
+    const algorithm = String(training.rl.algorithm?.tir_algo || training.rl.algo || 'grpo');
+    const group = training.rl.rollout_per_gpu ?? training.rl.actor_rollout_ref?.rollout?.n;
+    return <Section title="采样策略">
+      {!compact && <p className="field-hint">此实验尚未启用 Workflow Sampling。编辑下列值保存到训练参数；启用后由采样策略统一决定。</p>}
+      <div className="form-grid">
+        <FormField label="训练算法">
+          <Select value={algorithm} onChange={event => {
+            const algo = event.target.value;
+            training.patch(current => ({ ...current, algo, algorithm: { ...current.algorithm, tir_algo: algo } }));
+          }}>
+            {Array.from(new Set([algorithm, 'grpo', 'arpo', 'aepo', 'igpo', 'gigpo', 'rae'])).map(value =>
+              <option key={value} value={value}>{value.toUpperCase()}</option>)}
+          </Select>
+        </FormField>
+        <FormField label="每题候选数">
+          <Input type="number" min={1} step={1} value={group ?? ''} onChange={event => {
+            const n = event.target.value === '' ? undefined : Number(event.target.value);
+            training.patch(current => ({ ...current, rollout_per_gpu: n,
+              actor_rollout_ref: { ...current.actor_rollout_ref, rollout: { ...current.actor_rollout_ref?.rollout, n } } }));
+          }} />
+        </FormField>
+      </div>
+      <Button size="sm" disabled={training.dirty || training.pending !== null} onClick={() =>
+        onChange({ ...workflow, sampling: { ...DEFAULT_SAMPLING, mode: algorithm === 'grpo' ? 'grpo_n' : algorithm, group_n: group ?? 1 } })}>
+        启用分支采样配置
+      </Button>
+      {training.dirty && <p className="field-hint">请先保存实验，再启用 Sampling。</p>}
+    </Section>;
+  }
   return <div className="sampling-settings">
-    <Section title="Sampling Policy" actions={<StatusBadge tone={branching ? 'info' : 'neutral'}>
+    <Section title="采样策略 · Sampling Policy" actions={<StatusBadge tone={branching ? 'info' : 'neutral'}>
       {branching ? 'Branch Sampling' : 'Independent Rollouts'}
     </StatusBadge>}>
       <div className="form-grid">
-        <FormField label={<HelpLabel help="选择 GRPO、ARPO、AEPO、APPO 或 RAE 的 Rollout 策略。">Sampling Mode</HelpLabel>}>
+        <FormField label={<HelpLabel help="选择 GRPO、ARPO、AEPO、APPO 或 RAE 的 Rollout 策略。">算法</HelpLabel>}>
           <Select value={sampling.mode} onChange={(event) => patchSampling({ mode: event.target.value })}>
             {modes.map((mode) => <option key={mode} value={mode}>{modeLabel(mode)}</option>)}
           </Select>
         </FormField>
-        <FormField label={<HelpLabel help="每道题最终需要生成的完整 Rollout 数，也是 GRPO Group Size。">group_n</HelpLabel>}>
+        <FormField label={<HelpLabel help="每道题最终需要生成的完整 Rollout 数，也是 GRPO Group Size。">每题候选数</HelpLabel>}>
           <Input type="number" min={1} value={sampling.group_n}
             onChange={(event) => patchSampling({ group_n: Number(event.target.value) })} />
         </FormField>
-        {branching && <>
-          <FormField label={<HelpLabel help="Branch 前先从裸 Prompt 运行的独立 Rollout 数。">initial_rollouts</HelpLabel>}>
+        {branching && <details className="parameter-details sampling-generation">
+          <summary>候选生成参数</summary>
+          <FormField label={<HelpLabel help="Branch 前先从裸 Prompt 运行的独立 Rollout 数。">初始 Rollout 数</HelpLabel>}>
             <Input type="number" min={1} value={sampling.initial_rollouts}
               onChange={(event) => patchSampling({ initial_rollouts: Number(event.target.value) })} />
           </FormField>
-          <FormField label={<HelpLabel help="每个 Snapshot 最多生成的后续 Branch 数。">beam_size</HelpLabel>}>
+          <FormField label={<HelpLabel help="每个 Snapshot 最多生成的后续 Branch 数。">分支宽度</HelpLabel>}>
             <Input type="number" min={1} value={sampling.beam_size}
               onChange={(event) => patchSampling({ beam_size: Number(event.target.value) })} />
           </FormField>
-          <FormField label={<HelpLabel help="单条 Rollout Tree 允许的最大 Branch Depth。">max_branch_depth</HelpLabel>}>
+          <FormField label={<HelpLabel help="单条 Rollout Tree 允许的最大 Branch Depth。">分支深度</HelpLabel>}>
             <Input type="number" min={1} value={sampling.max_branch_depth}
               onChange={(event) => patchSampling({ max_branch_depth: Number(event.target.value) })} />
           </FormField>
-        </>}
+        </details>}
       </div>
     </Section>
 
-    {branching && <Section title="Branch Sites"
-      description="Branch Site 定义保存 Snapshot 的执行位置；Gate 再决定到达该位置时是否创建 Branch。"
+    {branching && compact && !expanded && <div className="parameter-summary-row"><span>分支位置</span>
+      <span>{enabledCount} 处</span><Button size="sm" variant="ghost" onClick={onExpand}>编辑</Button></div>}
+    {branching && (!compact || expanded) && <Section title="分支位置"
+      description={compact ? undefined : 'Branch Site 定义保存 Snapshot 的执行位置；Gate 再决定到达该位置时是否创建 Branch。'}
       actions={<StatusBadge tone={enabledCount ? 'success' : 'warning'}>
       {enabledCount} 个已开启
     </StatusBadge>}>
@@ -178,6 +215,7 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
         <div className="branch-site-editor-title">
           <strong>{selected.label}</strong>
           <span>{candidateTypeLabel(selected.kind)}</span>
+          {onLocate && <Button size="sm" variant="ghost" onClick={() => onLocate(selected.nodeId)}>定位到画布</Button>}
         </div>
         <div className="form-grid">
           <FormField label={<HelpLabel help={BRANCH_GATE_OPTIONS.find((item) => item.value === selectedSite.gate.type)?.help
@@ -199,11 +237,14 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
             <Input type="number" min={1} value={selectedSite.nth || 1}
               onChange={(event) => patchSite(selected, { nth: Number(event.target.value) })} />
           </FormField>}
-          <FormField label={<HelpLabel help="当前 Branch Site 触发后最多生成的后续 Branch 数。">beam_size</HelpLabel>}>
-            <Input type="number" min={1} value={selectedSite.fork?.beam_size ?? sampling.beam_size}
-              onChange={(event) => patchSite(selected, {
-                fork: { ...selectedSite.fork, beam_size: Number(event.target.value) },
-              })} />
+          <FormField label={<HelpLabel help="留空继承全局值；填写数字只覆盖当前分支位置。">局部分支宽度</HelpLabel>}>
+            <Input type="number" min={1} step={1} value={selectedSite.fork?.beam_size ?? ''}
+              placeholder={`继承全局 ${sampling.beam_size}`} onChange={(event) => {
+                const fork = { ...selectedSite.fork };
+                if (event.target.value === '') delete fork.beam_size;
+                else fork.beam_size = Number(event.target.value);
+                patchSite(selected, { fork });
+              }} />
           </FormField>
           <FormField label={<HelpLabel help="Branch Rollout 使用的 Reward / Credit Assignment 方案。">Reward Scheme</HelpLabel>}>
             <Select value={selectedSite.reward?.scheme || 'scalar_grpo'} onChange={(event) =>
@@ -264,8 +305,9 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
       </div>}
     </Section>}
 
-    <ActionBar>
+    {!branching && enabledCount > 0 && <p className="field-hint">已保留 {enabledCount} 个分支位置，当前策略不启用分支。</p>}
+    {onSave && <ActionBar>
       <Button variant="primary" loading={saving} onClick={() => { void onSave(); }}>保存 Sampling</Button>
-    </ActionBar>
+    </ActionBar>}
   </div>;
 });

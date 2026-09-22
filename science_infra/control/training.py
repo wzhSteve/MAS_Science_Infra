@@ -6,11 +6,17 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
 import sys
+import threading
+import time
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+import yaml
 
 from science_infra.env import repo_root
 
@@ -22,6 +28,23 @@ from .experiments import (
 )
 from .model_resources import ResourceSnapshot, list_resources, resolve_binding
 from .paths import tir_agent_root
+
+_LAUNCH_LOCK = threading.Lock()
+
+
+class TrainingError(RuntimeError):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status: int = 400,
+        data: dict[str, Any] | None = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+        self.data = data or {}
 
 
 @dataclass(frozen=True)
@@ -465,3 +488,265 @@ def persisted_rl(plan: TrainingPlan) -> dict[str, Any]:
         actor.pop("model", None)
     output["actor_rollout_ref"] = actor
     return output
+
+
+def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _git_commit() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root(),
+            text=True,
+            timeout=3,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _launch_training(
+    exp_id: str,
+    *,
+    request_id: str,
+    preflight_revision: str,
+    stop_local_llm: bool,
+) -> dict[str, Any]:
+    from .llm_config import resolve_llm_config
+    from .process_manager import PROCS
+
+    request_id = request_id.strip()
+    if not request_id:
+        raise TrainingError("invalid_request_id", "训练请求缺少 request_id。")
+    existing = PROCS.find_request(
+        kind="train", experiment_id=exp_id, request_id=request_id
+    )
+    if existing:
+        return {**existing, "reused": True}
+
+    plan = build_training_plan(exp_id)
+    if preflight_revision != plan.revision:
+        raise TrainingError(
+            "preflight_stale",
+            "训练配置已变化，请重新执行启动检查。",
+            status=409,
+            data={"preflight": plan.public()},
+        )
+    if not plan.ready:
+        conflict = next(
+            (
+                issue
+                for issue in plan.blocking_issues
+                if issue["code"] == "process"
+            ),
+            None,
+        )
+        active = PROCS.active("train")
+        raise TrainingError(
+            "training_conflict" if conflict else "preflight_failed",
+            conflict["message"]
+            if conflict
+            else "训练启动检查未通过。",
+            status=409 if conflict else 400,
+            data={
+                "preflight": plan.public(),
+                "active_run": (
+                    PROCS.status(active.run_id) if active is not None else None
+                ),
+            },
+        )
+
+    active_llm = PROCS.active("llm")
+    if active_llm is not None and not stop_local_llm:
+        raise TrainingError(
+            "local_llm_conflict",
+            "本地模型服务正在占用 GPU，请确认停止后再训练。",
+            status=409,
+            data={"active_run": PROCS.status(active_llm.run_id)},
+        )
+
+    run_id = uuid4().hex[:12]
+    run_dir = PROCS.run_dir(exp_id, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    rl_path = run_dir / "effective-rl.yaml"
+    workflow_path = run_dir / "effective-workflow.yaml"
+    launch_path = run_dir / "launch.json"
+    metadata = {
+        "request_id": request_id,
+        "profile": plan.profile,
+        "algo": plan.algorithm,
+        "preflight_revision": plan.revision,
+        "training_source": plan.source.public(),
+        "cuda_visible_devices": ",".join(str(value) for value in plan.gpu_ids),
+        "n_gpus": len(plan.gpu_ids),
+        "snapshot": {
+            "rl": str(rl_path),
+            "workflow": str(workflow_path),
+            "launch": str(launch_path),
+        },
+    }
+    PROCS.write_preparing(
+        run_id=run_id,
+        kind="train",
+        experiment_id=exp_id,
+        meta=metadata,
+    )
+
+    try:
+        _write_yaml(rl_path, plan.rl)
+        _write_yaml(workflow_path, plan.bundle["workflow"])
+        train_script = tir_agent_root() / "train_tir_agent.py"
+        argv = [
+            sys.executable,
+            str(train_script),
+            plan.profile,
+            "--algo",
+            plan.algorithm,
+            "--rl-yaml",
+            str(rl_path),
+            "--workflow-yaml",
+            str(workflow_path),
+            "--model",
+            plan.source.model_path,
+        ]
+        if plan.rl.get("n_runners") is not None:
+            argv.extend(
+                ["--n-runners", str(int(plan.rl["n_runners"]))]
+            )
+        if plan.trainable_agents:
+            argv.extend(["--active-agent", plan.trainable_agents[0]])
+        launch = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "request_id": request_id,
+            "experiment_id": exp_id,
+            "git_commit": _git_commit(),
+            "created_at": time.time(),
+            "preflight_revision": plan.revision,
+            "algorithm": plan.algorithm,
+            "algorithm_source": plan.algorithm_source,
+            "profile": plan.profile,
+            "gpu_ids": plan.gpu_ids,
+            "model": plan.source.public(),
+            "argv": argv,
+            "snapshot": metadata["snapshot"],
+        }
+        _write_json(launch_path, launch)
+
+        if active_llm is not None:
+            PROCS.stop_run(
+                active_llm.run_id,
+                experiment_id=active_llm.experiment_id,
+                reason="stopped_for_training",
+            )
+
+        effective_llm = resolve_llm_config(exp_id, llm=plan.bundle["llm"])
+        env = effective_llm.subprocess_env()
+        root = str(tir_agent_root().parent)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [root, str(tir_agent_root()), env.get("PYTHONPATH", "")]
+        )
+        env["CUDA_VISIBLE_DEVICES"] = metadata[
+            "cuda_visible_devices"
+        ]
+        env["VLLM_USE_V1"] = env.get("VLLM_USE_V1") or "1"
+        process = PROCS.start(
+            kind="train",
+            experiment_id=exp_id,
+            run_id=run_id,
+            argv=argv,
+            cwd=tir_agent_root(),
+            env=env,
+            meta=metadata,
+            replace=False,
+        )
+        return {
+            **PROCS.status(process.run_id),
+            "argv": argv,
+            "preflight_revision": plan.revision,
+            "reused": False,
+        }
+    except TrainingError:
+        raise
+    except Exception as error:
+        current = PROCS.status(run_id)
+        stage = (
+            str(current.get("failure_stage"))
+            if current and current.get("failure_stage")
+            else "prepare"
+        )
+        PROCS.mark_failed(
+            run_id=run_id,
+            experiment_id=exp_id,
+            kind="train",
+            stage=stage,
+            message=str(error),
+            meta=metadata,
+        )
+        raise TrainingError(
+            "process_start_failed",
+            f"训练进程启动失败：{error}",
+            data={"run_id": run_id},
+        ) from error
+
+
+def launch_training(
+    exp_id: str,
+    *,
+    request_id: str,
+    preflight_revision: str,
+    stop_local_llm: bool,
+) -> dict[str, Any]:
+    with _LAUNCH_LOCK:
+        return _launch_training(
+            exp_id,
+            request_id=request_id,
+            preflight_revision=preflight_revision,
+            stop_local_llm=stop_local_llm,
+        )
+
+
+def stop_training_run(
+    exp_id: str, run_id: str
+) -> dict[str, Any]:
+    from .process_manager import PROCS, TERMINAL_STATES
+
+    row = PROCS.status(run_id)
+    if row is None:
+        raise TrainingError("run_not_found", "训练运行不存在。", status=404)
+    if row.get("experiment_id") != exp_id or row.get("kind") != "train":
+        raise TrainingError(
+            "run_experiment_mismatch",
+            "训练运行不属于当前实验。",
+            status=409,
+        )
+    if row.get("state") in TERMINAL_STATES:
+        return row
+    stopped = PROCS.stop_run(
+        run_id,
+        experiment_id=exp_id,
+        reason="user_requested",
+    )
+    if stopped is None:
+        raise TrainingError(
+            "run_not_stoppable",
+            "训练运行当前无法停止。",
+            status=409,
+        )
+    return stopped

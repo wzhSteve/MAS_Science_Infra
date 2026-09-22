@@ -264,11 +264,17 @@ def load_rl_yaml(path: str) -> Dict[str, Any]:
     return raw
 
 
-def _load_sibling_workflow_sampling(rl_path: str) -> Any:
-    """If experiments/<id>/rl.yaml has a sibling workflow.yaml, return its sampling block."""
+def _load_workflow_sampling(
+    rl_path: str, workflow_path: Optional[str] = None
+) -> Any:
+    """Load the explicit run snapshot, or the legacy sibling workflow."""
     import yaml  # type: ignore
 
-    wf = Path(rl_path).expanduser().resolve().parent / "workflow.yaml"
+    wf = (
+        Path(workflow_path).expanduser().resolve()
+        if workflow_path
+        else Path(rl_path).expanduser().resolve().parent / "workflow.yaml"
+    )
     if not wf.is_file():
         return None
     raw = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
@@ -296,6 +302,12 @@ def main() -> None:
         default=None,
         help="Alias of --rl-yaml",
     )
+    parser.add_argument(
+        "--workflow-yaml",
+        type=str,
+        default=None,
+        help="Workflow snapshot used to resolve Sampling for this run",
+    )
     args = parser.parse_args()
 
     config_fns = {
@@ -314,7 +326,7 @@ def main() -> None:
             algo = str(rl_raw["algo"]).lower()
         if algo not in VALID_ALGOS:
             raise SystemExit(f"Unknown algo in rl yaml: {algo}")
-        sampling = _load_sibling_workflow_sampling(rl_path)
+        sampling = _load_workflow_sampling(rl_path, args.workflow_yaml)
 
     signal = TrainSignal(
         advantage=AdvantageSpec(name=algo, use_critic=False),

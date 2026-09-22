@@ -1,5 +1,28 @@
 .mas-run-console { position: relative; display: flex; flex-direction: column; flex: 0 0 36px; min-height: 36px; min-width: 0; background: var(--surface); border-top: 1px solid var(--border-subtle); z-index: 20; container: mas-console / inline-size; --console-gutter: clamp(16px, 1.25vw, 32px); }
-.mas-run-console.is-open { flex-basis: var(--console-height); max-height: 65%; box-shadow: 0 -4px 18px #20252b05; }
+.mas-run-console.is-open { flex-basis: var(--console-height); max-height: 70%; box-shadow: 0 -4px 18px #20252b05; }
+.mas-run-console.is-maximized { position: absolute; inset: 0; max-height: none; z-index: 35; }
+.mas-workspace { position: relative; }
+.run-dock-layout { display: flex; flex: 1; min-height: 0; min-width: 0; border-top: 1px solid var(--border-subtle); }
+.training-console, .training-output { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.training-history-picker, .training-run-heading, .training-log-tools { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 7px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 12px; }
+.training-history-picker .ui-select { width: auto; max-width: min(400px, 100%); font-size: 12px; }
+.training-log-tools .ui-input { width: 210px; min-width: 100px; font-size: 12px; }
+.training-run-heading code { color: var(--text-secondary); }
+.training-log-tools a { margin-left: auto; color: var(--accent); white-space: nowrap; }
+.training-log-viewport { flex: 1; min-height: 70px; overflow: auto; background: #15191f; color: #dce3ec; font: 12px/20px var(--font-code), monospace; }
+.training-log-line { height: 20px; white-space: pre; padding-right: 16px; }
+.training-log-line.is-match { background: #705614; }
+.training-line-number { display: inline-block; width: 64px; padding-right: 14px; text-align: right; color: #778291; user-select: none; }
+.training-log-empty { padding: 14px; color: #9da9b8; }
+.training-window-hint { flex: none; padding: 4px 14px; font-size: 11px; color: var(--text-secondary); margin: 0; }
+.training-snapshot { max-width: 850px; width: calc(100vw - 48px); }
+.training-snapshot pre { max-height: 55vh; overflow: auto; padding: 12px; background: var(--surface-subtle); font-size: 12px; }
+.training-advanced { margin: 16px 0; }
+.training-advanced summary { cursor: pointer; margin-bottom: 12px; font-size: 12px; }
+@container mas-console (max-width: 650px) {
+  .run-dock-layout { flex-direction: column; }
+  .training-log-tools .ui-input { flex: 1; }
+}
 .mas-console-header { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 var(--console-gutter); }
 .mas-console-toggle { display: flex; flex: none; align-items: center; gap: 7px; padding: 5px 0; background: transparent; border: 0; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
 .mas-console-toggle strong { font-weight: 550; color: var(--text-primary); }

@@ -10,5 +10,7 @@
 @import "./integrations/mas-console.css";
 @import "./integrations/mas-trajectory.css";
 @import "./integrations/sampling-settings.css";
+@import "./integrations/experiment-workspace.css";
+@import "./integrations/training-parameters.css";
 
 @source "../";

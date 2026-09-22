@@ -55,8 +55,8 @@ function HarnessSettings({ expId, bundle, meta, onReload, embedded = false }: Pr
   });
 
   return <div className={`page-stack ${embedded ? 'settings-embedded' : 'settings-page'}`}>
-    {!embedded && <PageHeader title="Harness" eyebrow="诊断插件" description="选择诊断插件，并对最近一次 Collect 的结果运行诊断。" />}
-    <Section title="检查规则" description={embedded ? undefined : '仅诊断当前实验最近一次数据集采集，不是单题 Rollout 的自动评估。'}
+    {!embedded && <PageHeader title="Harness" eyebrow="诊断插件" description="选择诊断插件，检查当前实验已有的轨迹产物。" />}
+    <Section title="检查规则" description="读取当前实验已有的 collect.json（可由命令行生成），不是单题调试或训练的自动评估。"
       actions={<StatusBadge tone={dirty ? 'warning' : 'neutral'}>{pending === 'save' ? '保存中' : dirty ? '未保存' : '已保存配置'}</StatusBadge>}>
       {!meta && <p className="field-hint">尚未取得插件列表，请等待加载或通过页面上方的提示重试。</p>}
       <div className="grid gap-3 sm:grid-cols-2">
@@ -76,7 +76,7 @@ function HarnessSettings({ expId, bundle, meta, onReload, embedded = false }: Pr
       </div>
       {meta && meta.harness_plugins.length === 0 && <EmptyState title="暂无可选插件" />}
       <ActionBar>
-        <Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={() => { void save(); }}>保存</Button>
+        {!embedded && <Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={() => { void save(); }}>保存</Button>}
         <Button loading={pending === 'diagnose'} disabled={pending !== null} onClick={() => {
           void run('diagnose', async () => {
             await persist();
@@ -85,12 +85,12 @@ function HarnessSettings({ expId, bundle, meta, onReload, embedded = false }: Pr
             if (mounted.current) setHypotheses(result.hypotheses || []);
             return `diagnose n=${result.n}`;
           });
-        }} title="保存检查规则后，诊断当前实验最近一次数据集采集">保存并诊断最近采集</Button>
+        }} title="保存检查规则后，诊断当前实验已有的 collect.json">保存并诊断已有产物</Button>
       </ActionBar>
       {notice && <InlineNotice tone={notice.tone}>{notice.message}</InlineNotice>}
     </Section>
     <Section title="诊断结果">
-      {hypotheses === null ? <EmptyState title="尚未执行诊断">选择插件后，保存并诊断最近 Collect。</EmptyState> :
+      {hypotheses === null ? <EmptyState title="尚未执行诊断">已有 collect.json 时，可选择插件并执行诊断。</EmptyState> :
         hypotheses.length === 0 ? <EmptyState title="没有 hypotheses">本次诊断未产生假设。</EmptyState> :
           <DataTable aria-label="Harness hypotheses">
             <thead><tr><th scope="col">plugin</th><th scope="col">event_id</th><th scope="col">message</th></tr></thead>

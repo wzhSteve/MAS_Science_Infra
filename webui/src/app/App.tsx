@@ -1,35 +1,37 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useRef } from 'react';
 import { Tooltip } from 'radix-ui';
-import { ArrowLeft, Database, Network } from 'lucide-react';
+import { Network } from 'lucide-react';
 import { experimentApi } from '../features/experiment/api';
 import { usePollingResource } from '../shared/hooks/usePollingResource';
 import { LoadingState } from '../shared/components/LoadingState';
 import { InlineNotice } from '../shared/components/InlineNotice';
 import { Button } from '../shared/ui/button';
-import { WorkspaceMenu } from './layout/WorkspaceMenu';
-import { GpuStatusControl } from './layout/GpuStatusControl';
-import { TrainingBanner } from './layout/TrainingBanner';
-import { StatusBar } from './layout/StatusBar';
+import { WorkspaceHeader } from './layout/WorkspaceHeader';
 import { RuntimeProvider } from './providers/RuntimeProvider';
 import { TrainingConfigProvider } from './providers/TrainingConfigProvider';
 import { NavigationGuardProvider } from './providers/NavigationGuard';
 import { PageBoundary } from './layout/PageBoundary';
 import { ExperimentHome } from '../pages/ExperimentHome';
 import { useHashNavigation } from './useHashNavigation';
-import { NAVIGATION, isCanvasPanel, workspaceRoute, type PanelId, type ResourceCategory } from './navigation';
+import { workspaceRoute, type PanelId, type ResourceCategory } from './navigation';
 import type { SettingsSection } from '../features/settings/model/sections';
+import { isTrainingSection } from '../features/settings/model/sections';
 import type { ModelResource } from '../features/resources/api';
 import type { MetaResponse } from '../shared/api/types';
 
 const WorkspacePanels = lazy(() => import('./layout/WorkspacePanels').then(module => ({ default: module.WorkspacePanels })));
 const Resources = lazy(() => import('../pages/Resources').then(module => ({ default: module.Resources })));
 
-const Workspace = memo(function Workspace({ expId, tab, visible, meta, setExpId, onWorkspace, onHome, onChangePanel, settings, onResources, onSettings, selectedResource }: {
+const Workspace = memo(function Workspace({ expId, tab, visible, meta, setExpId, onWorkspace, onHome, onChangePanel, settings, onResources, onSettings, selectedResource, resourcePurpose, consoleRun, trainingConsole, onViewTraining }: {
   expId: string; tab: PanelId; visible: boolean; meta: MetaResponse | null; setExpId: (id: string) => void;
   onWorkspace: () => void; onHome: () => void; onChangePanel: (id: PanelId) => void;
   settings?: SettingsSection; onResources: (category: ResourceCategory) => void;
   onSettings: (section: SettingsSection) => void;
   selectedResource?: string;
+  resourcePurpose?: 'inference' | 'training';
+  consoleRun?: string;
+  trainingConsole?: boolean;
+  onViewTraining: (runId?: string) => void;
 }) {
   const load = useCallback(async (signal: AbortSignal) => {
     // Legacy bundle reads ensure missing experiments; deep links must never create one.
@@ -49,26 +51,16 @@ const Workspace = memo(function Workspace({ expId, tab, visible, meta, setExpId,
       <div className="navigation-recovery"><Button onClick={() => void refresh()}>重试</Button><Button onClick={onHome}>返回实验首页</Button></div>
     </>}</div>;
   }
-  return <RuntimeProvider expId={expId} onReload={refresh} active={visible}>
+  return <RuntimeProvider expId={expId} onReload={refresh} active={visible} onViewTraining={onViewTraining} onConfigure={onSettings}>
     <TrainingConfigProvider bundle={bundle} onReload={refresh} active={visible}>
-      <div className="experiment-session-bar">
-        <Button size="sm" variant="ghost" onClick={onHome}><ArrowLeft size={14} />实验首页</Button>
-        <span className="experiment-session-divider" />
-        <Network size={14} aria-hidden="true" />
-        <strong title={bundle.meta.name || bundle.id}>{bundle.meta.name || bundle.id}</strong>
-        {bundle.meta.name && bundle.meta.name !== bundle.id && <span className="experiment-session-id mono">{bundle.id}</span>}
-        <GpuStatusControl />
-        {!isCanvasPanel(tab) && <span className="experiment-session-location">{NAVIGATION.find(item => item.id === tab)?.description}</span>}
-        <div className="workspace-navigation"><Button size="sm" variant="ghost" onClick={() => onResources('models')}><Database size={14} />资源</Button>
-          <WorkspaceMenu active={tab} onChange={onChangePanel} /></div>
-      </div>
-      <TrainingBanner />
+      <WorkspaceHeader bundle={bundle} onReload={refresh} onHome={onHome}
+        active={tab} settings={settings} onChangePanel={onChangePanel} onResources={onResources} />
       {error && <div className="runtime-error"><InlineNotice tone="warning">实验刷新失败，草稿保持不变：{error}</InlineNotice></div>}
       <PageBoundary><Suspense fallback={<LoadingState label="加载实验工作区…" />}>
         <WorkspacePanels active={tab} visible={visible} bundle={bundle} meta={meta} onReload={refresh} setExpId={setExpId} onWorkspace={onWorkspace}
-          settings={settings} onResources={onResources} onSettings={onSettings} selectedResource={selectedResource} />
+          settings={settings} onResources={onResources} onSettings={onSettings} selectedResource={selectedResource}
+          resourcePurpose={resourcePurpose} consoleRun={consoleRun} trainingConsole={trainingConsole} />
       </Suspense></PageBoundary>
-      {!isCanvasPanel(tab) && <StatusBar />}
     </TrainingConfigProvider>
   </RuntimeProvider>;
 });
@@ -83,6 +75,9 @@ function Application() {
     if (expId) void navigate(workspaceRoute(expId, panel));
   }, [expId, navigate]);
   const returnToWorkspace = useCallback(() => changePanel('mas'), [changePanel]);
+  const viewTraining = useCallback((runId?: string) => {
+    if (expId) void navigate({ ...workspaceRoute(expId, workspace?.panel, workspace?.settings), console: 'training', runId });
+  }, [expId, workspace?.panel, workspace?.settings, navigate]);
   const browseResources = useCallback((category: ResourceCategory, experimentId?: string) => {
     void navigate({ kind: 'resources', category, experimentId });
   }, [navigate]);
@@ -94,7 +89,7 @@ function Application() {
     if (expId) configureResource(expId, section);
   }, [expId, configureResource]);
   const selectModelResource = useCallback((id: string, resource: ModelResource) => {
-    void navigate({ ...workspaceRoute(id, 'mas', resource.type === 'inference' ? 'model' : 'training'), selectedResource: resource.id });
+    void navigate({ ...workspaceRoute(id, 'mas', resource.type === 'inference' ? 'inference' : 'model'), selectedResource: resource.id, resourcePurpose: resource.type });
   }, [navigate]);
   const returnFromResources = useCallback(() => {
     void navigate(workspace || { kind: 'home' });
@@ -122,14 +117,15 @@ function Application() {
           {resources && <div hidden={route.kind !== 'resources'}><PageBoundary><Suspense fallback={<LoadingState label="加载资源页面…" />}>
             <Resources route={resources} active={route.kind === 'resources'} currentExperimentId={expId}
               onNavigate={browseResources} onConfigure={configureResource} onReturn={returnFromResources}
-              onSelectModel={selectModelResource} requestedType={workspace?.panel === 'rl' || workspace?.settings === 'training' || workspace?.settings === 'environment' ? 'training' : 'inference'} />
+              onSelectModel={selectModelResource} requestedType={workspace?.panel === 'rl' || isTrainingSection(workspace?.settings) ? 'training' : 'inference'} />
           </Suspense></PageBoundary></div>}
         </section>
         {workspace && <section className="experiment-session" hidden={!visible} aria-label={`实验 ${workspace.experimentId}`}>
           {meta.error && visible && <div className="runtime-error"><InlineNotice tone="warning">配置选项加载失败：{meta.error}<Button size="sm" onClick={() => void meta.refresh()}>重试</Button></InlineNotice></div>}
           <Workspace key={workspace.experimentId} expId={workspace.experimentId} tab={workspace.panel} visible={visible} meta={meta.data}
             setExpId={openExperiment} onWorkspace={returnToWorkspace} onHome={onHome} onChangePanel={changePanel}
-            settings={workspace.settings} onResources={openResources} onSettings={openSettings} selectedResource={workspace.selectedResource} />
+            settings={workspace.settings} onResources={openResources} onSettings={openSettings} selectedResource={workspace.selectedResource}
+            resourcePurpose={workspace.resourcePurpose} consoleRun={workspace.runId} trainingConsole={workspace.console === 'training'} onViewTraining={viewTraining} />
         </section>}
         {route.kind === 'not-found' && <section className="workspace-content">
           <div className="page-stack settings-page">

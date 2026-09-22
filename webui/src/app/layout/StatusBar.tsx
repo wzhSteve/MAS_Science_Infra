@@ -12,7 +12,9 @@ export function StatusBar() {
   const tail = useMemo(() => data?.log.split('\n').filter(Boolean).slice(-2).join(' · ') || '', [data?.log]);
   const summary = events.error || tail || events.latest || (status !== 'idle' ? status : '等待事件…');
   return <footer className="status-bar">
-    <StatusBadge tone={data?.running ? 'success' : 'neutral'}>{data?.running ? 'running' : 'idle'}</StatusBadge>
+    <StatusBadge tone={data?.running ? 'success' : data?.state === 'failed' ? 'danger' : 'neutral'}>
+      {data?.state || 'idle'}
+    </StatusBadge>
     <span className="mono">reward={monitor.data?.mean_reward ?? '—'}{monitor.error ? ' (stale)' : ''}</span>
     <span className={`status-tail${events.error ? ' field-error' : ''}`} title={summary}>{summary}</span>
     {data?.running && <Button size="sm" variant="danger" onClick={() => void stopTrain()}>Stop</Button>}

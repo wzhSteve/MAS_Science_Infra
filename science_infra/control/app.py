@@ -29,9 +29,15 @@ from science_infra.control.paths import webui_dist
 from science_infra.control.process_manager import PROCS
 from science_infra.control import services
 from science_infra.control.model_resource_api import router as model_resource_router
+from science_infra.control.training_logs import router as training_logs_router, training_run
 from science_infra.control.model_resources import ResourceError
 from science_infra.control.readiness import model_readiness
 from science_infra.control.training import training_preflight
+from science_infra.control.training import (
+    TrainingError,
+    launch_training,
+    stop_training_run,
+)
 
 
 class CreateExperimentBody(BaseModel):
@@ -71,6 +77,12 @@ class TrainBody(BaseModel):
     confirm_gpu: bool = False
 
 
+class TrainRunBody(BaseModel):
+    request_id: str
+    preflight_revision: str
+    stop_local_llm: bool = True
+
+
 class LlmHealthBody(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
@@ -89,11 +101,27 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Science Control Plane", version="0.1.0", lifespan=lifespan)
     app.include_router(model_resource_router)
+    app.include_router(training_logs_router)
 
     @app.exception_handler(ResourceError)
     async def resource_error(_request: Request, error: ResourceError) -> Response:
         return Response(
             content=json.dumps({"detail": str(error)}, ensure_ascii=False),
+            status_code=error.status,
+            media_type="application/json",
+        )
+
+    @app.exception_handler(TrainingError)
+    async def training_error(_request: Request, error: TrainingError) -> Response:
+        return Response(
+            content=json.dumps(
+                {
+                    "detail": str(error),
+                    "code": error.code,
+                    **error.data,
+                },
+                ensure_ascii=False,
+            ),
             status_code=error.status,
             media_type="application/json",
         )
@@ -352,6 +380,44 @@ def create_app() -> FastAPI:
             )
         except Exception as e:
             raise HTTPException(400, str(e)) from e
+
+    @app.post("/api/rl/runs")
+    def create_train_run(
+        body: TrainRunBody, experiment_id: str = Query("demo")
+    ) -> Dict[str, Any]:
+        return launch_training(
+            experiment_id,
+            request_id=body.request_id,
+            preflight_revision=body.preflight_revision,
+            stop_local_llm=body.stop_local_llm,
+        )
+
+    @app.get("/api/rl/runs")
+    def list_train_runs(
+        experiment_id: Optional[str] = None,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=100),
+    ) -> Dict[str, Any]:
+        rows = [row for row in PROCS.list_runs(experiment_id) if row.get("kind") == "train"]
+        return {"runs": rows[offset:offset + limit], "total": len(rows)}
+
+    @app.get("/api/rl/activity")
+    def train_activity(experiment_id: str = Query(...)) -> Dict[str, Any]:
+        process = PROCS.active("train")
+        return {"run": PROCS.status(process.run_id) if process and process.experiment_id == experiment_id else None}
+
+    @app.get("/api/rl/runs/{run_id}")
+    def get_train_run(
+        run_id: str, experiment_id: str = Query(...), tail: int = Query(160, ge=0, le=160)
+    ) -> Dict[str, Any]:
+        row = training_run(experiment_id, run_id)
+        return {**row, "log_tail": PROCS.tail_log(run_id, tail) if tail else ""}
+
+    @app.post("/api/rl/runs/{run_id}/stop")
+    def stop_train_run(
+        run_id: str, experiment_id: str = Query(...)
+    ) -> Dict[str, Any]:
+        return stop_training_run(experiment_id, run_id)
 
     @app.post("/api/rl/stop")
     def rl_stop(experiment_id: str = Query("demo")) -> Dict[str, Any]:

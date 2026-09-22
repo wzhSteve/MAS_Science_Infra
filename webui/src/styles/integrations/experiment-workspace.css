@@ -1,0 +1,136 @@
+.experiment-header { position: relative; display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 22px; flex: none; border-bottom: 1px solid var(--border-subtle); background: var(--surface); z-index: 40; }
+.experiment-header-divider { width: 1px; height: 20px; background: var(--border-subtle); }
+.experiment-header .experiment-header-name { display: inline-flex; align-items: center; justify-content: center; gap: 8px; max-width: 280px; min-width: 0; font-size: 14px; font-weight: 400; line-height: 20px; }
+.experiment-header-name > svg { display: block; flex: none; color: var(--text-secondary); }
+.experiment-header-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.experiment-save-status { display: flex; align-items: center; gap: 6px; font-size: 11px; white-space: nowrap; color: var(--text-secondary); }
+.experiment-save-status.is-dirty { color: var(--warning); }
+.experiment-save-status > span { padding-left: 8px; border-left: 1px solid var(--border-subtle); }
+.experiment-header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
+.experiment-header-tools { display: flex; align-items: center; gap: 2px; flex: none; margin-left: 4px; padding-left: 10px; border-left: 1px solid var(--border-subtle); }
+.experiment-header-tools .workspace-navigation { margin-left: 0; }
+.experiment-header-tools .ui-button { color: var(--text-secondary); font-size: 12px; }
+.experiment-header > .gpu-status-control { flex: none; margin-left: 4px; }
+.experiment-header-error { position: absolute; top: calc(100% + 8px); right: 18px; max-width: min(560px, calc(100% - 36px)); z-index: 60; box-shadow: 0 6px 24px #20252b12; }
+.experiment-workbench { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.experiment-editor-column { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--canvas); }
+.experiment-editors { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.experiment-editors > div { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.experiment-editors > #panel-experiment, .experiment-editors > #panel-monitor { display: block; overflow: auto; padding: 28px 36px; }
+.experiment-editors > #panel-experiment > .page-stack, .experiment-editors > #panel-monitor > .page-stack { margin-inline: auto; }
+.workflow-view { display: flex; flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; }
+.workflow-canvas-column { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.workflow-floating-tools { position: absolute; inset: 16px 16px auto; z-index: 15; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; pointer-events: none; }
+.workflow-floating-tools > div { display: flex; gap: 6px; pointer-events: auto; }
+.workflow-floating-tools .ui-button { min-height: 32px; background: var(--surface); box-shadow: 0 2px 8px #20252b08; font-size: 12px; border-color: #d7dde6; }
+.workflow-canvas-column .mas-panel { top: 62px; }
+.workflow-canvas-column .mas-library { max-height: calc(100% - 76px); }
+.mas-workspace-notice { top: 60px; }
+.training-view-host { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.training-document, .workspace-document-scroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
+.training-document-body, .workspace-document { width: 100%; max-width: 1050px; margin-inline: auto; padding: 32px clamp(24px, 4vw, 64px) 64px; }
+.workspace-document { display: flex; flex-direction: column; gap: 22px; }
+.workspace-document h1 { margin: 0; font-size: 23px; font-weight: 600; letter-spacing: -.03em; }
+.workspace-document-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.workspace-document-heading h1 > span { font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-left: 10px; }
+.training-chapter { display: flex; flex-direction: column; gap: 20px; padding-bottom: 36px; }
+.training-chapter + .training-chapter { padding-top: 8px; }
+.training-chapter > h1, .training-chapter > h2 { display: flex; align-items: center; gap: 14px; margin: 0 0 4px; font-size: 21px; font-weight: 600; letter-spacing: -.02em; }
+.training-chapter > h1 > span, .training-chapter > h2 > span { display: grid; place-items: center; width: 28px; height: 28px; color: var(--accent); background: #eaf0f9; border: 1px solid #dde6f4; border-radius: 7px; font: 11px var(--font-code); letter-spacing: 0; }
+.training-document .ui-section, .workspace-document .ui-section { padding: 22px; border-radius: 10px; box-shadow: 0 2px 8px #20252b03; }
+.training-document .section-header h2, .workspace-document .section-header h2 { font-size: 14px; }
+.training-document .form-grid, .workspace-document .form-grid { gap: 18px 24px; }
+.training-document .ui-input, .training-document .ui-select, .workspace-document .ui-input, .workspace-document .ui-select { min-height: 36px; font-size: 13px; }
+.training-document .field-hint, .training-document .section-description, .workspace-document .field-hint { font-size: 11px; line-height: 1.7; }
+.training-document .form-field > label, .workspace-document .form-field > label { font-size: 12px; }
+.training-advanced { margin: 0; border: 1px solid var(--border-subtle); border-radius: 9px; background: var(--surface); padding: 16px 20px; }
+.training-advanced summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); margin: 0; }
+.training-advanced[open] summary { margin-bottom: 18px; }
+.configuration-facts { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 14px 18px; align-items: center; font-size: 12px; margin: 0 0 18px; }
+.configuration-facts dt { color: var(--text-secondary); }
+.configuration-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.training-agent-list { display: flex; flex-direction: column; }
+.training-agent-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 12px; }
+.training-agent-row + .training-agent-row { border-top: 1px solid var(--border-subtle); }
+.training-agent-row > strong { font-weight: 600; }
+.training-agent-row > span:not(.training-agent-dot), .training-agent-row > code { font-size: 11px; color: var(--text-secondary); }
+.training-agent-row > .ui-button { margin-left: auto; }
+.training-agent-dot { width: 7px; height: 7px; background: #b0b9c6; border-radius: 50%; flex: none; }
+.training-agent-dot.is-trainable { background: var(--accent); }
+.training-chapter .sampling-settings { gap: 20px; }
+.training-chapter .branch-site-editor-title > .ui-button { margin-left: auto; }
+.workflow-debug { display: flex; flex-direction: column; width: clamp(380px, 34vw, 520px); min-height: 0; min-width: 0; flex: none; border-left: 1px solid var(--border-subtle); background: var(--surface); container: workflow-debug / inline-size; --console-gutter: 16px; }
+.workflow-debug.is-expanded { position: absolute; inset: 0 0 0 auto; width: min(860px, 100%); z-index: 30; box-shadow: -10px 0 40px #20252b14; }
+.workflow-debug-heading { display: flex; align-items: center; gap: 4px; padding: 16px 18px; border-bottom: 1px solid var(--border-subtle); flex: none; }
+.workflow-debug-heading > div { flex: 1; }
+.workflow-debug-heading > div > span { font-size: 9px; letter-spacing: .13em; color: var(--text-secondary); }
+.workflow-debug-heading h2 { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; margin: 5px 0 0; }
+.workflow-debug-heading h2 > svg { color: var(--accent); }
+.workflow-debug-scroll { display: flex; flex-direction: column; gap: 24px; flex: 1; min-height: 0; overflow: auto; padding: 18px; overscroll-behavior: contain; scrollbar-width: thin; background: var(--canvas); }
+.workflow-debug-scroll > div { flex: none; min-width: 0; }
+.workflow-debug-results { display: flex; flex-direction: column; gap: 14px; scroll-margin-top: 18px; }
+.workflow-debug-results-heading h3 { font-size: 13px; font-weight: 600; margin: 0; }
+.workflow-debug .mas-model-readiness { padding: 12px; background: var(--surface); }
+.workflow-debug .mas-rollout-config textarea { min-height: 112px; }
+.workflow-debug .mas-rollout-composer-notes, .workflow-debug .mas-rollout-composer-footer .mas-run-submit { flex-basis: 100%; }
+.workflow-debug .mas-result-timeline { gap: 14px; }
+.workflow-debug .mas-result-step { padding-left: 0; }
+.workflow-debug .mas-result-step-marker, .workflow-debug .mas-result-step::after { display: none; }
+.workflow-debug .mas-result-secondary { margin-left: 0; }
+.workflow-debug .mas-result-card-heading { padding: 12px 14px; }
+.workflow-debug .mas-result-card-body { padding: 14px; }
+.workflow-debug .mas-result-text { font-size: 13px; }
+.workflow-debug .mas-rollout-facts { grid-template-columns: minmax(0, 1fr); }
+.workflow-debug .debug-mode-banner { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 16px; font-size: 11px; }
+.console-window-controls { display: flex; align-items: center; gap: 4px; flex: none; }
+.console-heading-spacer { flex: 1; }
+.training-run-heading { min-height: 42px; gap: 8px; padding: 6px 12px; background: var(--surface); }
+.training-run-heading > strong { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.training-run-heading > .console-run-picker { width: auto; max-width: 230px; min-height: 28px; font-size: 11px; border-color: transparent; }
+.console-connection { width: 5px; height: 5px; border-radius: 50%; background: var(--text-secondary); }
+.training-console-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 28px; text-align: center; color: var(--text-secondary); background: var(--canvas); }
+.training-console-empty-mark { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface); font: 16px var(--font-code); }
+.training-console-empty strong { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+.training-history-page > .ui-input { max-width: 360px; }
+.training-records { display: flex; flex-direction: column; gap: 10px; }
+.training-record { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border: 1px solid var(--border-subtle); border-radius: 9px; padding: 16px 18px; background: var(--surface); }
+.training-record-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text-secondary); background: var(--canvas); }
+.training-record-identity { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 6px; }
+.training-record-identity > strong { font-size: 12px; font-weight: 600; }
+.training-record-identity code { font-size: 11px; color: var(--text-secondary); font-weight: 400; margin-left: 8px; }
+.training-record-identity > span, .training-record-identity p { font-size: 11px; color: var(--text-secondary); margin: 0; overflow-wrap: anywhere; }
+.training-record-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+@media (max-width: 1000px) {
+  .experiment-header { padding-inline: 14px; gap: 8px; }
+  .experiment-header .experiment-header-name { max-width: 180px; }
+  .workflow-debug { position: absolute; inset: 0 0 0 auto; width: min(460px, 100%); z-index: 30; box-shadow: -6px 0 24px #20252b12; }
+  .training-document-body, .workspace-document { padding-inline: 24px; }
+  .experiment-header-tools > .ui-button > span { display: none; }
+  .experiment-header > .gpu-status-control .gpu-status-meter,
+  .experiment-header > .gpu-status-control .gpu-status-refresh,
+  .experiment-save-status > span { display: none; }
+  .experiment-header .experiment-header-name { max-width: 150px; min-width: 90px; }
+  .experiment-header-tools { padding-left: 6px; margin-left: 0; }
+}
+@media (max-width: 680px) {
+  .experiment-header { height: 54px; padding-inline: 8px; gap: 6px; }
+  .experiment-header .experiment-header-name { min-width: 80px; max-width: 130px; font-size: 12px; padding-left: 4px; }
+  .experiment-header-actions { gap: 4px; }
+  .experiment-header-actions .ui-button { padding-inline: 8px; font-size: 11px; }
+  .experiment-header-actions .ui-button > svg, .experiment-header-divider, .experiment-save-status, .experiment-header > .ui-button > span { display: none; }
+  .workflow-floating-tools { inset: 12px 10px auto; }
+  .workflow-floating-tools .ui-button { font-size: 11px; padding-inline: 8px; }
+  .workflow-floating-tools .ui-button > svg { display: none; }
+  .training-document-body, .workspace-document { padding: 24px 16px 40px; }
+  .training-document .form-grid, .workspace-document .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .training-document .ui-section, .workspace-document .ui-section { padding: 16px; }
+  .training-agent-row { flex-wrap: wrap; }
+  .training-agent-row > code { display: none; }
+  .training-run-heading > .console-run-picker { max-width: 165px; }
+  .console-window-controls { margin-left: auto; }
+  .experiment-header > .gpu-status-control { margin-left: 0; }
+  .experiment-header > .gpu-status-control .gpu-status-trigger { gap: 4px; padding-inline: 4px; font-size: 10px; }
+  .experiment-header-tools { padding-left: 3px; }
+  .experiment-header-tools .ui-button { padding-inline: 5px; font-size: 10px; }
+  .experiment-header .experiment-header-name { max-width: 100px; min-width: 64px; }
+}

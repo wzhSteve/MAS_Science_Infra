@@ -15,12 +15,11 @@ export interface ExperimentEvents {
   latest: string;
   error: string | null;
   connected: boolean;
-  collectEvents: ScienceEvent[];
 }
 
 export function useExperimentEvents(expId: string, onTrain: () => Promise<void>, onEvent: () => Promise<void>, active = true) {
   const [state, setState] = useState<ExperimentEvents>({
-    latest: '', error: null, connected: false, collectEvents: [],
+    latest: '', error: null, connected: false,
   });
   useEffect(() => {
     if (!active) {
@@ -37,8 +36,6 @@ export function useExperimentEvents(expId: string, onTrain: () => Promise<void>,
         if (payload.experiment_id !== expId) return;
         setState(previous => ({
           ...previous, latest: payload.type, error: null,
-          collectEvents: payload.type === 'collect_progress'
-            ? [...previous.collectEvents.slice(-99), payload] : previous.collectEvents,
         }));
         if (payload.type.includes('train')) void onTrain();
         void onEvent();

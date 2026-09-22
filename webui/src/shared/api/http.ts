@@ -20,13 +20,15 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const text = await response.text();
     let detail: unknown = text || response.statusText;
+    let payload: unknown;
     try {
       const body: unknown = JSON.parse(text);
+      payload = body;
       if (body && typeof body === 'object' && 'detail' in body) detail = body.detail;
     } catch {
       // Non-JSON error pages still carry useful server diagnostics.
     }
-    throw new ApiError(typeof detail === 'string' ? detail : JSON.stringify(detail), response.status, detail);
+    throw new ApiError(typeof detail === 'string' ? detail : JSON.stringify(detail), response.status, payload ?? detail);
   }
   return response.json() as Promise<T>;
 }

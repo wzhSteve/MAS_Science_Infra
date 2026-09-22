@@ -20,7 +20,6 @@ type Props = {
   onPatch: (next: RlConfig) => void;
   onSave: () => void;
   onRecommend: () => void;
-  onPrefill: () => void;
   showSaveAction?: boolean;
   modelBound?: boolean;
   sampling?: SamplingSpec;
@@ -28,7 +27,7 @@ type Props = {
 };
 
 export const RlSettingsForm = memo(function RlSettingsForm({
-  rl, meta, dirty, pending, onPatch, onSave, onRecommend, onPrefill,
+  rl, meta, dirty, pending, onPatch, onSave, onRecommend,
   showSaveAction = true, modelBound = false, sampling, advancedOnly = false,
 }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(advancedOnly);
@@ -68,7 +67,6 @@ export const RlSettingsForm = memo(function RlSettingsForm({
     </div>}
     {!advancedOnly && <ActionBar>
       <Button loading={pending === 'recommend'} disabled={pending !== null} onClick={onRecommend}>按当前机器推荐</Button>
-      <Button loading={pending === 'prefill'} disabled={pending !== null} onClick={onPrefill}>应用最近采样建议</Button>
       <Button variant="ghost" aria-expanded={showAdvanced} aria-controls={advancedId} onClick={() => setShowAdvanced((current) => !current)}>
         {showAdvanced ? '收起高级设置' : '高级设置'}
       </Button>

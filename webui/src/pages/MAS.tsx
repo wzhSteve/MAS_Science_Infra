@@ -1,140 +1,110 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { FlaskConical, Plus } from 'lucide-react';
 import type { Bundle, MetaResponse } from '../shared/api/types';
-import { MasGraphEditor, WorkflowBar, RunConsole, useMasDraft, type ConsoleTab, type EditorPanel } from '../features/mas';
+import { MasGraphEditor, useMasDraft } from '../features/mas';
+import { WorkflowDebug } from '../features/mas/components/WorkflowDebug';
 import { executableInfo } from '../features/mas/model/workflowGraph';
 import { InlineNotice } from '../shared/components/InlineNotice';
 import { LoadingState } from '../shared/components/LoadingState';
 import { Button } from '../shared/ui/button';
 import { useModelReadiness } from '../features/mas/model/useModelReadiness';
 import type { TraceFocusRequest } from '../features/mas/types';
-import { ExperimentSettings } from '../features/settings/components/ExperimentSettings';
+import { TrainingSettings } from '../features/settings/components/TrainingSettings';
+import { HarnessPanel } from '../features/harness/components/HarnessPanel';
 import type { SettingsSection } from '../features/settings/model/sections';
 import type { ResourceCategory } from '../app/navigation';
 
 export type MASPanelProps = {
-  expId: string;
-  bundle: Bundle | null;
-  onReload: () => void;
-  meta: MetaResponse | null;
-  requestedSettings: SettingsSection | null;
-  active?: boolean;
-  onWorkspace: () => void;
-  onResources: (category: ResourceCategory) => void;
-  onSettings: (section: SettingsSection) => void;
-  selectedResource?: string;
+  expId: string; bundle: Bundle | null; onReload: () => void; meta: MetaResponse | null;
+  requestedSettings: SettingsSection | null; active?: boolean;
+  onWorkspace: () => void; onResources: (category: ResourceCategory) => void; onSettings: (section: SettingsSection) => void;
+  selectedResource?: string; resourcePurpose?: 'inference' | 'training';
+  trainingJump: number;
 };
 
-export function MASPanel(props: MASPanelProps) {
-  return <MASWorkspace key={props.expId} {...props} />;
+function RetainedView({ active, children, className }: { active: boolean; children: ReactNode; className?: string }) {
+  const [visited, setVisited] = useState(active);
+  useEffect(() => { if (active) setVisited(true); }, [active]);
+  return <div className={className} hidden={!active}>{(active || visited) && children}</div>;
 }
 
-function MASWorkspace(props: MASPanelProps) {
+export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
   const draft = useMasDraft(props);
-  const readiness = useModelReadiness(props.expId, props.bundle?.llm.config_revision, props.active ?? true);
-  const [panel, setPanel] = useState<EditorPanel>(props.requestedSettings ? 'settings' : null);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>(props.requestedSettings || 'model');
-  const [libraryOpen, setLibraryOpen] = useState(!props.requestedSettings);
-  const [consoleOpen, setConsoleOpen] = useState(false);
-  const [consoleTab, setConsoleTab] = useState<ConsoleTab>('config');
-  const [consoleMode, setConsoleMode] = useState<'rollout' | 'collect' | 'demo'>('rollout');
-  const [historyRequest, setHistoryRequest] = useState(0);
+  const active = props.active ?? true;
+  const section = props.requestedSettings;
+  const [expanded, setExpanded] = useState(false);
+  const [modelRequest, setModelRequest] = useState(0);
+  const editing = active && section !== 'diagnostics';
+  const workflowVisible = editing && !expanded;
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugVisited, setDebugVisited] = useState(false);
+  const [debugMode, setDebugMode] = useState<'live' | 'mock'>('live');
+  const readiness = useModelReadiness(props.expId, props.bundle?.llm.config_revision, workflowVisible && debugOpen);
   const [traceFocus, setTraceFocus] = useState<TraceFocusRequest | null>(null);
   const focusSequence = useRef(0);
-  const lastRequested = useRef(props.requestedSettings);
-  const settingsTrigger = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!props.active || lastRequested.current === props.requestedSettings) return;
-    lastRequested.current = props.requestedSettings;
-    if (props.requestedSettings) {
-      setLibraryOpen(false);
-      setSettingsSection(props.requestedSettings);
-      setPanel('settings');
-    } else setPanel(null);
-  }, [props.active, props.requestedSettings]);
-  const onPanelChange = useCallback((next: EditorPanel) => {
-    setPanel(next);
-    if (!next && props.requestedSettings) props.onWorkspace();
-  }, [props.requestedSettings, props.onWorkspace]);
-  const openSettings = useCallback((section: SettingsSection) => {
-    settingsTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setLibraryOpen(false);
-    setSettingsSection(section);
-    setPanel('settings');
-    props.onSettings(section);
+  const configureModel = useCallback(() => {
+    setModelRequest(value => value + 1);
+    props.onSettings('inference');
   }, [props.onSettings]);
-  const changeSettingsSection = useCallback((section: SettingsSection) => {
-    setSettingsSection(section);
-    props.onSettings(section);
-  }, [props.onSettings]);
-  const closeSettings = useCallback(() => {
-    onPanelChange(null);
-    const target = settingsTrigger.current?.isConnected ? settingsTrigger.current : document.getElementById('mas-settings-trigger');
-    target?.focus({ preventScroll: true });
-  }, [onPanelChange]);
-  const configureModel = useCallback(() => openSettings('model'), [openSettings]);
   const modelResources = useCallback(() => props.onResources('models'), [props.onResources]);
-  const consumeResourceSelection = useCallback(() => {
-    props.onSettings(props.requestedSettings || 'model');
-  }, [props.onSettings, props.requestedSettings]);
-  const openCollect = useCallback(() => {
-    onPanelChange(null);
-    setConsoleMode('collect');
-    setConsoleTab('config');
-    setConsoleOpen(true);
-  }, [onPanelChange]);
+  const dataResources = useCallback(() => props.onResources('datasets'), [props.onResources]);
+  const consumeResourceSelection = useCallback(() => props.onSettings(section || 'model'), [props.onSettings, section]);
   const openDebug = useCallback(() => {
-    onPanelChange(null);
-    setConsoleMode('rollout');
-    setConsoleTab('config');
-    setConsoleOpen(true);
-  }, [onPanelChange]);
+    setLibraryOpen(false); setDebugMode('live'); setDebugVisited(true); setDebugOpen(true);
+  }, []);
+  const closeDebug = useCallback(() => setDebugOpen(false), []);
   const openDemo = useCallback(() => {
-    onPanelChange(null);
-    setConsoleMode('demo');
-    setConsoleTab('config');
-    setConsoleOpen(true);
-  }, [onPanelChange]);
-  const openHistory = useCallback(() => {
-    onPanelChange(null);
-    setConsoleMode('rollout');
-    setConsoleTab('results');
-    setConsoleOpen(true);
-    setHistoryRequest(value => value + 1);
-  }, [onPanelChange]);
-  const { workflow } = draft;
-  const executable = useMemo(() => workflow ? executableInfo(workflow) : { ok: false, reason: '加载中…' }, [workflow]);
-  const settings = useMemo(() => props.bundle && <ExperimentSettings bundle={props.bundle} meta={props.meta} onReload={props.onReload}
-    open={panel === 'settings'} active={props.active ?? true} section={settingsSection} onSectionChange={changeSettingsSection}
-    onClose={closeSettings} onCollect={openCollect} onDemo={openDemo} onResources={props.onResources} readiness={readiness.data} readinessError={readiness.error}
-    selectedResource={props.selectedResource} suggestedPurpose={props.requestedSettings === 'model' ? 'inference' : 'training'} onSuggestionApplied={consumeResourceSelection}
-    workflow={workflow!} palette={draft.palette} onWorkflowChange={draft.onWorkflowChange}
-    onSaveWorkflow={draft.save} savingWorkflow={draft.savingWorkflow} />,
-  [props.bundle, props.meta, props.onReload, props.active, props.onResources, props.selectedResource, props.requestedSettings, consumeResourceSelection, panel, settingsSection, changeSettingsSection, closeSettings, openCollect, openDemo, readiness.data, readiness.error, workflow, draft.palette, draft.onWorkflowChange, draft.save, draft.savingWorkflow]);
+    props.onWorkspace(); setExpanded(false); setLibraryOpen(false); setDebugMode('mock'); setDebugVisited(true); setDebugOpen(true);
+  }, [props.onWorkspace]);
   const locate = useCallback((target: Omit<TraceFocusRequest, 'token'>) => {
+    setExpanded(false);
+    setDebugOpen(false);
     setTraceFocus({ ...target, token: ++focusSequence.current });
   }, []);
-  if (!workflow) return <LoadingState label="加载 workflow…" />;
-
-  return <div className="mas-workspace">
-    <WorkflowBar expId={props.expId} dirty={draft.workflowDirty} pending={draft.pending}
-      saving={draft.savingWorkflow} saveError={Boolean(draft.saveError)}
-      panel={panel} onSettings={openSettings} onCloseSettings={closeSettings} onSave={draft.save}
-      libraryOpen={libraryOpen} onOpenLibrary={() => setLibraryOpen(true)}
-      onDebug={openDebug} onHistory={openHistory} />
+  const locateAgent = useCallback((agentId: string) => {
+    locate({ agentId }); props.onWorkspace();
+  }, [locate, props.onWorkspace]);
+  const { workflow } = draft;
+  const executable = useMemo(() => workflow ? executableInfo(workflow) : { ok: false, reason: '加载中…' }, [workflow]);
+  if (!workflow || !props.bundle) return <LoadingState label="加载工作流…" />;
+  return <div className="mas-workspace mas-workspace--parameters">
     {(draft.paletteError || draft.saveError) && <div className="mas-workspace-notice">
       <InlineNotice tone="danger">{draft.paletteError ? <>节点库加载失败：{draft.paletteError}
         <Button size="sm" onClick={() => void draft.loadPalette()}>重试</Button>
       </> : draft.saveError}</InlineNotice>
     </div>}
-    <MasGraphEditor workflow={workflow} palette={draft.palette} onChange={draft.onWorkflowChange}
-      active={props.active ?? true} panel={panel} onPanelChange={onPanelChange}
-      libraryOpen={libraryOpen} onLibraryOpenChange={setLibraryOpen}
-      traceFocus={traceFocus}
-      settingsContent={settings} onModelResources={modelResources} />
-    <RunConsole draft={draft} experimentId={props.expId} active={props.active ?? true} open={consoleOpen} onOpenChange={setConsoleOpen}
-      tab={consoleTab} onTabChange={setConsoleTab} executable={executable}
-      readiness={readiness} onConfigureModel={configureModel}
-      mode={consoleMode} onModeChange={setConsoleMode} historyRequest={historyRequest}
-      onLocate={locate} />
+    <div className={`parameter-panel-host${expanded ? ' is-expanded' : ''}`} hidden={!editing}>
+      <TrainingSettings bundle={props.bundle} meta={props.meta} onReload={props.onReload} active={editing}
+        section={section} jump={props.trainingJump + modelRequest} expanded={expanded} onExpandedChange={setExpanded}
+        onManageModels={modelResources} onManageData={dataResources} selectedResource={props.selectedResource} resourcePurpose={props.resourcePurpose}
+        onSuggestionApplied={consumeResourceSelection} workflow={workflow} palette={draft.palette}
+        onWorkflowChange={draft.onWorkflowChange} onLocate={locateAgent} onDemo={openDemo} />
+    </div>
+    <div id="workflow-view" className="workflow-view" hidden={!workflowVisible} role="region" aria-label="工作流">
+      <div className="workflow-canvas-column">
+        <div className="workflow-floating-tools">
+          <div><Button size="sm" aria-expanded={libraryOpen} aria-controls="mas-node-library" onClick={() => { setDebugOpen(false); setLibraryOpen(value => !value); }}>
+            <Plus size={15} />添加节点
+          </Button></div>
+          <div>
+            <Button id="workflow-debug-trigger" size="sm" aria-expanded={debugOpen} aria-controls="workflow-debug" onClick={debugOpen ? closeDebug : openDebug}>
+              <FlaskConical size={14} />单题调试
+            </Button>
+          </div>
+        </div>
+        <MasGraphEditor workflow={workflow} palette={draft.palette} onChange={draft.onWorkflowChange}
+          active={workflowVisible} libraryOpen={libraryOpen} onLibraryOpenChange={setLibraryOpen} traceFocus={traceFocus}
+          inspectorVisible={!debugOpen} onInspect={closeDebug} onModelResources={modelResources} />
+      </div>
+      {debugVisited && <WorkflowDebug experimentId={props.expId} draft={draft} active={workflowVisible}
+        open={debugOpen} mode={debugMode} executable={executable} readiness={readiness}
+        onClose={closeDebug} onLive={openDebug} onConfigureModel={configureModel} onLocate={locate} />}
+    </div>
+    <RetainedView active={active && section === 'diagnostics'} className="workspace-document-scroll">
+      <div className="workspace-document"><h1>诊断工具</h1>
+        <HarnessPanel expId={props.expId} bundle={props.bundle} meta={props.meta} onReload={props.onReload} embedded />
+      </div>
+    </RetainedView>
   </div>;
-}
+});

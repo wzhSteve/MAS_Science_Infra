@@ -930,105 +930,21 @@ def start_train(
     stop_llm: bool = True,
     confirm_gpu: bool = False,
 ) -> Dict[str, Any]:
-    from science_infra.control.experiments import save_section
-    from science_infra.control.training import build_training_plan, persisted_rl
+    from science_infra.control.training import build_training_plan, launch_training
 
     plan = build_training_plan(exp_id)
-    if not plan.ready:
-        raise RuntimeError(
-            "训练启动检查未通过："
-            + "；".join(issue["message"] for issue in plan.blocking_issues)
-        )
-    bundle = plan.bundle
-    rl = plan.rl
-    ids = plan.gpu_ids
-    saved_rl = persisted_rl(plan)
-    save_section(
+    return launch_training(
         exp_id,
-        "rl",
-        {key: value for key, value in saved_rl.items() if not str(key).startswith("_")},
+        request_id=__import__("uuid").uuid4().hex,
+        preflight_revision=plan.revision,
+        stop_local_llm=bool(stop_llm or confirm_gpu),
     )
-    algo = plan.algorithm
-    if algo not in VALID_ALGOS:
-        raise ValueError(f"algo must be one of {VALID_ALGOS}")
-    profile = plan.profile
-    if profile not in ("fast", "a800", "a800_2gpu"):
-        raise ValueError("profile must be fast|a800|a800_2gpu")
-
-    if PROCS.active("llm"):
-        if stop_llm or confirm_gpu:
-            PROCS.stop("llm")
-            BUS.publish(exp_id, "llm_status", {"state": "stopped_for_train"})
-        else:
-            raise RuntimeError("local LLM running; pass stop_llm=true or confirm_gpu=true")
-
-    rl_yaml = exp_dir(exp_id) / "rl.yaml"
-    train_script = tir_agent_root() / "train_tir_agent.py"
-    argv = [
-        sys.executable,
-        str(train_script),
-        profile,
-        "--algo",
-        algo,
-        "--rl-yaml",
-        str(rl_yaml),
-    ]
-    if rl.get("n_runners") is not None:
-        argv.extend(["--n-runners", str(int(rl["n_runners"]))])
-    model_path = plan.source.model_path
-    if model_path:
-        argv.extend(["--model", str(model_path)])
-
-    _ensure_tir_on_path()
-    try:
-        from workflow.spec import MASSpec
-        from workflow.compiler import trainable_agents
-
-        spec = MASSpec.model_validate(bundle["workflow"])
-        names = trainable_agents(spec)
-        if names:
-            argv.extend(["--active-agent", names[0]])
-    except Exception:
-        pass
-
-    env = _llm_env(exp_id, bundle["llm"])
-    root = str(tir_agent_root().parent)
-    env["PYTHONPATH"] = os.pathsep.join(
-        [root, str(tir_agent_root()), env.get("PYTHONPATH", "")]
-    )
-    env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in ids)
-    env["VLLM_USE_V1"] = env.get("VLLM_USE_V1") or "1"
-    note = rl.get("_profile_downgraded")
-    mp = PROCS.start(
-        kind="train",
-        experiment_id=exp_id,
-        argv=argv,
-        cwd=tir_agent_root(),
-        env=env,
-        meta={
-            "profile": profile,
-            "algo": algo,
-            "rl_yaml": str(rl_yaml),
-            "cuda_visible_devices": env["CUDA_VISIBLE_DEVICES"],
-            "n_gpus": len(ids),
-            "downgrade": note,
-            "training_source": plan.source.public(),
-            "preflight_revision": plan.revision,
-        },
-        replace=True,
-    )
-    return {
-        "run_id": mp.run_id,
-        "argv": argv,
-        "log_path": str(mp.log_path),
-        "cuda_visible_devices": env["CUDA_VISIBLE_DEVICES"],
-        "n_gpus": len(ids),
-        "profile": profile,
-        "note": note,
-    }
 
 
 def stop_train(exp_id: str) -> Dict[str, Any]:
-    st = PROCS.stop("train")
-    BUS.publish(exp_id, "train_stopped", {})
-    return st or {"running": False}
+    from science_infra.control.training import stop_training_run
+
+    active = PROCS.active("train")
+    if active is None or active.experiment_id != exp_id:
+        return {"running": False}
+    return stop_training_run(exp_id, active.run_id)

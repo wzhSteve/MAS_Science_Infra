@@ -24,9 +24,9 @@ function readPath(rl: RlConfig, path: string): unknown {
     value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined, rl);
 }
 
-function updatePath(rl: RlConfig, path: string, value: number | string): RlConfig {
+function updatePath(rl: RlConfig, path: string, value: number | string | undefined): RlConfig {
   const keys = path.split('.');
-  const root = structuredClone(rl) as Record<string, unknown>;
+  const root: Record<string, unknown> = { ...rl };
   let cursor = root;
   for (const key of keys.slice(0, -1)) {
     const child = cursor[key];
@@ -34,8 +34,9 @@ function updatePath(rl: RlConfig, path: string, value: number | string): RlConfi
       ? { ...(child as Record<string, unknown>) } : {};
     cursor = cursor[key] as Record<string, unknown>;
   }
-  cursor[keys[keys.length - 1]] = value;
-  return root as RlConfig;
+  if (value === undefined) delete cursor[keys[keys.length - 1]];
+  else cursor[keys[keys.length - 1]] = value;
+  return root;
 }
 
 function field(
@@ -48,7 +49,7 @@ function field(
   return {
     path, label, group, description, type,
     read: (rl) => readPath(rl, path) as number | string | undefined,
-    update: (rl, value) => updatePath(rl, path, type === 'number' ? Number(value) : value),
+    update: (rl, value) => updatePath(rl, path, value === '' ? undefined : type === 'number' ? Number(value) : value),
   };
 }
 

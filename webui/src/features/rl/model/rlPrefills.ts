@@ -16,6 +16,7 @@ export function applyRlRecommendation(rl: RlConfig, recommendation: RlConfig, sa
   const n = recommendation['actor_rollout_ref.rollout.n'];
   const gpuMemory = recommendation['actor_rollout_ref.rollout.gpu_memory_utilization'];
   const gpuCount = recommendation['trainer.n_gpus_per_node'];
+  const tensorParallel = recommendation['actor_rollout_ref.rollout.tensor_model_parallel_size'];
   if (n != null) {
     next = {
       ...next,
@@ -36,6 +37,9 @@ export function applyRlRecommendation(rl: RlConfig, recommendation: RlConfig, sa
     };
   }
   if (gpuCount != null) next = { ...next, trainer: { ...next.trainer, n_gpus_per_node: Number(gpuCount) } };
+  if (tensorParallel != null) next = { ...next, actor_rollout_ref: {
+    ...next.actor_rollout_ref, rollout: { ...next.actor_rollout_ref?.rollout, tensor_model_parallel_size: Number(tensorParallel) },
+  } };
   return applyWorkflowSampling(next, sampling);
 }
 

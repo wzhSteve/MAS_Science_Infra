@@ -34,7 +34,7 @@ function RlWorkspace({ expId, bundle, meta, onReload, trainRunId, trainRunning, 
   return <div className="page-stack settings-page">
     <PageHeader title="RL" eyebrow="强化学习" description="管理训练超参与运行状态。参数草稿与 MAS 训练简参独立保存。" />
     <RlSettingsForm rl={draft.rl} meta={meta} dirty={draft.dirty} pending={draft.pending}
-      onPatch={draft.patch} onSave={draft.save} onRecommend={draft.recommend} onPrefill={draft.prefill}
+      onPatch={draft.patch} onSave={draft.save} onRecommend={draft.recommend}
       sampling={bundle.workflow.sampling} />
     {draft.notice && <InlineNotice tone={draft.notice.tone}>{draft.notice.message}</InlineNotice>}
     <RlTrainingActions trainRunId={trainRunId} trainRunning={trainRunning} aglOnline={aglOnline} pending={draft.pending} onStart={draft.start} onStop={onStopTrain} />

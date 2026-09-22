@@ -332,9 +332,16 @@ export interface AglHealth {
 export interface RunSummary {
   run_id: string;
   kind: string;
+  state?: 'preparing' | 'starting' | 'running' | 'stopping' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
   running: boolean;
   started_at?: number;
+  ended_at?: number | null;
+  returncode?: number | null;
+  stop_reason?: string | null;
+  failure_stage?: string | null;
+  message?: string | null;
   experiment_id?: string;
+  meta?: Config;
 }
 
 export interface RunDetail extends RunSummary { log_tail?: string }
@@ -365,24 +372,6 @@ export interface MonitorResponse {
   step_rewards?: RewardPoint[];
   train_signal?: TrainSignal;
   agl_online?: boolean;
-}
-export interface CollectRow { id: string; answer?: unknown; reward?: number; tool?: boolean }
-export interface CollectResponse {
-  n: number;
-  mean_reward?: number;
-  rows?: CollectRow[];
-  path?: string;
-  train_signal?: TrainSignal;
-}
-export interface CollectBody {
-  mock?: boolean;
-  n?: number;
-  algo?: string;
-  tasks?: unknown[];
-  parquet?: string;
-  data_n?: number;
-  source?: string;
-  sequential?: boolean;
 }
 export type RolloutExecution = 'mock' | 'live';
 export interface RolloutRunRequest {

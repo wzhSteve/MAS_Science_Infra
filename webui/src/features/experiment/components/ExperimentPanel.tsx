@@ -98,7 +98,7 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
   });
 
   return <div className="page-stack settings-page">
-    <PageHeader title="Experiment" eyebrow="实验配置" description="管理当前实验的名称与随机种子；配置草稿只在显式保存时写入。" />
+    <PageHeader title="实验信息" />
     <Section title="当前实验" actions={<StatusBadge tone={bundle.executable.ok ? 'success' : 'warning'}>
       {bundle.executable.ok ? 'executable' : 'blocked'}
     </StatusBadge>}>
@@ -120,10 +120,8 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
         }} /></FormField>
       </div>
       <ActionBar>
-        <Button variant="primary" loading={pending === 'save'} disabled={pending !== null} onClick={() => { void save(); }}>保存 experiment.yaml</Button>
         <Button onClick={onReload}>重新加载</Button>
       </ActionBar>
-      <p className="field-hint">重新加载服务器配置，不覆盖当前实验的未保存草稿。</p>
       <dl className="grid gap-2 text-sm">
         <div className="grid gap-1"><dt className="field-hint">path</dt><dd className="mono m-0 break-all">{bundle.path}</dd></div>
         <div className="grid gap-1"><dt className="field-hint">topology</dt><dd className="mono m-0">{bundle.workflow.topology}</dd></div>

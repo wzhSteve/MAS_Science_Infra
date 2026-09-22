@@ -8,21 +8,24 @@ import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { useAction } from '../../../shared/hooks/useAction';
 import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
 
-export const InferenceSettings = memo(function InferenceSettings({ bundle, active, view, onReload, onManage, suggestedId, onSuggestionApplied }: {
-  bundle: Bundle; active: boolean; view: 'connection' | 'environment'; onReload: () => void;
+export const InferenceSettings = memo(function InferenceSettings({ bundle, active, view, onReload, onManage, suggestedId, onSuggestionApplied, compact = false }: {
+  bundle: Bundle; active: boolean; view: 'connection' | 'environment' | 'all'; onReload: () => void;
   onManage: () => void; suggestedId?: string; onSuggestionApplied?: () => void;
+  compact?: boolean;
 }) {
   const [binding, setBinding] = useState<BindingView>({ loaded: false, bound: false, resource: null, error: null });
   const action = useAction();
   const config = binding.bound ? binding.resource?.config : bundle.llm;
+  const environment = view !== 'connection';
   useUnsavedChanges('bound-inference-operation', { label: '模型服务操作', resource: 'model-service', dirty: false, busy: action.pending !== null });
   return <div className="page-stack settings-embedded">
-    <div hidden={view !== 'connection'}>
-      <ModelBinding experimentId={bundle.id} purpose="inference" active={active} onReload={onReload} onManage={onManage}
+    <div hidden={view === 'environment'}>
+      <ModelBinding experimentId={bundle.id} purpose="inference" active={active} onReload={onReload} onManage={onManage} saveInHeader
+        compact={compact} fallbackName={bundle.llm.model}
         onState={setBinding} suggestedId={suggestedId} onSuggestionApplied={onSuggestionApplied} />
     </div>
-    {view === 'environment' && binding.error && <InlineNotice tone="danger">{binding.error}</InlineNotice>}
-    {view === 'environment' && binding.loaded && !binding.error && config?.kind === 'local' && <Section title="本地模型服务">
+    {environment && binding.error && <InlineNotice tone="danger">{binding.error}</InlineNotice>}
+    {environment && binding.loaded && !binding.error && config?.kind === 'local' && <Section title="本地模型服务">
       <p className="field-hint">{binding.resource?.name || config.model || '本地模型'} · 端口 {config.port || 8000}</p>
       <div className="action-bar">
         <Button size="sm" disabled={action.pending !== null} loading={action.pending === 'start'} onClick={() => {
@@ -37,6 +40,6 @@ export const InferenceSettings = memo(function InferenceSettings({ bundle, activ
         }}>停止本地模型</Button>
       </div>
     </Section>}
-    {view === 'environment' && action.notice && <InlineNotice tone={action.notice.tone}>{action.notice.message}</InlineNotice>}
+    {environment && action.notice && <InlineNotice tone={action.notice.tone}>{action.notice.message}</InlineNotice>}
   </div>;
 });

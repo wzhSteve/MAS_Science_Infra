@@ -1,4 +1,4 @@
-import { Boxes, FlaskConical, Cpu, Activity, Network, ScanLine } from 'lucide-react';
+import { Boxes, FlaskConical, Cpu, Activity, Network, ScanLine, History } from 'lucide-react';
 import type { SettingsSection } from '../features/settings/model/sections';
 
 export type ResourceCategory = 'models' | 'datasets';
@@ -15,6 +15,7 @@ export const NAVIGATION = [
   { id: 'rl', label: 'RL', description: '训练配置', icon: Boxes },
   { id: 'harness', label: 'Harness', description: '诊断', icon: ScanLine },
   { id: 'monitor', label: 'Monitor', description: '监控', icon: Activity },
+  { id: 'records', label: 'Runs', description: '训练记录', icon: History },
 ] as const;
 export type PanelId = (typeof NAVIGATION)[number]['id'];
 
@@ -28,6 +29,9 @@ export interface WorkspaceRoute {
   panel: PanelId;
   settings?: SettingsSection;
   selectedResource?: string;
+  resourcePurpose?: 'inference' | 'training';
+  console?: 'training';
+  runId?: string;
 }
 export type AppRoute = { kind: 'home' } | WorkspaceRoute | ResourceRoute | { kind: 'not-found' };
 
@@ -41,8 +45,14 @@ export function routeHash(route: Exclude<AppRoute, { kind: 'not-found' }>): stri
   if (route.kind === 'home') return HOME_HASH;
   if (route.kind === 'resources') return `#/resources/${route.category}${route.experimentId ? `?experiment=${encodeURIComponent(route.experimentId)}` : ''}`;
   const base = `${HOME_HASH}/${encodeURIComponent(route.experimentId)}`;
-  if (route.settings) return `${base}/workspace/settings/${route.settings}${route.selectedResource ? `?select=${encodeURIComponent(route.selectedResource)}` : ''}`;
-  return route.panel === 'mas' ? `${base}/workspace` : `${base}/panels/${route.panel}`;
+  const params = new URLSearchParams();
+  if (route.selectedResource) params.set('select', route.selectedResource);
+  if (route.resourcePurpose) params.set('purpose', route.resourcePurpose);
+  if (route.console) params.set('console', route.console);
+  if (route.runId) params.set('run', route.runId);
+  const suffix = params.size ? `?${params}` : '';
+  if (route.settings) return `${base}/workspace/settings/${route.settings}${suffix}`;
+  return (route.panel === 'mas' ? `${base}/workspace` : `${base}/panels/${route.panel}`) + suffix;
 }
 
 function isPanel(value: string): value is PanelId {
@@ -68,15 +78,23 @@ export function parseRoute(hash: string): AppRoute {
   if (!experimentId || /[/\\\u0000-\u001f]/.test(experimentId) || experimentId === '.' || experimentId === '..') {
     return { kind: 'not-found' };
   }
-  if (parts.length === 4 && parts[3] === 'workspace') return workspaceRoute(experimentId);
+  const params = new URLSearchParams(query);
+  const consoleState = params.get('console') === 'training' ? {
+    console: 'training' as const,
+    runId: params.get('run') || undefined,
+  } : {};
+  if (consoleState.runId && !/^[a-f0-9]{12}$/.test(consoleState.runId)) return { kind: 'not-found' };
+  if (parts.length === 4 && parts[3] === 'workspace') return { ...workspaceRoute(experimentId), ...consoleState };
   if (parts.length === 6 && parts[3] === 'workspace' && parts[4] === 'settings') {
     const section = parts[5];
-    if (section === 'model' || section === 'data' || section === 'training' || section === 'environment' || section === 'diagnostics') {
+    if (section === 'model' || section === 'data' || section === 'training' || section === 'environment' || section === 'diagnostics' || section === 'inference') {
       const selectedResource = new URLSearchParams(query).get('select') || undefined;
       if (selectedResource && !/^[A-Za-z0-9_-]{1,128}$/.test(selectedResource)) return { kind: 'not-found' };
-      return { ...workspaceRoute(experimentId, 'mas', section), ...(selectedResource ? { selectedResource } : {}) };
+      return { ...workspaceRoute(experimentId, 'mas', section), ...consoleState,
+        resourcePurpose: params.get('purpose') === 'training' ? 'training' : params.get('purpose') === 'inference' ? 'inference' : undefined,
+        ...(selectedResource ? { selectedResource } : {}) };
     }
   }
-  if (parts.length === 5 && parts[3] === 'panels' && isPanel(parts[4])) return workspaceRoute(experimentId, parts[4]);
+  if (parts.length === 5 && parts[3] === 'panels' && isPanel(parts[4])) return { ...workspaceRoute(experimentId, parts[4]), ...consoleState };
   return { kind: 'not-found' };
 }
