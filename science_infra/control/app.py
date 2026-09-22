@@ -29,6 +29,7 @@ from science_infra.control.paths import webui_dist
 from science_infra.control.process_manager import PROCS
 from science_infra.control import services
 from science_infra.control.model_resource_api import router as model_resource_router
+from science_infra.control.dataset_resources import router as dataset_resource_router
 from science_infra.control.training_logs import router as training_logs_router, training_run
 from science_infra.control.model_resources import ResourceError
 from science_infra.control.readiness import model_readiness
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Science Control Plane", version="0.1.0", lifespan=lifespan)
     app.include_router(model_resource_router)
+    app.include_router(dataset_resource_router)
     app.include_router(training_logs_router)
 
     @app.exception_handler(ResourceError)

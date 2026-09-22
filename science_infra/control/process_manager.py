@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+import psutil
+
 from science_infra.control.events import BUS
 from science_infra.control.experiments import artifacts_dir
 from science_infra.control.paths import tir_agent_root
@@ -50,6 +52,7 @@ class ManagedProcess:
     stop_reason: Optional[str] = None
     failure_stage: Optional[str] = None
     message: Optional[str] = None
+    descendants: Dict[int, psutil.Process] = field(default_factory=dict)
 
 
 class ProcessManager:
@@ -68,7 +71,7 @@ class ProcessManager:
         with self._lock:
             run_id = self._by_kind.get(kind)
             process = self._procs.get(run_id) if run_id else None
-            if process is None or process.popen.poll() is not None:
+            if process is None or not self._running(process):
                 return None
             return process
 
@@ -276,16 +279,17 @@ class ProcessManager:
             with self._lock:
                 process.returncode = code
                 process.ended_at = time.time()
-                if process.stop_requested:
-                    process.state = "cancelled"
-                elif code == 0:
-                    process.state = "succeeded"
-                else:
-                    process.state = "failed"
-                    process.failure_stage = process.failure_stage or "process"
-                    process.message = process.message or f"训练进程退出码 {code}"
-                if self._by_kind.get(kind) == run_id:
+                if not process.stop_requested:
+                    if code == 0:
+                        process.state = "succeeded"
+                    else:
+                        process.state = "failed"
+                        process.failure_stage = process.failure_stage or "process"
+                        process.message = process.message or f"训练进程退出码 {code}"
+                if not self._running(process) and self._by_kind.get(kind) == run_id:
                     self._by_kind.pop(kind, None)
+                if self._running(process):
+                    process.ended_at = None
                 self._write_status(
                     experiment_id, run_id, self._status_dict(process)
                 )
@@ -339,7 +343,7 @@ class ProcessManager:
                 return None
             if experiment_id and process.experiment_id != experiment_id:
                 raise ValueError("run does not belong to experiment")
-            if process.popen.poll() is not None:
+            if not self._running(process):
                 return self._status_dict(process)
             self._stop_process(process, timeout=timeout, reason=reason)
             return self._status_dict(process)
@@ -347,11 +351,13 @@ class ProcessManager:
     def _stop_process(
         self, process: ManagedProcess, *, timeout: float, reason: str
     ) -> None:
-        if process.popen.poll() is not None:
+        if not self._running(process):
             return
         process.stop_requested = True
         process.stop_reason = reason
         process.state = "stopping"
+        process.failure_stage = None
+        process.message = None
         self._write_status(
             process.experiment_id,
             process.run_id,
@@ -362,16 +368,25 @@ class ProcessManager:
             f"{process.kind}_stopping",
             {"run_id": process.run_id, "reason": reason},
         )
-        self._interrupt(process.popen)
         try:
-            process.popen.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            process.popen.terminate()
-            try:
-                process.popen.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.popen.kill()
-                process.popen.wait(timeout=5)
+            self._capture_descendants(process)
+            if process.popen.poll() is None:
+                self._interrupt(process.popen)
+            if not self._wait_stopped(process, timeout):
+                self._terminate_tree(process, kill=False)
+                if not self._wait_stopped(process, 5):
+                    self._terminate_tree(process, kill=True)
+                    if not self._wait_stopped(process, 5):
+                        remaining = [child.pid for child in self._live_descendants(process)]
+                        if process.popen.poll() is None:
+                            remaining.insert(0, process.popen.pid)
+                        raise RuntimeError(f"停止超时，仍有运行进程：{remaining}")
+        except (OSError, psutil.Error, RuntimeError) as error:
+            process.failure_stage = "stop"
+            process.message = f"训练进程清理未完成：{error}"
+            self._write_status(process.experiment_id, process.run_id, self._status_dict(process))
+            logging.getLogger(__name__).error("Stop failed for run %s: %s", process.run_id, error)
+            raise RuntimeError(process.message) from error
         process.returncode = process.popen.returncode
         process.ended_at = time.time()
         process.state = "cancelled"
@@ -393,11 +408,68 @@ class ProcessManager:
                 popen.send_signal(signal.CTRL_BREAK_EVENT)
             else:
                 os.killpg(popen.pid, signal.SIGINT)
-        except (ProcessLookupError, PermissionError):
-            popen.terminate()
+        except ProcessLookupError:
+            pass
+
+    @staticmethod
+    def _live_descendants(process: ManagedProcess) -> List[psutil.Process]:
+        live = []
+        for child in process.descendants.values():
+            try:
+                if child.is_running() and child.status() != psutil.STATUS_ZOMBIE:
+                    live.append(child)
+            except psutil.NoSuchProcess:
+                continue
+        return live
+
+    def _running(self, process: ManagedProcess) -> bool:
+        return process.popen.poll() is None or bool(self._live_descendants(process))
+
+    def _capture_descendants(self, process: ManagedProcess) -> None:
+        parents = self._live_descendants(process)
+        if process.popen.poll() is None:
+            try:
+                parents.append(psutil.Process(process.popen.pid))
+            except psutil.NoSuchProcess:
+                pass
+        parent_ids = {parent.pid for parent in parents}
+        for parent in parents:
+            try:
+                if parent.ppid() in parent_ids:
+                    continue
+                for child in parent.children(recursive=True):
+                    process.descendants[child.pid] = child
+            except psutil.NoSuchProcess:
+                continue
+
+    def _wait_stopped(self, process: ManagedProcess, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while self._running(process):
+            self._capture_descendants(process)
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+        return True
+
+    def _terminate_tree(self, process: ManagedProcess, *, kill: bool) -> None:
+        self._capture_descendants(process)
+        # psutil retains process identity, including children that detached from the group.
+        for child in reversed(self._live_descendants(process)):
+            try:
+                child.kill() if kill else child.terminate()
+            except psutil.NoSuchProcess:
+                continue
+        if process.popen.poll() is None:
+            try:
+                if os.name == "nt":
+                    process.popen.kill() if kill else process.popen.terminate()
+                else:
+                    os.killpg(process.popen.pid, signal.SIGKILL if kill else signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
     def _status_dict(self, process: ManagedProcess) -> Dict[str, Any]:
-        running = process.popen.poll() is None
+        running = self._running(process)
         return {
             "run_id": process.run_id,
             "kind": process.kind,

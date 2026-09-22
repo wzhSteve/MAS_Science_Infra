@@ -116,7 +116,7 @@ function Application() {
           <div hidden={route.kind !== 'home'}><PageBoundary><ExperimentHome active={route.kind === 'home'} currentExperimentId={expId} onOpenExperiment={openExperiment} /></PageBoundary></div>
           {resources && <div hidden={route.kind !== 'resources'}><PageBoundary><Suspense fallback={<LoadingState label="加载资源页面…" />}>
             <Resources route={resources} active={route.kind === 'resources'} currentExperimentId={expId}
-              onNavigate={browseResources} onConfigure={configureResource} onReturn={returnFromResources}
+              onNavigate={browseResources} onReturn={returnFromResources}
               onSelectModel={selectModelResource} requestedType={workspace?.panel === 'rl' || isTrainingSection(workspace?.settings) ? 'training' : 'inference'} />
           </Suspense></PageBoundary></div>}
         </section>

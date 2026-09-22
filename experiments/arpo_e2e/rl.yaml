@@ -84,8 +84,8 @@ algorithm:
     rae_dead_end_backprop: true
     rae_dead_end_depth: 1
 data:
-  train_files: D:\openSource\MAS_Science_Infra\data\train.parquet
-  val_files: D:\openSource\MAS_Science_Infra\data\val.parquet
+  train_files: /root/autodl-tmp/MAS_Science_Infra/data/train.parquet
+  val_files: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet
   train_batch_size: 5
   max_prompt_length: 2048
   max_response_length: 512

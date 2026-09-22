@@ -16,7 +16,7 @@ import argparse
 import os
 from copy import deepcopy
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, Optional
 
 os.environ.setdefault("VLLM_USE_V1", "1")
@@ -30,17 +30,14 @@ REPO_DATA_DIR = REPO_ROOT / "data"
 
 
 def _resolve_parquet_path(path: str, default_name: str) -> str:
-    """Prefer explicit paths; map relative ``data/*.parquet`` to repo ``data/``."""
+    """Keep explicit server paths; resolve only repository-relative data."""
+    if PureWindowsPath(str(path)).drive or "\\" in str(path):
+        raise ValueError("Training requires Linux server data paths, not Windows paths.")
     p = Path(str(path)).expanduser()
-    if p.is_file():
-        return str(p.resolve())
-    if not p.is_absolute():
-        cand = REPO_DATA_DIR / (p.name if p.name.endswith(".parquet") else default_name)
-        if cand.is_file():
-            return str(cand.resolve())
-        # Still return canonical repo path so error messages point at the right place
-        return str(cand)
-    return str(p)
+    if p.is_absolute():
+        return str(p)
+    relative = Path(*p.parts[1:]) if p.parts and p.parts[0] == "data" else p
+    return str(REPO_DATA_DIR / (relative if str(relative) != "." else default_name))
 
 
 RL_TRAINING_CONFIG: Dict[str, Any] = {

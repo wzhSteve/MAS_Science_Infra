@@ -57,6 +57,23 @@ export interface LocalModelCandidate {
   registered_resource_id?: string | null;
 }
 
+export interface DatasetResource {
+  id: string;
+  name: string;
+  path: string;
+}
+export interface DatasetCatalog {
+  revision: number;
+  items: DatasetResource[];
+}
+export const datasetResourcesApi = {
+  list: (signal?: AbortSignal) => request<DatasetCatalog>('/api/dataset-resources', { signal }),
+  save: (body: { name: string; path: string; revision: number }, id?: string) =>
+    request<DatasetCatalog>(`/api/dataset-resources${id ? `/${encodeURIComponent(id)}` : ''}`, {
+      method: id ? 'PUT' : 'POST', body: JSON.stringify(body),
+    }),
+};
+
 const path = (id: string) => `/api/model-resources/${encodeURIComponent(id)}`;
 const bindingPath = (id: string) => `${experimentPath(id)}/model-bindings`;
 export const modelResourcesApi = {

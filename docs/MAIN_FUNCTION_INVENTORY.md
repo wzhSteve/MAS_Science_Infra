@@ -65,18 +65,19 @@
 
 ## 训练启动、停止与 RL 算法迁移
 
-这两项不能只以“按钮可点击”或“算法出现在下拉框”为完成标准。训练后端入口与六种算法实现已经存在，但新 UI 还需要补齐模型来源、启动前检查、运行快照、安全停止、实时日志和真实训练验收。
+这两项不能只以“按钮可点击”或“算法出现在下拉框”为完成标准。新 UI 已接入模型来源、启动前检查、运行快照、按 run 启停和增量日志；真实 ARPO 与其他算法的服务器闭环仍需人工确认。
 
 当前训练调用链：
 
 ```text
-POST /api/rl/train
-  → services.start_train()
-  → 同步 workflow.sampling 到 rl.yaml
+保存实验 → GET /api/rl/preflight → 确认启动
+  → POST /api/rl/runs
+  → 固定 workflow.sampling、模型和 GPU 的有效配置
+  → 写入 effective-rl.yaml / effective-workflow.yaml / launch.json
   → 生成 mas/train_tir_agent.py 参数
   → ProcessManager 启动独立进程
-  → stdout 写入 artifacts/runs/<run_id>/stdout.log
-  → /api/runs 查询状态和日志
+  → stdout 写入 experiments/<id>/artifacts/runs/<run_id>/stdout.log
+  → /api/rl/runs/<run_id> 查询状态、日志、快照和停止
 ```
 
 `algorithm.adv_estimator=grpo` 是 VERL 的兼容入口；实际算法由 `algorithm.tir_algo` 决定。现有实现包括 GRPO、ARPO、AEPO、IGPO、GIGPO 和 RAE。Sampling Policy 会覆盖最终算法、`rollout.n` 和 Branch Sites 参数。
@@ -87,15 +88,20 @@ POST /api/rl/train
 /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B/config.json
 ```
 
-当前阻塞不是模型缺失，而是模型资源前端已经接入、对应后端路由尚未迁入当前集成分支，导致 `/api/model-resources` 和实验模型绑定接口返回 404。
+模型资源和实验绑定路由已迁入。Windows 仅用于本地开发；持久化数据路径以 Linux 服务器为准，不再根据本机文件是否存在自动替换绝对路径。
+
+- `arpo_e2e` 恢复 `/root/autodl-tmp/MAS_Science_Infra/data/{train,val}.parquet`；Windows 路径被拒绝，服务器绝对路径原样保留。
+- 共享数据目录位于 `resources/datasets.yaml`，通过“模型与数据 → 数据”登记、编辑和预览。实验侧只选择训练集、验证集，保存选中时的服务器路径；修改共享目录不会悄悄修改已有实验或运行快照。
+- 停止过程先中断训练进程组，再按需升级为终止和强杀；同时跟踪本次进程的后代，清理已脱离进程组的已识别子进程。清理失败保留错误和可重试状态，不宣称已经取消。此处不增加 Control 重启后的进程接管。
+- 进程跟踪依赖 `psutil>=5.9`。服务器已安装时无需操作；缺失时只需在 Control 的 `.venv` 中补装此依赖，不必重装整个训练环境。
 
 迁移按四个阶段实施：
 
 | 阶段 | 核心目标 | 实施文档 |
 | --- | --- | --- |
 | T1 模型来源与启动前检查 | 已实现；待服务器 WebUI 手动验收本地模型发现、绑定和 Preflight | [训练运行第一阶段-模型来源与启动前检查](../webui/plan/训练运行第一阶段-模型来源与启动前检查.md) |
-| T2 运行快照与安全启停 | 已实现；本地假进程验证通过，真实训练留待统一服务器验收 | [训练运行第二阶段-运行快照与安全启停](../webui/plan/训练运行第二阶段-运行快照与安全启停.md) |
-| T3 实时控制台与训练工作区 | 本地已接入：配置去重、底部训练日志/真实调试双入口、run 级增量日志与只读快照；独立采集 UI 已移除，后端 Collector 保留；待用户 UI 验收，未部署 | [训练运行第三阶段-实时控制台与训练工作区](../webui/plan/训练运行第三阶段-实时控制台与训练工作区.md) |
+| T2 运行快照与安全启停 | 已实现；停止已补进程组升级和后代清理，真实 GPU 回收仍待服务器确认 | [训练运行第二阶段-运行快照与安全启停](../webui/plan/训练运行第二阶段-运行快照与安全启停.md) |
+| T3 实时控制台与训练工作区 | 已接入参数侧栏、独立单题调试、训练专用控制台、run 级增量日志与只读快照；独立采集 UI 已移除，后端 Collector 保留 | [训练运行第三阶段-实时控制台与训练工作区](../webui/plan/训练运行第三阶段-实时控制台与训练工作区.md) |
 | T4 RL 算法收口与真实训练验收 | 统一最终算法解析，依次人工验证六种算法的启动、停止、日志和产物 | [训练运行第四阶段-RL算法收口与真实训练验收](../webui/plan/训练运行第四阶段-RL算法收口与真实训练验收.md) |
 
 开发阶段默认只做快速验证：

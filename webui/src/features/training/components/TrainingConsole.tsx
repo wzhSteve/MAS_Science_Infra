@@ -107,9 +107,9 @@ const RunOutput = memo(function RunOutput({ experimentId, runId, active, picker,
       <span className="console-heading-spacer" />
       <Snapshot experimentId={experimentId} runId={runId} />
       {state?.running && <Button size="sm" variant="danger"
-        disabled={state.state === 'stopping' || action.pending !== null}
+        disabled={state.state === 'stopping' && state.failure_stage !== 'stop' || action.pending !== null}
         onClick={() => void action.run('stop', async () => { await stopTrain(runId); })}>
-        {state.state === 'stopping' ? '停止中…' : '停止训练'}
+        {state.failure_stage === 'stop' ? '重试停止' : state.state === 'stopping' ? '停止中…' : '停止训练'}
       </Button>}
       {controls}
     </div>

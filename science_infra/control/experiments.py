@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field
 
-from science_infra.control.paths import experiments_root, repo_data_dir, tir_agent_root
+from science_infra.control.paths import experiments_root, server_data_path, tir_agent_root
 
 VALID_ALGOS = ("grpo", "arpo", "aepo", "igpo", "gigpo", "rae")
 HARNESS_PLUGINS = (
@@ -118,8 +118,8 @@ def default_rl() -> Dict[str, Any]:
             "tir_algo": "grpo",
         },
         "data": {
-            "train_files": str(repo_data_dir() / "train.parquet"),
-            "val_files": str(repo_data_dir() / "val.parquet"),
+            "train_files": server_data_path("train.parquet"),
+            "val_files": server_data_path("val.parquet"),
             "train_batch_size": 2,
             "max_prompt_length": 2048,
             "max_response_length": 512,
@@ -167,26 +167,21 @@ def default_rl() -> Dict[str, Any]:
 
 
 def normalize_rl_data_paths(rl: Dict[str, Any]) -> Dict[str, Any]:
-    """Point relative ``data/*.parquet`` paths at ``MAS_Science_Infra/data``."""
+    """Normalize server paths without probing or substituting local files."""
     out = deepcopy(rl)
     data = out.get("data")
     if not isinstance(data, dict):
         return out
-    root = repo_data_dir()
     for key, default_name in (("train_files", "train.parquet"), ("val_files", "val.parquet")):
         raw = data.get(key)
         if raw is None or raw == "":
-            data[key] = str(root / default_name)
-            continue
-        p = Path(str(raw)).expanduser()
-        if p.is_file():
-            data[key] = str(p.resolve())
-            continue
-        # Relative data/... or bare filename → repo data dir
-        name = p.name if p.name.endswith(".parquet") else default_name
-        cand = root / name
-        if cand.is_file() or not p.is_absolute():
-            data[key] = str(cand)
+            data[key] = server_data_path(default_name)
+        elif isinstance(raw, str):
+            data[key] = server_data_path(raw)
+        elif isinstance(raw, list) and all(isinstance(item, str) for item in raw):
+            data[key] = [server_data_path(item) for item in raw]
+        else:
+            raise ValueError(f"data.{key} 必须是服务器路径或路径列表。")
     return out
 
 

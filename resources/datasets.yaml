@@ -1,0 +1,8 @@
+revision: 1
+items:
+  - id: train
+    name: train.parquet
+    path: /root/autodl-tmp/MAS_Science_Infra/data/train.parquet
+  - id: validation
+    name: val.parquet
+    path: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet

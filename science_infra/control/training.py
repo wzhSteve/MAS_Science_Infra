@@ -266,7 +266,10 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     raw_rl = deepcopy(bundle["rl"])
     source = resolve_training_source(exp_id, raw_rl)
     ids = [int(value) for value in (raw_rl.get("devices") or {}).get("ids") or [0]]
-    rl = normalize_rl_data_paths(apply_gpu_selection(raw_rl, ids))
+    try:
+        rl = normalize_rl_data_paths(apply_gpu_selection(raw_rl, ids))
+    except ValueError as error:
+        raise TrainingError("invalid_data_path", str(error)) from error
     rl, algorithm_source = _apply_sampling(rl, bundle.get("workflow") or {})
     rl["model_path"] = source.model_path
     actor_rollout_ref = dict(rl.get("actor_rollout_ref") or {})
@@ -402,7 +405,7 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
         record("dependencies", "训练依赖", "pass", "训练依赖可发现。")
 
     active_train = PROCS.active("train")
-    if active_train is not None and active_train.popen.poll() is None:
+    if active_train is not None:
         record(
             "process",
             "运行冲突",
@@ -412,7 +415,7 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     else:
         record("process", "运行冲突", "pass", "当前没有活动训练。")
     active_llm = PROCS.active("llm")
-    if active_llm is not None and active_llm.popen.poll() is None:
+    if active_llm is not None:
         record(
             "local_llm",
             "本地模型服务",
@@ -738,11 +741,16 @@ def stop_training_run(
         )
     if row.get("state") in TERMINAL_STATES:
         return row
-    stopped = PROCS.stop_run(
-        run_id,
-        experiment_id=exp_id,
-        reason="user_requested",
-    )
+    try:
+        stopped = PROCS.stop_run(
+            run_id,
+            experiment_id=exp_id,
+            reason="user_requested",
+        )
+    except RuntimeError as error:
+        raise TrainingError(
+            "stop_cleanup_failed", str(error), status=500, data={"run_id": run_id}
+        ) from error
     if stopped is None:
         raise TrainingError(
             "run_not_stoppable",

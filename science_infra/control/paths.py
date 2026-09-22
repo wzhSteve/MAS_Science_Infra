@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from science_infra.env import repo_root
 
@@ -39,6 +39,22 @@ def rl_root() -> Path:
 def repo_data_dir() -> Path:
     """Canonical parquet dataset root: ``MAS_Science_Infra/data``."""
     return repo_root() / "data"
+
+
+SERVER_DATA_DIR = PurePosixPath("/root/autodl-tmp/MAS_Science_Infra/data")
+
+
+def server_data_path(value: str) -> str:
+    """Keep persisted dataset paths independent of the developer's OS."""
+    value = value.strip()
+    if PureWindowsPath(value).drive or "\\" in value:
+        raise ValueError("数据路径必须是 Linux 服务器路径，不能使用 Windows 本地路径。")
+    path = PurePosixPath(value)
+    if path.is_absolute():
+        return str(path)
+    if path.parts and path.parts[0] == "data":
+        path = PurePosixPath(*path.parts[1:])
+    return str(SERVER_DATA_DIR / path)
 
 
 def webui_dist() -> Path:

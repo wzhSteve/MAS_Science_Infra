@@ -13,12 +13,12 @@ import { SamplingSettings } from '../../sampling/components/SamplingSettings';
 import { workflowToFlow, KNOWN_TOOLS } from '../../mas/model/workflowGraph';
 import { useTrainingConfig } from '../../../app/providers/TrainingConfigProvider';
 import { InferenceSettings } from './InferenceSettings';
+import { DatasetSelection } from '../../resources/components/DatasetSelection';
 import type { SettingsSection } from '../model/sections';
 
 const BASIC_DATA = HYDRA_FIELDS.filter(field => field.path === 'data.train_files' || field.path === 'data.val_files');
-const DATA = HYDRA_FIELDS.filter(field => field.group === 'Data' && field.path !== 'data.train_batch_size' && !BASIC_DATA.includes(field) || field.path === 'trainer.test_freq');
 const ENVIRONMENT = HYDRA_FIELDS.filter(field => field.group === 'Rollout' || field.path === 'trainer.nnodes');
-const OPTIMIZATION = HYDRA_FIELDS.filter(field => !BASIC_DATA.includes(field) && !DATA.includes(field) && !ENVIRONMENT.includes(field));
+const OPTIMIZATION = HYDRA_FIELDS.filter(field => !BASIC_DATA.includes(field) && !ENVIRONMENT.includes(field));
 
 export const TrainingSettings = memo(function TrainingSettings({
   bundle, meta, onReload, active, section, jump, expanded, onExpandedChange, onManageModels, onManageData,
@@ -105,16 +105,14 @@ export const TrainingSettings = memo(function TrainingSettings({
         </details>
       </section>
       <section id="training-data" className="parameter-group">
-        <h3><span>02</span>数据与奖励<Button size="sm" variant="ghost" aria-label="打开数据资源" title="数据资源" onClick={onManageData}><ArrowUpRight size={13} /></Button></h3>
-        {fields(BASIC_DATA)}
-        <div className="parameter-summary-row"><span>奖励</span><span title="rl.rewards.outcome：GSM8K 数值匹配；其他 QA 使用 token F1">答案评分</span></div>
-        <details className="parameter-details"><summary>数据与验证参数</summary>{fields(DATA)}</details>
+        <h3><span>02</span>训练数据<Button size="sm" variant="ghost" aria-label="打开数据资源" title="数据资源" onClick={onManageData}><ArrowUpRight size={13} /></Button></h3>
+        <DatasetSelection active={active} onManage={onManageData} />
       </section>
       <section id="training-training" className="parameter-group">
         <h3><span>03</span>训练策略</h3>
         <SamplingSettings workflow={workflow} palette={palette} onChange={onWorkflowChange} onLocate={onLocate}
           compact expanded={expanded} onExpand={expandBranches} />
-        <details className="parameter-details"><summary>优化参数</summary>{fields(OPTIMIZATION)}</details>
+        <details className="parameter-details"><summary>训练与优化参数</summary>{fields(OPTIMIZATION)}</details>
       </section>
       <section id="training-environment" className="parameter-group">
         <h3><span>04</span>执行资源</h3>
