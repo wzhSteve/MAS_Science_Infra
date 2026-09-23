@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import signal
@@ -41,7 +42,12 @@ class ManagedProcess:
     run_id: str
     kind: str
     experiment_id: str
-    popen: subprocess.Popen
+    popen: Optional[subprocess.Popen]
+    pid: int
+    pid_create_time: float
+    pgid: Optional[int]
+    command_hash: str
+    cwd: str
     log_path: Path
     meta: Dict[str, Any] = field(default_factory=dict)
     state: str = "running"
@@ -53,6 +59,7 @@ class ManagedProcess:
     failure_stage: Optional[str] = None
     message: Optional[str] = None
     descendants: Dict[int, psutil.Process] = field(default_factory=dict)
+    recovered: bool = False
 
 
 class ProcessManager:
@@ -71,9 +78,16 @@ class ProcessManager:
         with self._lock:
             run_id = self._by_kind.get(kind)
             process = self._procs.get(run_id) if run_id else None
-            if process is None or not self._running(process):
-                return None
-            return process
+            if process is not None and self._running(process):
+                return process
+        candidates = [
+            row for row in self._disk_runs(None)
+            if row.get("kind") == kind and row.get("running")
+        ]
+        if not candidates:
+            return None
+        row = max(candidates, key=lambda item: float(item.get("started_at") or 0))
+        return self._adopt(row)
 
     def list_runs(self, experiment_id: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._lock:
@@ -141,6 +155,7 @@ class ProcessManager:
             "state": "preparing",
             "running": False,
             "pid": None,
+            "process_identity": None,
             "returncode": None,
             "log_path": str(self.run_dir(experiment_id, run_id) / "stdout.log"),
             "started_at": now,
@@ -259,11 +274,20 @@ class ProcessManager:
                 self._write_status(experiment_id, run_id, failed)
                 raise
 
+            try:
+                pid_create_time = psutil.Process(popen.pid).create_time()
+            except psutil.NoSuchProcess:
+                pid_create_time = started_at
             process = ManagedProcess(
                 run_id=run_id,
                 kind=kind,
                 experiment_id=experiment_id,
                 popen=popen,
+                pid=popen.pid,
+                pid_create_time=pid_create_time,
+                pgid=os.getpgid(popen.pid) if os.name != "nt" else None,
+                command_hash=self._command_hash(argv),
+                cwd=str((cwd or tir_agent_root()).resolve()),
                 log_path=log_path,
                 meta=dict(meta or {}),
                 state="running",
@@ -339,8 +363,14 @@ class ProcessManager:
     ) -> Optional[Dict[str, Any]]:
         with self._lock:
             process = self._procs.get(run_id)
+        if process is None:
+            row = self.disk_run(run_id, experiment_id)
+            if not row or not row.get("running"):
+                return None
+            process = self._adopt(row)
             if process is None:
                 return None
+        with self._lock:
             if experiment_id and process.experiment_id != experiment_id:
                 raise ValueError("run does not belong to experiment")
             if not self._running(process):
@@ -370,16 +400,16 @@ class ProcessManager:
         )
         try:
             self._capture_descendants(process)
-            if process.popen.poll() is None:
-                self._interrupt(process.popen)
+            if self._root_alive(process):
+                self._signal_process(process, signal.SIGINT)
             if not self._wait_stopped(process, timeout):
                 self._terminate_tree(process, kill=False)
                 if not self._wait_stopped(process, 5):
                     self._terminate_tree(process, kill=True)
                     if not self._wait_stopped(process, 5):
                         remaining = [child.pid for child in self._live_descendants(process)]
-                        if process.popen.poll() is None:
-                            remaining.insert(0, process.popen.pid)
+                        if self._root_alive(process):
+                            remaining.insert(0, process.pid)
                         raise RuntimeError(f"停止超时，仍有运行进程：{remaining}")
         except (OSError, psutil.Error, RuntimeError) as error:
             process.failure_stage = "stop"
@@ -387,7 +417,7 @@ class ProcessManager:
             self._write_status(process.experiment_id, process.run_id, self._status_dict(process))
             logging.getLogger(__name__).error("Stop failed for run %s: %s", process.run_id, error)
             raise RuntimeError(process.message) from error
-        process.returncode = process.popen.returncode
+        process.returncode = process.popen.returncode if process.popen else None
         process.ended_at = time.time()
         process.state = "cancelled"
         self._write_status(
@@ -402,13 +432,20 @@ class ProcessManager:
         )
 
     @staticmethod
-    def _interrupt(popen: subprocess.Popen) -> None:
+    def _signal_process(process: ManagedProcess, sig: int) -> None:
         try:
             if os.name == "nt":
-                popen.send_signal(signal.CTRL_BREAK_EVENT)
+                if process.popen is not None and sig == signal.SIGINT:
+                    process.popen.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    psutil.Process(process.pid).send_signal(sig)
+            elif process.pgid is not None:
+                os.killpg(process.pgid, sig)
             else:
-                os.killpg(popen.pid, signal.SIGINT)
+                os.kill(process.pid, sig)
         except ProcessLookupError:
+            pass
+        except psutil.NoSuchProcess:
             pass
 
     @staticmethod
@@ -423,13 +460,13 @@ class ProcessManager:
         return live
 
     def _running(self, process: ManagedProcess) -> bool:
-        return process.popen.poll() is None or bool(self._live_descendants(process))
+        return self._root_alive(process) or bool(self._live_descendants(process))
 
     def _capture_descendants(self, process: ManagedProcess) -> None:
         parents = self._live_descendants(process)
-        if process.popen.poll() is None:
+        if self._root_alive(process):
             try:
-                parents.append(psutil.Process(process.popen.pid))
+                parents.append(psutil.Process(process.pid))
             except psutil.NoSuchProcess:
                 pass
         parent_ids = {parent.pid for parent in parents}
@@ -459,25 +496,39 @@ class ProcessManager:
                 child.kill() if kill else child.terminate()
             except psutil.NoSuchProcess:
                 continue
-        if process.popen.poll() is None:
+        if self._root_alive(process):
             try:
-                if os.name == "nt":
-                    process.popen.kill() if kill else process.popen.terminate()
-                else:
-                    os.killpg(process.popen.pid, signal.SIGKILL if kill else signal.SIGTERM)
-            except ProcessLookupError:
+                self._signal_process(
+                    process,
+                    signal.SIGKILL if kill else signal.SIGTERM,
+                )
+            except (ProcessLookupError, psutil.NoSuchProcess):
                 pass
 
     def _status_dict(self, process: ManagedProcess) -> Dict[str, Any]:
         running = self._running(process)
+        if process.recovered and not running and process.state in ACTIVE_STATES:
+            process.state = "interrupted"
+            process.ended_at = process.ended_at or time.time()
+            process.message = process.message or "Control 重启后恢复的进程已结束，退出码不可用。"
         return {
             "run_id": process.run_id,
             "kind": process.kind,
             "experiment_id": process.experiment_id,
             "state": process.state,
             "running": running,
-            "pid": process.popen.pid,
-            "returncode": None if running else process.popen.returncode,
+            "pid": process.pid,
+            "process_identity": {
+                "pid_create_time": process.pid_create_time,
+                "pgid": process.pgid,
+                "command_hash": process.command_hash,
+                "cwd": process.cwd,
+            },
+            "recovered": process.recovered,
+            "returncode": (
+                None if running
+                else process.popen.returncode if process.popen else process.returncode
+            ),
             "log_path": str(process.log_path),
             "started_at": process.started_at,
             "ended_at": process.ended_at,
@@ -532,7 +583,11 @@ class ProcessManager:
             stat = path.stat()
             with self._lock:
                 cached = self._disk_cache.get(path)
-            if cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+            if (
+                cached
+                and cached[:2] == (stat.st_mtime_ns, stat.st_size)
+                and cached[2].get("state") in TERMINAL_STATES
+            ):
                 return dict(cached[2])
             row = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -548,12 +603,89 @@ class ProcessManager:
         if not state:
             code = row.get("returncode")
             state = "succeeded" if code == 0 else "failed" if code is not None else "interrupted"
-        elif state in ACTIVE_STATES:
+        running = state in ACTIVE_STATES and self._identity_matches(row)
+        if state in ACTIVE_STATES and not running:
             state = "interrupted"
-        result = {**row, "state": state, "running": False}
-        with self._lock:
-            self._disk_cache[path] = (stat.st_mtime_ns, stat.st_size, result)
+        result = {
+            **row,
+            "state": state,
+            "running": running,
+            "recovered": running,
+        }
+        if not running:
+            with self._lock:
+                self._disk_cache[path] = (stat.st_mtime_ns, stat.st_size, result)
         return dict(result)
+
+    @staticmethod
+    def _command_hash(argv: List[str]) -> str:
+        payload = json.dumps(argv, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _identity_matches(cls, row: Dict[str, Any]) -> bool:
+        pid = row.get("pid")
+        identity = row.get("process_identity")
+        if not isinstance(pid, int) or not isinstance(identity, dict):
+            return False
+        try:
+            process = psutil.Process(pid)
+            if abs(process.create_time() - float(identity["pid_create_time"])) > 0.01:
+                return False
+            if cls._command_hash(process.cmdline()) != identity.get("command_hash"):
+                return False
+            if str(Path(process.cwd()).resolve()) != str(Path(identity["cwd"]).resolve()):
+                return False
+            if os.name != "nt" and os.getpgid(pid) != identity.get("pgid"):
+                return False
+            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+        except (KeyError, OSError, TypeError, ValueError, psutil.Error):
+            return False
+
+    @staticmethod
+    def _root_alive(process: ManagedProcess) -> bool:
+        try:
+            root = psutil.Process(process.pid)
+            return (
+                abs(root.create_time() - process.pid_create_time) <= 0.01
+                and root.is_running()
+                and root.status() != psutil.STATUS_ZOMBIE
+            )
+        except psutil.Error:
+            return False
+
+    def _adopt(self, row: Dict[str, Any]) -> Optional[ManagedProcess]:
+        if not row.get("running") or not self._identity_matches(row):
+            return None
+        identity = row["process_identity"]
+        process = ManagedProcess(
+            run_id=str(row["run_id"]),
+            kind=str(row["kind"]),
+            experiment_id=str(row["experiment_id"]),
+            popen=None,
+            pid=int(row["pid"]),
+            pid_create_time=float(identity["pid_create_time"]),
+            pgid=int(identity["pgid"]) if identity.get("pgid") is not None else None,
+            command_hash=str(identity["command_hash"]),
+            cwd=str(identity["cwd"]),
+            log_path=Path(str(row["log_path"])),
+            meta=dict(row.get("meta") or {}),
+            state=str(row.get("state") or "running"),
+            started_at=float(row.get("started_at") or time.time()),
+            ended_at=row.get("ended_at"),
+            returncode=row.get("returncode"),
+            stop_reason=row.get("stop_reason"),
+            failure_stage=row.get("failure_stage"),
+            message=row.get("message"),
+            recovered=True,
+        )
+        with self._lock:
+            existing = self._procs.get(process.run_id)
+            if existing is not None:
+                return existing if self._running(existing) else None
+            self._procs[process.run_id] = process
+            self._by_kind[process.kind] = process.run_id
+        return process
 
     def _disk_runs(self, experiment_id: Optional[str]) -> List[Dict[str, Any]]:
         from science_infra.control.experiments import list_experiments

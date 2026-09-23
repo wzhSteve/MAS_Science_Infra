@@ -406,7 +406,12 @@ def create_app() -> FastAPI:
     @app.get("/api/rl/activity")
     def train_activity(experiment_id: str = Query(...)) -> Dict[str, Any]:
         process = PROCS.active("train")
-        return {"run": PROCS.status(process.run_id) if process and process.experiment_id == experiment_id else None}
+        return {
+            "run": (
+                PROCS.status(process.run_id, experiment_id)
+                if process and process.experiment_id == experiment_id else None
+            )
+        }
 
     @app.get("/api/rl/runs/{run_id}")
     def get_train_run(

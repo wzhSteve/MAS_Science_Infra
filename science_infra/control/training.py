@@ -759,7 +759,7 @@ def stop_training_run(
 ) -> dict[str, Any]:
     from .process_manager import PROCS, TERMINAL_STATES
 
-    row = PROCS.status(run_id)
+    row = PROCS.status(run_id, exp_id)
     if row is None:
         raise TrainingError("run_not_found", "训练运行不存在。", status=404)
     if row.get("experiment_id") != exp_id or row.get("kind") != "train":
@@ -783,7 +783,7 @@ def stop_training_run(
     if stopped is None:
         raise TrainingError(
             "run_not_stoppable",
-            "训练运行当前无法停止。",
+            "训练运行无法验证为当前 Control 管理的活动进程，不能停止。",
             status=409,
         )
     return stopped

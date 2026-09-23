@@ -53,11 +53,11 @@
 bash deploy_webui.sh
 ```
 
-无需参数：自动拉取最新 `integration/new-webui` → 停止网站 → 清理本项目旧训练 → 按需构建 → 启动网站。首次运行、前端源码变化或构建产物缺失时自动 rebuild；只有后端变化时复用上次前端产物。构建版本记录在被 Git 忽略的 `artifacts/control/webui-build-trees`。
+无需参数：自动拉取最新 `integration/new-webui`，只询问一次是否 rebuild（默认否），然后停止网站、自动清理本项目旧训练并启动网站。选择否时复用现有前端产物；缺少产物会提示重新运行并选择构建。
 
 脚本复用 `run.sh`，FastAPI 在 8787 同时提供 API 与构建后的前端，无需另起 Vite。不会自动安装依赖或覆盖服务器修改。
 
-清理时使用 `scripts/cleanup_training.py` 列出本项目训练入口、以项目为工作目录的已知 Ray/vLLM Worker 及其后代。只保留一次输入 `CLEAN` 的确认；没有待清理进程则直接继续。按 PID 依次中断、终止、强杀，使用 psutil 的进程身份校验避免 PID 复用误杀，不使用全局 `ray stop` 或按名称清理 Python。取消或失败时网站保持停止，不继续部署。不删除运行日志、快照或模型。
+清理时使用 `scripts/cleanup_training.py --yes` 列出并自动停止本项目训练入口、以项目为工作目录的已知 Ray/vLLM Worker 及其后代，不再要求输入 `CLEAN`。按 PID 依次中断、终止、强杀，使用 psutil 的进程身份校验避免 PID 复用误杀，不使用全局 `ray stop` 或按名称清理 Python。失败时网站保持停止，不继续部署。不删除运行日志、快照或模型。
 
 仅查看待清理进程可运行 `.venv/bin/python scripts/cleanup_training.py --dry-run`。无法识别归属的进程不自动清理；以 `nvidia-smi` 的剩余占用为准，不能承诺整个服务器 GPU 一定空闲。手动单独执行清理时，先停止网站且不要同时启动新训练。
 
@@ -113,6 +113,7 @@ Windows 使用已配置的 SSH 别名：`ssh seetacloud`。仅建立转发可用
 - 停止过程先中断训练进程组，再按需升级为终止和强杀；同时跟踪本次进程的后代，清理已脱离进程组的已识别子进程。清理失败保留错误和可重试状态，不宣称已经取消。此处不增加 Control 重启后的进程接管。
 - 进程跟踪依赖 `psutil>=5.9`。服务器已安装时无需操作；缺失时只需在 Control 的 `.venv` 中补装此依赖，不必重装整个训练环境。
 - ARPO 基线恢复阶段一已接入：训练环境恢复 main 的原实验配置条件覆盖，不再从独立推理资源注入；Preflight 与启动共用原 Sampling 同步逻辑，对齐算法和采样数，补回算法/profile 校验。仅完成代码接线，503 是否消失及真实更新仍待服务器确认，详见 [当前恢复方案](./NEW_FRAMEWORK_MIGRATION_PLAN.md) 阶段一实施记录。
+- 运行恢复阶段二已接入：新运行保存进程身份，Control 重启后仅恢复严格匹配的训练/本地模型服务，并可继续按 run 停止；旧格式或身份不匹配记录仍为 `interrupted`。代码已接入，训练中重启 Control 的服务器场景待验收。
 
 迁移按四个阶段实施：
 

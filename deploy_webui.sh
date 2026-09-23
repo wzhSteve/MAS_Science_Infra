@@ -8,7 +8,7 @@ main() {
     return 0
   fi
 
-  local root script_dir
+  local root script_dir rebuild=0 answer
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   root="$(git -C "${script_dir}" rev-parse --show-toplevel)"
   cd "${root}"
@@ -27,33 +27,33 @@ main() {
   export PYTHONPATH="${root}:${root}/mas${PYTHONPATH:+:${PYTHONPATH}}"
   .venv/bin/python -c "import science_infra.ui.cli, psutil"
 
-  local stamp="artifacts/control/webui-build-trees" sources previous="" build_flag="--no-build"
-  sources="$(git rev-parse HEAD:webui HEAD:agent-lightning/dashboard)"
-  if [[ -f "${stamp}" ]]; then previous="$(cat "${stamp}")"; fi
-  if [[ "${sources}" != "${previous}" || ! -f webui/dist/index.html || ! -f agent-lightning/agentlightning/dashboard/index.html ]]; then
+  read -r -p "是否重新构建前端？ [y/N]: " answer
+  case "${answer}" in
+    y|Y|yes|YES) rebuild=1 ;;
+  esac
+  local build_flag="--no-build"
+  if [[ "${rebuild}" == 1 ]]; then
     if [[ ! -d webui/node_modules || ! -d agent-lightning/dashboard/node_modules ]]; then
       echo "前端需要构建，但依赖缺失。请先按文档安装依赖。" >&2
       return 1
     fi
     build_flag="--rebuild"
-    echo "首次部署、前端有变化或构建产物缺失，本次自动 rebuild。"
-  else
-    echo "前端未变化，跳过 rebuild。"
+  elif [[ ! -f webui/dist/index.html || ! -f agent-lightning/agentlightning/dashboard/index.html ]]; then
+    echo "缺少前端构建产物，请重新运行并选择 y。" >&2
+    return 1
   fi
 
-  echo "停止网站并清理本项目训练；发现进程时只需确认一次 CLEAN。"
+  echo "停止网站并自动清理本项目训练。"
   bash ./run.sh ui --stop
   if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi; fi
-  if ! .venv/bin/python scripts/cleanup_training.py; then
-    echo "清理取消或失败，网站保持停止；处理后重新运行本脚本。" >&2
+  if ! .venv/bin/python scripts/cleanup_training.py --yes; then
+    echo "清理失败，网站保持停止；处理后重新运行本脚本。" >&2
     return 1
   fi
   if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi; fi
 
   bash ./run.sh ui "${build_flag}" --port 8787 --daemon
   curl --noproxy '*' --fail --silent --show-error --max-time 10 http://127.0.0.1:8787/api/health
-  mkdir -p "$(dirname "${stamp}")"
-  printf '%s\n' "${sources}" > "${stamp}"
   printf '\n网站已启动: http://127.0.0.1:18787/\n'
   echo "网站日志: artifacts/run_smoke/ui.log"
 }

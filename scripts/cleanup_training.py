@@ -107,6 +107,7 @@ def stop(targets: dict[int, psutil.Process]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="只列出，不发送信号")
+    parser.add_argument("--yes", action="store_true", help="跳过 CLEAN 确认")
     args = parser.parse_args()
     if sys.platform != "linux":
         parser.error("此清理工具仅用于 Linux 训练服务器。")
@@ -120,7 +121,7 @@ def main() -> int:
     if args.dry_run:
         return 0
     print("仅清理上列 PID 及停止期间发现的后代；不会清理其他项目、删除日志或模型。")
-    if input("确认清理请输入 CLEAN，其余输入取消：").strip() != "CLEAN":
+    if not args.yes and input("确认清理请输入 CLEAN，其余输入取消：").strip() != "CLEAN":
         print("已取消清理。")
         return 1
     stop(targets)
