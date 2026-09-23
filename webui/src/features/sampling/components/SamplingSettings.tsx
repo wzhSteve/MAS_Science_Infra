@@ -20,6 +20,7 @@ import {
   findCandidateSite,
   gateOptionsFor,
   isBranchingMode,
+  legacySiteCount,
   updateCandidateSite,
   type BranchCandidate,
 } from '../model/branchSites';
@@ -68,7 +69,7 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
   const sampling = useMemo(() => ({ ...DEFAULT_SAMPLING, ...(workflow.sampling || {}) }), [workflow.sampling]);
   const candidates = useMemo(() => deriveBranchCandidates(workflow),
     [workflow.agents, workflow.edges, workflow.hub, workflow.routers, workflow.tools]);
-  const sites = useMemo(() => effectiveSites(sampling, candidates), [sampling, candidates]);
+  const sites = useMemo(() => effectiveSites(sampling), [sampling]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = useMemo(() =>
     candidates.find((candidate) => candidate.id === selectedId) || candidates[0] || null,
@@ -76,7 +77,8 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
   const selectedSite = useMemo(() => selected ? findCandidateSite(sites, selected) : undefined,
     [sites, selected]);
   const branching = isBranchingMode(sampling.mode);
-  const enabledCount = useMemo(() => sites.filter((site) => site.enabled !== false).length, [sites]);
+  const legacyCount = legacySiteCount(sampling);
+  const enabledCount = sites.filter((site) => site.enabled !== false).length + legacyCount;
   const modes = useMemo(() =>
     Array.from(new Set([sampling.mode || 'grpo_n', ...(palette.sampling_modes || []), ...SAMPLING_MODE_OPTIONS.map((item) => item.value)])),
   [palette.sampling_modes, sampling.mode]);
@@ -202,6 +204,10 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
       actions={<StatusBadge tone={enabledCount ? 'success' : 'warning'}>
       {enabledCount} 个已开启
     </StatusBadge>}>
+      {legacyCount > 0 && <p className="field-hint">
+        旧版 barriers 配置：{sampling.barriers?.join('、') || 'after_tool'}（{legacyCount} 个通用站点）。
+        选择下方的具体位置会替换通用站点，不会自动启用每个 Tool。
+      </p>}
       <div className="branch-site-list">
         {candidates.map((candidate) => {
           const site = findCandidateSite(sites, candidate);

@@ -105,6 +105,41 @@ def evaluate_gate(gate: BranchGate, ctx: GateContext) -> GateDecision:
     return GateDecision(False, 0.0, f"unknown_gate:{gtype}")
 
 
+def site_matches_anchor(
+    site: BranchSite,
+    *,
+    event_kind: str,
+    agent_id: Optional[str] = None,
+    tool_id: Optional[str] = None,
+    edge_id: Optional[str] = None,
+) -> bool:
+    if not site.enabled:
+        return False
+    anchor = site.anchor
+    kind = str(anchor.kind or "").lower()
+    ek = str(event_kind or "").lower()
+
+    if kind == "after_tool" and ek not in ("after_tool", "tool_result"):
+        return False
+    if kind == "after_verifier" and ek not in ("after_verifier", "feedback"):
+        return False
+    if kind == "after_agent_turn" and ek not in ("after_agent_turn", "agent_message", "after_tool"):
+        return False
+    if kind == "on_edge" and ek not in ("on_edge", "sample_barrier"):
+        return False
+    if kind == "on_token" and ek != "on_token":
+        return False
+
+    if anchor.agent_id and str(anchor.agent_id) != str(agent_id):
+        if not (kind == "after_tool" and anchor.agent_id == anchor.tool_id == tool_id):
+            return False
+    if anchor.tool_id and str(anchor.tool_id) != str(tool_id):
+        return False
+    if anchor.edge_id and str(anchor.edge_id) != str(edge_id):
+        return False
+    return True
+
+
 def site_matches_event(
     site: BranchSite,
     *,
@@ -115,71 +150,33 @@ def site_matches_event(
     hit_count: int = 0,
     window_events: Optional[list] = None,
 ) -> bool:
-    """Whether this site's anchor + when-policy matches a runtime event.
-
-    P2: when ``window_events`` (WindowEndEvent dicts) is non-empty, match
-    against the real event stream (after_tool is a same-structure alias of
-    after_agent_turn at window granularity). When absent, fall back to the
-    legacy single-kind match (progressive migration, reversible).
-    """
-    if not site.enabled:
-        return False
-    anchor = site.anchor
-    kind = str(anchor.kind or "").lower()
-    ek = str(event_kind or "").lower()
-
+    """Match a window boundary, its identity, and the site's hit policy."""
     if window_events:
-        for ev in window_events:
-            if not isinstance(ev, dict):
-                continue
-            ev_kind = str(ev.get("kind") or "").lower()
-            ev_agent = ev.get("agent_id")
-            ev_tool = ev.get("tool_id")
-            ev_edge = ev.get("edge_id")
-            # after_tool and after_agent_turn are same-structure aliases at
-            # window granularity (new_framework: agent = tool = agent).
-            if kind in ("after_tool", "after_agent_turn"):
-                if ev_kind not in ("after_tool", "after_agent_turn", "tool_result", "agent_message"):
-                    continue
-            elif kind == "after_verifier":
-                if ev_kind not in ("after_verifier", "feedback"):
-                    continue
-            elif kind == "on_edge":
-                if ev_kind not in ("on_edge", "sample_barrier"):
-                    continue
-            elif kind == "on_token":
-                if ev_kind != "on_token":
-                    continue
-            else:
-                continue
-            if anchor.agent_id and ev_agent and str(anchor.agent_id) != str(ev_agent):
-                continue
-            if anchor.tool_id and ev_tool and str(anchor.tool_id) != str(ev_tool):
-                continue
-            if anchor.edge_id and ev_edge and str(anchor.edge_id) != str(ev_edge):
-                continue
-            # when-policy evaluated by caller per hit; here a stream hit counts
-            return True
+        matches = (
+            event for event in window_events
+            if isinstance(event, dict) and site_matches_anchor(
+                site,
+                event_kind=str(event.get("kind") or ""),
+                agent_id=event.get("agent_id"),
+                tool_id=event.get("tool_id"),
+                edge_id=event.get("edge_id"),
+            )
+        )
+        return any(
+            site_matches_event(
+                site,
+                event_kind=str(event.get("kind") or ""),
+                agent_id=event.get("agent_id"),
+                tool_id=event.get("tool_id"),
+                edge_id=event.get("edge_id"),
+                hit_count=hit_count + index,
+            )
+            for index, event in enumerate(matches)
+        )
+    if not site_matches_anchor(
+        site, event_kind=event_kind, agent_id=agent_id, tool_id=tool_id, edge_id=edge_id
+    ):
         return False
-
-    if kind == "after_tool" and ek not in ("after_tool", "tool_result"):
-        return False
-    if kind == "after_verifier" and ek not in ("after_verifier", "feedback"):
-        return False
-    if kind == "after_agent_turn" and ek not in ("after_agent_turn", "agent_message"):
-        return False
-    if kind == "on_edge" and ek not in ("on_edge", "sample_barrier"):
-        return False
-    if kind == "on_token" and ek != "on_token":
-        return False
-
-    if anchor.agent_id and agent_id and str(anchor.agent_id) != str(agent_id):
-        return False
-    if anchor.tool_id and tool_id and str(anchor.tool_id) != str(tool_id):
-        return False
-    if anchor.edge_id and edge_id and str(anchor.edge_id) != str(edge_id):
-        return False
-
     when = str(site.when or "first").lower()
     if when == "first":
         return hit_count == 0

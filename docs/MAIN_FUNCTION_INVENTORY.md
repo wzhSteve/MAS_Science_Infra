@@ -149,17 +149,17 @@ cd webui && npm run build
 1. 实验与配置
 2. Workflow 0.3
 3. GPU 与 RL 参数
-4. Sampling 与 Branch Sites
+4. Sampling 与 Branch Sites 的配置保存和基础训练映射；站点事件、各自续跑前缀及 UI 显示与实际执行的一致性尚未验收
 
-下一步按训练四阶段实施：
+训练 T1–T3 的代码已接入；ARPO 正常完成已有服务器记录，仍须验收训练中重启 Control 后定向停止、UI 主动停止与资源释放。T4 六算法逐一验收尚未完成。接下来先补真实采样和树的闭环，而不是把已有下拉框视为 RL 算法完成：
 
-1. T1 模型来源与启动前检查
-2. T2 运行快照与安全启停
-3. T3 实时控制台与训练工作区
-4. T4 RL 算法收口与真实训练验收
+1. [采样编排第一阶段：可执行站点与续跑前缀](../webui/plan/采样编排第一阶段-可执行站点与续跑前缀.md)：核对事件、站点、Gate 与对应快照；不支持的声明明确阻断。
+2. [采样编排第二阶段：画布与策略编辑](../webui/plan/采样编排第二阶段-画布与策略编辑.md)：在同一份 Workflow 上编辑可执行站点，区分配置预览与训练结果。
+3. [Rollout Tree 第一阶段：按 run 存储与结果回填](../webui/plan/RolloutTree第一阶段-按run存储与结果回填.md)：从训练事实生成 run 级树和真实 outcome。
+4. [Rollout Tree 第二阶段：节点详情与实时更新](../webui/plan/RolloutTree第二阶段-节点详情与实时更新.md)：按 run 查询、展示并续读事件。
+5. [训练 T4：RL 算法收口与真实训练验收](../webui/plan/训练运行第四阶段-RL算法收口与真实训练验收.md)：逐算法确认有效配置及服务器训练行为；前述阶段不能替代此验收。
 
-训练闭环完成后继续：
+其后继续：
 
-1. Rollout Tree 页面与 run 级关联
-2. Monitor、Harness 和 AGL Metrics 的实时事件接入
-3. Mock 数据采集与诊断的产品入口收口
+1. Monitor、Harness 和 AGL Metrics 的实时事件接入
+2. Mock 数据采集与诊断的产品入口收口

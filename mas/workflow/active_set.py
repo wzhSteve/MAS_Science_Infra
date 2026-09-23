@@ -6,6 +6,7 @@ Does not import agentlightning. Used by LitTirAgent / ExecutionService / tests.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -13,21 +14,15 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 from uuid import uuid4
 
-from rl.hooks.branch_policy import (
-    allocate_forks,
-    arpo_should_fork,
-    branch_probability,
-    should_branch,
-)
+from rl.hooks.branch_policy import allocate_forks
 from workflow.contracts import (
     BranchAnchor,
     BranchGate,
     BranchSite,
     RolloutTree,
     RolloutTreeNode,
-    SamplePolicy,
 )
-from workflow.gates import GateContext, evaluate_gate, site_matches_event
+from workflow.gates import GateContext, evaluate_gate, site_matches_anchor, site_matches_event
 from workflow.probes import ProbeResult, action_key_from_messages, aggregate_probes
 
 RunEpisodeFn = Callable[[Dict[str, Any]], Any]
@@ -98,7 +93,7 @@ class ActiveSetConfig:
     """
     parallel_local: bool = False
     """When execute_local, run sibling episodes concurrently (ready-batch-ish)."""
-    sites: List[BranchSite] = field(default_factory=list)
+    sites: Optional[List[BranchSite]] = None
     event_kind: str = "after_tool"
     agent_id: Optional[str] = None
     tool_id: Optional[str] = None
@@ -118,27 +113,10 @@ class ActiveSetSession:
         self.config = config
         self._rng = rng
         self._site_hits: Dict[str, int] = {}
-
-    def _legacy_gate(self, h_root: float, h_tool: float, consecutive_high: int = 0) -> bool:
-        cfg = self.config
-        if cfg.use_official_arpo_gate:
-            return arpo_should_fork(
-                h_tool,
-                h_root,
-                branch_probability=cfg.branch_probability,
-                entropy_weight=cfg.entropy_weight,
-                rng=self._rng,
-            )
-        p = branch_probability(
-            h_tool - h_root,
-            alpha=cfg.alpha,
-            gamma=cfg.gamma,
-            consecutive_high=consecutive_high,
-        )
-        return should_branch(p, cfg.entropy_threshold)
+        self._probe_metrics: Dict[str, Any] = {}
 
     def _sites(self) -> List[BranchSite]:
-        if self.config.sites:
+        if self.config.sites is not None:
             resolved: List[BranchSite] = []
             for site in self.config.sites:
                 if not site.enabled:
@@ -189,11 +167,12 @@ class ActiveSetSession:
         run_episode: RunEpisodeFn,
         *,
         site: Optional[BranchSite] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[float]:
-        """Run K probe resumes and return outcome entropy H^B (also sets config.h_branch)."""
+        """Run K probes from the selected window and return outcome entropy."""
         if self.config.h_branch is not None:
             return float(self.config.h_branch)
-        msgs = list(getattr(raw, "branch_messages", None) or [])
+        msgs = list(messages if messages is not None else getattr(raw, "branch_messages", None) or [])
         if not msgs:
             return None
         sites = [site] if site is not None else [s for s in self._sites() if self._site_needs_probes(s)]
@@ -236,7 +215,6 @@ class ActiveSetSession:
         h_pi = abs(h_tool - h_root)
         thr = float((target.gate.params or {}).get("u_threshold", 0.05))
         agg = aggregate_probes(probes, h_pi=h_pi, u_threshold=thr)
-        self.config.h_branch = float(agg.h_branch)
         return float(agg.h_branch)
 
     def plan_forks_from_raw(
@@ -247,127 +225,133 @@ class ActiveSetSession:
         remaining: int,
         depth: int = 0,
         event_kind: Optional[str] = None,
+        root_task: Optional[Dict[str, Any]] = None,
+        run_episode: Optional[RunEpisodeFn] = None,
     ) -> List[ForkPlan]:
         """After a completed (or barrier-ready) episode, decide resume siblings."""
         cfg = self.config
         if remaining <= 0 or depth >= cfg.max_branch_depth:
             return []
-        msgs = list(getattr(raw, "branch_messages", None) or [])
-        if not msgs:
-            # after_agent_turn / verifier may snapshot full messages before first tool
-            msgs = list(getattr(raw, "messages", None) or [])
-        if not msgs or getattr(raw, "error", None):
+        if getattr(raw, "error", None):
             return []
-        h_root = float(getattr(raw, "h_root", 0.0) or 0.0)
-        h_tool = float(getattr(raw, "h_tool", 0.0) or 0.0)
-        consecutive = int(getattr(raw, "consecutive_high", 0) or 0)
         ek = str(event_kind or cfg.event_kind or "after_tool")
-        boundary = resume_boundary_from_messages(msgs)
-        action_key = action_key_from_messages(msgs)
-        ctx = GateContext(
-            h_root=h_root,
-            h_tool=h_tool,
-            consecutive_high=consecutive,
-            tool_ok=cfg.tool_ok,
-            verifier_ok=cfg.verifier_ok,
-            final_failed=cfg.final_failed,
-            h_branch=cfg.h_branch,
-            rng=self._rng,
-        )
-
         plans: List[ForkPlan] = []
         budget_left = remaining
-        # P2 progressive: prefer real WindowEndEvent stream when present,
-        # otherwise fall back to legacy single-kind self-match (reversible).
         window_events = list(getattr(raw, "window_events", None) or [])
+        windows = {
+            window.get("event_id"): window
+            for window in getattr(raw, "window_snapshots", None) or []
+            if isinstance(window, dict) and window.get("event_id")
+        }
+        if not window_events and cfg.sites is None:
+            msgs = list(getattr(raw, "branch_messages", None) or getattr(raw, "messages", None) or [])
+            if msgs:
+                window_events = [{
+                    "kind": ek, "agent_id": cfg.agent_id, "tool_id": cfg.tool_id,
+                    "messages": msgs, "metrics": {
+                        "h_root": getattr(raw, "h_root", 0.0),
+                        "h_tool": getattr(raw, "h_tool", 0.0),
+                        "consecutive_high": getattr(raw, "consecutive_high", 0),
+                    },
+                }]
         for site in self._sites():
             if budget_left <= 0:
                 break
-            # Match each site against its own anchor kind (UI trajectory may declare
-            # after_agent_turn / after_verifier while session default is after_tool).
-            ek_site = str(site.anchor.kind or ek).lower() or ek
-            hits = int(self._site_hits.get(site.id, 0))
-            if not site_matches_event(
-                site,
-                event_kind=ek_site,
-                agent_id=cfg.agent_id,
-                tool_id=cfg.tool_id,
-                hit_count=hits,
-                window_events=window_events or None,
-            ):
-                continue
-            # Barrier availability: tool sites need branch_messages; verifier needs signal
-            if ek_site in ("after_tool", "tool_result") and not msgs:
-                continue
-            if ek_site in ("after_verifier", "feedback") and cfg.verifier_ok is None and not cfg.final_failed:
-                # still allow if site gate is always / entropy (verifier may not have run)
-                pass
-            decision = evaluate_gate(site.gate, ctx)
-            self._site_hits[site.id] = hits + 1
-            if not decision.passed:
-                continue
-            beam = int(site.fork.beam_size if site.fork.beam_size is not None else cfg.beam_size)
-            counts = allocate_forks(remaining=budget_left, beam_size=beam, n_sources=1)
-            n = counts[0] if counts else 0
-            for _ in range(n):
-                plans.append(
-                    ForkPlan(
+            for event in window_events:
+                if budget_left <= 0:
+                    break
+                if not site_matches_anchor(
+                    site, event_kind=str(event.get("kind") or ""),
+                    agent_id=event.get("agent_id"), tool_id=event.get("tool_id"),
+                    edge_id=event.get("edge_id"),
+                ):
+                    continue
+                hits = self._site_hits.get(site.id, 0)
+                self._site_hits[site.id] = hits + 1
+                if not site_matches_event(
+                    site, event_kind=str(event.get("kind") or ""),
+                    agent_id=event.get("agent_id"), tool_id=event.get("tool_id"),
+                    edge_id=event.get("edge_id"), hit_count=hits,
+                ):
+                    continue
+                window = windows.get(event.get("event_id"))
+                msgs = list((window or {}).get("messages") or event.get("messages") or [])
+                if not msgs:
+                    logging.getLogger(__name__).warning(
+                        "Branch site %s matched an event without a resumable window", site.id
+                    )
+                    continue
+                metrics = event.get("metrics") or {}
+                if site.gate.type in ("entropy_delta", "arpo", "dual_entropy") and "h_tool" not in metrics:
+                    logging.getLogger(__name__).warning(
+                        "Branch site %s has no entropy measurement at its window", site.id
+                    )
+                    continue
+                h_root = float(metrics.get("h_root", getattr(raw, "h_root", 0.0)) or 0.0)
+                h_tool = float(metrics.get("h_tool", getattr(raw, "h_tool", 0.0)) or 0.0)
+                h_branch = cfg.h_branch
+                if cfg.run_probes and self._site_needs_probes(site) and h_branch is None and run_episode and root_task:
+                    h_branch = self.collect_h_branch(
+                        raw, root_task, run_episode, site=site, messages=msgs
+                    )
+                    self._probe_metrics["probes_ran"] = h_branch is not None
+                    self._probe_metrics["h_branch"] = h_branch
+                    if h_branch is None:
+                        logging.getLogger(__name__).warning(
+                            "Branch site %s could not compute probe outcome entropy", site.id
+                        )
+                if site.gate.type == "dual_entropy" and h_branch is None:
+                    logging.getLogger(__name__).warning(
+                        "Branch site %s requires outcome entropy before training can fork", site.id
+                    )
+                    continue
+                ctx = GateContext(
+                    h_root=h_root, h_tool=h_tool,
+                    consecutive_high=int(metrics.get("consecutive_high", 0) or 0),
+                    tool_ok=metrics.get("tool_ok", cfg.tool_ok),
+                    verifier_ok=metrics.get("verifier_ok", cfg.verifier_ok),
+                    final_failed=bool(metrics.get("final_failed", cfg.final_failed)),
+                    h_branch=h_branch, rng=self._rng,
+                )
+                decision = evaluate_gate(site.gate, ctx)
+                if not decision.passed:
+                    continue
+                beam = int(site.fork.beam_size if site.fork.beam_size is not None else cfg.beam_size)
+                counts = allocate_forks(remaining=budget_left, beam_size=beam, n_sources=1)
+                n = counts[0] if counts else 0
+                for _ in range(n):
+                    plans.append(ForkPlan(
                         resume_messages=deepcopy(msgs),
-                        parent_id=parent_id,
-                        depth=depth + 1,
-                        reason=f"{site.gate.type}_branch",
-                        site_id=site.id,
-                        role="child",
+                        parent_id=parent_id, depth=depth + 1,
+                        reason=f"{site.gate.type}_branch", site_id=site.id, role="child",
                         meta={
-                            "h_root": h_root,
-                            "h_tool": h_tool,
-                            "h_branch": cfg.h_branch,
-                            "consecutive_high": consecutive,
-                            "gate": decision.reason,
-                            "gate_score": decision.score,
-                            "site_id": site.id,
-                            "event_kind": ek_site,
+                            "h_root": h_root, "h_tool": h_tool,
+                            "h_branch": h_branch,
+                            "consecutive_high": ctx.consecutive_high,
+                            "gate": decision.reason, "gate_score": decision.score,
+                            "site_id": site.id, "event_kind": event.get("kind"),
+                            "event_id": event.get("event_id"),
+                            "snapshot_ref": event.get("snapshot_ref"),
                             "reward_scheme": site.reward.scheme,
                             "share_observation": site.fork.share_observation,
                             "resume_mode": site.fork.resume_mode,
-                            "action_key": action_key,
+                            "action_key": action_key_from_messages(msgs),
                             "role": "child",
-                            "resume_boundary": boundary,
+                            "resume_boundary": resume_boundary_from_messages(msgs),
                             "boundary_unit": "messages",
                             "p_plus": site.reward.p_plus,
                             "k_min": site.reward.k_min,
                             "epsilon_f": site.reward.epsilon_f,
                             "dead_end_backprop": site.reward.dead_end_backprop,
                         },
+                    ))
+                if n:
+                    logging.getLogger(__name__).info(
+                        "Branch site=%s event=%s snapshot=%s parent=%s prefix_messages=%s children=%s",
+                        site.id, event.get("event_id"), event.get("snapshot_ref"),
+                        parent_id, len(msgs), n,
                     )
-                )
-            budget_left -= n
-
-        # Fall back to legacy gate if no sites matched but we have messages
-        if not plans and not cfg.sites:
-            if self._legacy_gate(h_root, h_tool, consecutive):
-                counts = allocate_forks(remaining=remaining, beam_size=cfg.beam_size, n_sources=1)
-                n = counts[0] if counts else 0
-                plans = [
-                    ForkPlan(
-                        resume_messages=deepcopy(msgs),
-                        parent_id=parent_id,
-                        depth=depth + 1,
-                        role="child",
-                        meta={
-                            "h_root": h_root,
-                            "h_tool": h_tool,
-                            "consecutive_high": consecutive,
-                            "gate": "official_arpo" if cfg.use_official_arpo_gate else "mas_tau",
-                            "role": "child",
-                            "action_key": action_key,
-                            "resume_boundary": boundary,
-                            "boundary_unit": "messages",
-                            "reward_scheme": "scalar_grpo",
-                        },
-                    )
-                    for _ in range(n)
-                ]
+                budget_left -= n
         return plans
 
     def run(
@@ -401,16 +385,10 @@ class ActiveSetSession:
         )
 
         remaining = budget - len(result.completed)
-        probe_metrics: Dict[str, Any] = {}
-        if cfg.run_probes and any(self._site_needs_probes(s) for s in self._sites()):
-            try:
-                hb = self.collect_h_branch(raw, root_task, run_episode)
-                probe_metrics["h_branch"] = hb
-                probe_metrics["probes_ran"] = True
-            except Exception as e:
-                probe_metrics["probes_ran"] = False
-                probe_metrics["probe_error"] = str(e)
-        plans = self.plan_forks_from_raw(raw, parent_id=root_id, remaining=remaining, depth=0)
+        plans = self.plan_forks_from_raw(
+            raw, parent_id=root_id, remaining=remaining, depth=0,
+            root_task=root_task, run_episode=run_episode,
+        )
         result.plans.extend(plans)
         result.branch_local_count = len(plans)
 
@@ -460,7 +438,8 @@ class ActiveSetSession:
                 )
                 nested_rem = budget - len(result.completed)
                 nested = self.plan_forks_from_raw(
-                    child_raw, parent_id=child_id, remaining=nested_rem, depth=plan.depth
+                    child_raw, parent_id=child_id, remaining=nested_rem, depth=plan.depth,
+                    root_task=child_task, run_episode=run_episode,
                 )
                 result.plans.extend(nested)
                 result.branch_local_count += len(nested)
@@ -501,7 +480,7 @@ class ActiveSetSession:
             "n_plans": len(result.plans),
             "group_budget": budget,
             "execute_local": bool(cfg.execute_local),
-            **probe_metrics,
+            **self._probe_metrics,
         }
         return result
 
@@ -547,7 +526,7 @@ def tree_from_plans(
                 depth=int(p.depth),
                 role=str(p.role or "child"),
                 metrics=metrics,
-                boundary_snapshot_ref=m.get("action_key"),
+                boundary_snapshot_ref=m.get("snapshot_ref") or m.get("action_key"),
             )
         )
     query = str((task or {}).get("question") or (task or {}).get("query") or "")

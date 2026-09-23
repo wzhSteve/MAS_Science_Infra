@@ -46,7 +46,7 @@ function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLi
     const sampling = workflow.sampling;
     if (!sampling) return counts;
     const candidates = deriveBranchCandidates(workflow);
-    const sites = effectiveSites(sampling, candidates);
+    const sites = effectiveSites(sampling);
     for (const candidate of candidates) {
       const site = findCandidateSite(sites, candidate);
       if (site && site.enabled !== false) counts.set(candidate.nodeId, (counts.get(candidate.nodeId) || 0) + 1);

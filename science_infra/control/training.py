@@ -278,7 +278,10 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     except ValueError as error:
         raise TrainingError("invalid_data_path", str(error)) from error
     workflow = bundle.get("workflow") or {}
-    rl = _sync_workflow_sampling_into_rl(rl, workflow)
+    try:
+        rl = _sync_workflow_sampling_into_rl(rl, workflow)
+    except ValueError as error:
+        raise TrainingError("invalid_sampling", f"Sampling 配置无效：{error}") from error
     algorithm_source = "workflow.sampling" if workflow.get("sampling") else "rl"
     # The script reads top-level algo first; Sampling has already synchronized it.
     algorithm = str(rl.get("algo") or "grpo").lower()
@@ -299,14 +302,10 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     rollout["n"] = group_n
     actor_rollout_ref["rollout"] = rollout
     rl["rollout_per_gpu"] = group_n
-    sites = (
-        ((rl.get("algorithm") or {}).get("tir") or {}).get("sites")
-        or ((bundle.get("workflow") or {}).get("sampling") or {}).get("sites")
-        or []
-    )
-    branch_site_count = sum(
-        1 for site in sites if isinstance(site, dict) and site.get("enabled", True)
-    )
+    sites = ((rl.get("algorithm") or {}).get("tir") or {}).get("sites")
+    branch_site_count = sum(1 for site in sites or [] if site.get("enabled", True))
+    if algorithm in ("arpo", "aepo", "rae") and sites is None:
+        branch_site_count = 1
 
     checks: list[dict[str, str]] = []
     blocking: list[dict[str, str]] = []
@@ -418,6 +417,28 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
             "error",
             str(executable.get("reason") or "Workflow 不可执行。"),
         )
+    if executable.get("ok") and algorithm in ("arpo", "aepo", "rae"):
+        from workflow.contracts import BranchSite
+        from workflow.site_policy import site_capability
+        from workflow.spec import MASSpec
+
+        spec = MASSpec.model_validate(workflow)
+        if workflow.get("sampling") and not ((rl.get("algorithm") or {}).get("tir") or {}).get(
+            "expand_in_runner", True
+        ):
+            record(
+                "branch_executor", "分支执行方式", "error",
+                "当前声明的 Sampling Sites 只能由 expand_in_runner 执行；关闭后旧 Daemon 分支路径不会读取这些站点。",
+            )
+        if sites is None:
+            record("branch_site_legacy", "兼容站点", "pass", "首次 Tool 返回后的通用分支。")
+        elif not sites:
+            record("branch_sites_disabled", "分支位置", "pass", "没有启用的分支位置；剩余候选独立采样。")
+        for raw_site in sites or []:
+            site = BranchSite.model_validate(raw_site)
+            if site.enabled:
+                status, message = site_capability(site, spec)
+                record(f"branch_site_{site.id}", f"站点 {site.id}", status, message)
 
     _, missing = _dependency_status()
     if missing:

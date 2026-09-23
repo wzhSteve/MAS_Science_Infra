@@ -133,12 +133,12 @@ export function defaultSite(candidate: BranchCandidate): BranchSiteSpec {
   };
 }
 
-export function effectiveSites(sampling: SamplingSpec, candidates: BranchCandidate[]): BranchSiteSpec[] {
-  if (sampling.sites?.length) return sampling.sites;
-  const barriers = sampling.barriers ?? ['after_tool'];
-  return candidates
-    .filter((candidate) => barriers.includes(candidate.anchor.kind))
-    .map(defaultSite);
+export function effectiveSites(sampling: SamplingSpec, _candidates?: BranchCandidate[]): BranchSiteSpec[] {
+  return sampling.sites || [];
+}
+
+export function legacySiteCount(sampling: SamplingSpec): number {
+  return sampling.sites?.length ? 0 : (sampling.barriers ?? ['after_tool']).length;
 }
 
 export function findCandidateSite(sites: BranchSiteSpec[], candidate: BranchCandidate): BranchSiteSpec | undefined {
@@ -151,7 +151,7 @@ export function updateCandidateSite(
   candidate: BranchCandidate,
   patch: Partial<BranchSiteSpec>,
 ): SamplingSpec {
-  const sites = effectiveSites(sampling, candidates);
+  const sites = effectiveSites(sampling);
   const existing = findCandidateSite(sites, candidate);
   const defaults = defaultSite(candidate);
   const base = existing || defaults;

@@ -11,6 +11,7 @@ import logging
 import os
 import time
 from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict, cast
+from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
@@ -535,6 +536,16 @@ class TirAgent:
                 consecutive_high += 1
             else:
                 consecutive_high = 0
+        window_events = list(state.get("window_events") or [])
+        if window_events and "h_tool" not in (window_events[-1].get("metrics") or {}):
+            last_event = dict(window_events[-1])
+            last_event["metrics"] = {
+                **(last_event.get("metrics") or {}),
+                "h_root": h_root,
+                "h_tool": h_tool,
+                "consecutive_high": consecutive_high,
+            }
+            window_events[-1] = last_event
         return {
             **state,
             "messages": messages + [response],
@@ -543,6 +554,7 @@ class TirAgent:
             "h_root": h_root,
             "h_tool": h_tool,
             "last_entropy": h,
+            "window_events": window_events,
             "consecutive_high": consecutive_high,
         }
 
@@ -604,21 +616,23 @@ class TirAgent:
         if tool_messages and not branch:
             branch = serialize_messages(new_messages)
         if tool_messages:
+            event_id = uuid4().hex
             # schema 0.3 dual-write: generic agent window snapshot at the tool
             # boundary (post_first_tool default window; entropy still reads
             # branch_messages — risk R1 mitigation, P2 switches to events).
             window_snapshots.append(
                 {
+                    "event_id": event_id,
                     "agent_id": self.agent_id,
                     "turn": int(state.get("num_turns") or 0),
                     "kind": "post_first_tool" if len(window_snapshots) == 0 else "tool_boundary",
-                    "messages": branch or serialize_messages(new_messages),
+                    "messages": serialize_messages(new_messages),
                 }
             )
             # P2: WindowEndEvent stream — same emission point as snapshots.
             # agent-framework A2: real agent node id + router context when the
             # called tool-agent is a router candidate (adapter-mode routing).
-            _tool_name = str(results[0][1]) if results else None
+            _tool_name = str(results[0][1]) if len(results) == 1 else None
             _rid = self._router_by_tool.get(str(_tool_name)) if _tool_name else None
             _metrics: Dict[str, Any] = {"n_tools": len(tool_messages)}
             # W1: blank:<id> calls are blank-agent hops routed via tool_call —
@@ -632,11 +646,12 @@ class TirAgent:
                 _metrics["candidates"] = list(_cands or [])
             window_events.append(
                 {
+                    "event_id": event_id,
                     "agent_id": self.agent_id,
                     "kind": "after_tool",
                     "tool_id": _tool_name,
                     "turn": int(state.get("num_turns") or 0),
-                    "snapshot_ref": f"{self.agent_id}:{len(window_snapshots) - 1}",
+                    "snapshot_ref": event_id,
                     "metrics": _metrics,
                 }
             )

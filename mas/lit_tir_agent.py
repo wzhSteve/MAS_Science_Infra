@@ -120,17 +120,12 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             return apply_verifier_feedback(t, raw_one, cfg, arch, self.spec, mem, TirRunner())
 
         if expand:
-            sites = []
+            sites = None
             raw_sites = task_run.get("branch_sites")
-            if isinstance(raw_sites, list) and raw_sites:
-                try:
-                    from workflow.contracts import BranchSite
+            if raw_sites is not None:
+                from workflow.contracts import BranchSite
 
-                    sites = [
-                        s if isinstance(s, BranchSite) else BranchSite.model_validate(s) for s in raw_sites
-                    ]
-                except Exception:
-                    sites = []
+                sites = [s if isinstance(s, BranchSite) else BranchSite.model_validate(s) for s in raw_sites]
             ready_batch = bool(task_run.get("ready_batch", False))
             local_expand = bool(task_run.get("force_local_expand", False)) or (
                 ready_batch and str(task_run.get("collect_mode") or "").lower() in ("mock", "collect", "1", "true")
@@ -275,6 +270,8 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     "tir.tool_wait_skew": float(session_metrics.get("tool_wait_skew") or 0),
                     "tir.rollout_role": str(task_run.get("rollout_role") or ("child" if resume_parent else "parent")),
                     "tir.site_id": str(task_run.get("site_id") or ""),
+                    "tir.window_event_id": str(task_run.get("event_id") or ""),
+                    "tir.boundary_snapshot_ref": str(task_run.get("snapshot_ref") or ""),
                     "tir.action_key": str(task_run.get("action_key") or ""),
                     "tir.reward_scheme": str(task_run.get("reward_scheme") or ""),
                     "tir.resume_boundary": int(task_run.get("resume_boundary") or 0),

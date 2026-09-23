@@ -232,10 +232,10 @@ class TirAgentModeDaemon(AgentModeDaemon):
         if is_train and self.tir_algo in ("arpo", "aepo", "rae") and self._expand_in_runner():
             self._stamp_expand_budgets()
             # Pass declared sites into wave-1 samples for ActiveSetSession
-            sites = list(self.tir_config.get("sites") or [])
+            configured_sites = self.tir_config.get("sites")
             for sample in self._task_id_to_original_sample.values():
-                if sites and "branch_sites" not in sample:
-                    sample["branch_sites"] = sites
+                if configured_sites is not None and "branch_sites" not in sample:
+                    sample["branch_sites"] = list(configured_sites)
 
     def _preinject_expand_fields(self, data: Dict[str, Any], *, n_init: int) -> None:
         """Attach expand fields onto raw batch columns before super() enqueues.
@@ -273,12 +273,12 @@ class TirAgentModeDaemon(AgentModeDaemon):
             # rollouts through the store (full span/GRPO observability).
             # local_expand (collect/mock modes) is a collect-path concern.
         }
-        sites = list(self.tir_config.get("sites") or [])
+        configured_sites = self.tir_config.get("sites")
         for key, value in fields.items():
             if key not in data:
                 data[key] = [value] * num_samples
-        if sites and "branch_sites" not in data:
-            data["branch_sites"] = [sites] * num_samples
+        if configured_sites is not None and "branch_sites" not in data:
+            data["branch_sites"] = [list(configured_sites) for _ in range(num_samples)]
 
     def _stamp_expand_budgets(self) -> None:
         """Attach expand_in_runner + per-root sampling_budget onto wave-1 samples."""
@@ -343,6 +343,9 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 sample["action_key"] = plan_meta.get("action_key")
             if plan_meta.get("reward_scheme") is not None:
                 sample["reward_scheme"] = plan_meta.get("reward_scheme")
+            for field in ("event_id", "snapshot_ref"):
+                if plan_meta.get(field) is not None:
+                    sample[field] = plan_meta[field]
             try:
                 sample["resume_boundary"] = int(
                     plan_meta.get("resume_boundary") or resume_boundary_proxy(messages)
@@ -500,6 +503,9 @@ class TirAgentModeDaemon(AgentModeDaemon):
                         sample["action_key"] = plan_meta.get("action_key")
                     if plan_meta.get("reward_scheme") is not None:
                         sample["reward_scheme"] = plan_meta.get("reward_scheme")
+                    for field in ("event_id", "snapshot_ref"):
+                        if plan_meta.get(field) is not None:
+                            sample[field] = plan_meta[field]
                     try:
                         sample["resume_boundary"] = int(
                             plan_meta.get("resume_boundary")

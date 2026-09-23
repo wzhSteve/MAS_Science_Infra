@@ -166,10 +166,9 @@ class SamplePolicy(BaseModel):
     model_config = {"extra": "forbid"}
 
     def resolved_sites(self) -> List[BranchSite]:
-        """Enabled sites; fall back to barriers-derived defaults when empty."""
-        enabled = [s for s in self.sites if s.enabled]
-        if enabled:
-            return sorted(enabled, key=lambda s: (-int(s.priority), s.id))
+        """Explicit sites supersede legacy barriers, including when all are disabled."""
+        if self.sites:
+            return sorted((s for s in self.sites if s.enabled), key=lambda s: (-int(s.priority), s.id))
         return barriers_to_default_sites(list(self.barriers))
 
 
@@ -285,6 +284,7 @@ class WindowEndEvent(BaseModel):
     contract documents/validates the shape.
     """
 
+    event_id: Optional[str] = None
     agent_id: str = "hub"
     kind: str = "after_agent_turn"  # after_agent_turn | after_tool | after_verifier | on_edge
     tool_id: Optional[str] = None
@@ -294,4 +294,3 @@ class WindowEndEvent(BaseModel):
     metrics: Dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}
-

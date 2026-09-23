@@ -480,6 +480,24 @@ def run_episode(
             lc_messages=messages,
             skill_results=skill_results,
         )
+        if task.get("expand_in_runner"):
+            events = {
+                event["event_id"]: event for event in raw.window_events if event.get("event_id")
+            }
+            for window in raw.window_snapshots:
+                event = events.get(window.get("event_id"))
+                if event is None:
+                    continue
+                snapshot = archive.snapshot(
+                    messages=window["messages"],
+                    meta={
+                        "reason": "branch_window",
+                        "rollout_id": task.get("_rollout_id"),
+                        "agent_id": event.get("agent_id"),
+                        "tool_id": event.get("tool_id"),
+                    },
+                )
+                event["snapshot_ref"] = f"{snapshot.archive_id}:{snapshot.snapshot_id}"
         _close_construct(archive, spec, memory, raw, task, agent_id=agent_id)
         return raw
     except Exception as e:

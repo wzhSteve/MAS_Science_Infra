@@ -28,7 +28,7 @@ DEFAULT_TIR: Dict[str, Any] = {
     "max_branch_depth": 2,
     "expand_in_runner": True,
     "use_official_arpo_gate": True,
-    "sites": [],
+    "sites": None,
     "zero_prefix_adv_for_children": True,
     "ready_batch": False,
     "rae_p_plus": 0.8,
@@ -45,7 +45,6 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
     if sampling is None:
         return config
     cfg = deepcopy(config)
-    sites_raw: Any = None
     if hasattr(sampling, "mode"):
         mode = str(getattr(sampling, "mode", None) or "grpo_n")
         group_n = getattr(sampling, "group_n", None)
@@ -53,12 +52,6 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
         init = getattr(sampling, "initial_rollouts", None)
         max_depth = getattr(sampling, "max_branch_depth", None)
         expand = getattr(sampling, "expand_in_runner", None)
-        sites_raw = getattr(sampling, "sites", None)
-        if hasattr(sampling, "resolved_sites"):
-            try:
-                sites_raw = [s.model_dump(mode="json") for s in sampling.resolved_sites()]
-            except Exception:
-                pass
     elif isinstance(sampling, dict):
         mode = str(sampling.get("mode") or "grpo_n")
         group_n = sampling.get("group_n")
@@ -66,9 +59,11 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
         init = sampling.get("initial_rollouts")
         max_depth = sampling.get("max_branch_depth")
         expand = sampling.get("expand_in_runner")
-        sites_raw = sampling.get("sites")
     else:
         return config
+    from workflow.contracts import SamplePolicy
+
+    policy = sampling if isinstance(sampling, SamplePolicy) else SamplePolicy.model_validate(sampling)
     mode = mode.lower().strip()
     algo_map = {
         "grpo_n": "grpo",
@@ -97,15 +92,7 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
         tir["max_branch_depth"] = max(1, int(max_depth))
     if expand is not None:
         tir["expand_in_runner"] = bool(expand)
-    if sites_raw is not None:
-        if hasattr(sites_raw, "__iter__") and not isinstance(sites_raw, (str, bytes)):
-            dumped = []
-            for s in sites_raw:
-                if hasattr(s, "model_dump"):
-                    dumped.append(s.model_dump(mode="json"))
-                elif isinstance(s, dict):
-                    dumped.append(dict(s))
-            tir["sites"] = dumped
+    tir["sites"] = [site.model_dump(mode="json") for site in policy.resolved_sites()]
     cfg["algorithm"]["tir"] = tir
     return cfg
 
