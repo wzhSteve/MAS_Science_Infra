@@ -2,7 +2,6 @@ import { memo, useContext } from 'react';
 import { ArrowLeft, Circle, Database, FlaskConical, Play, Save } from 'lucide-react';
 import type { Bundle } from '../../shared/api/types';
 import { Button } from '../../shared/ui/button';
-import { InlineNotice } from '../../shared/components/InlineNotice';
 import { useAction } from '../../shared/hooks/useAction';
 import { DraftRegistryContext, useUnsavedChanges } from '../../shared/hooks/useUnsavedChanges';
 import { useSettingsStatus } from '../../features/settings/components/SettingsStatus';
@@ -24,8 +23,6 @@ const ExperimentActions = memo(function ExperimentActions({ onReload }: { onRelo
   const training = useTraining();
   const busy = entries.some(item => item.busy) || action.pending !== null || runtime.pending !== null;
   useUnsavedChanges('experiment-save', { label: '保存实验', resource: 'runtime', dirty: false, busy: action.pending !== null });
-  const error = action.notice?.tone === 'danger' ? action.notice.message
-    : runtime.notice?.tone === 'danger' ? runtime.notice.message : training.error;
   return <>
     <span className={`experiment-save-status${dirty ? ' is-dirty' : ''}`} role="status">
       <Circle size={6} fill="currentColor" />{action.pending ? '保存中' : dirty ? '未保存' : '已保存'}
@@ -40,7 +37,6 @@ const ExperimentActions = memo(function ExperimentActions({ onReload }: { onRelo
         <Play size={14} />{training.data?.running ? '查看训练' : '开始训练'}
       </Button>
     </div>
-    {error && <div className="experiment-header-error"><InlineNotice tone="danger">{error}</InlineNotice></div>}
   </>;
 });
 

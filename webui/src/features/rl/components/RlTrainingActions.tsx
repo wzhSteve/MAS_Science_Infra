@@ -1,6 +1,5 @@
 import { memo } from 'react';
 import { ActionBar } from '../../../shared/components/ActionBar';
-import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { Section } from '../../../shared/components/Section';
 import { StatusBadge } from '../../../shared/components/StatusBadge';
 import { useAction } from '../../../shared/hooks/useAction';
@@ -30,6 +29,5 @@ export const RlTrainingActions = memo(function RlTrainingActions({ trainRunId, t
         <Button disabled aria-describedby="rl-metrics-unavailable">Metrics 未就绪</Button>}
     </ActionBar>
     {!aglOnline && <p id="rl-metrics-unavailable" className="field-hint">训练进程拉起 LightningStore 后可用（同源 /agl/metrics）。</p>}
-    {stop.notice && <InlineNotice tone={stop.notice.tone}>{stop.notice.message}</InlineNotice>}
   </Section>;
 });

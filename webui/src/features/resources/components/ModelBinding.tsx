@@ -10,6 +10,7 @@ import { Section } from '../../../shared/components/Section';
 import { FormField } from '../../../shared/components/FormField';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { StatusBadge } from '../../../shared/components/StatusBadge';
+import { useConfirm } from '../../../shared/feedback/useConfirm';
 
 export interface BindingView {
   loaded: boolean;
@@ -28,6 +29,7 @@ export const ModelBinding = memo(function ModelBinding({
   saveInHeader?: boolean;
   compact?: boolean; fallbackName?: string;
 }) {
+  const confirm = useConfirm();
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
@@ -89,8 +91,12 @@ export const ModelBinding = memo(function ModelBinding({
   const save = useCallback(async () => {
     const submitted = latestDraft.current;
     if (!submitted || legacyDirty || !candidateValid) return false;
-    if (!submitted.selected && submitted.base[purpose].resource_id
-      && !window.confirm('解除资源引用并恢复本实验原先保存的配置？不会复制个人资源的当前值或密钥。')) return false;
+    if (!submitted.selected && submitted.base[purpose].resource_id && !(await confirm({
+      title: '解除模型引用？',
+      description: '将恢复本实验原先保存的配置，不会复制个人资源的当前值或密钥。',
+      confirmLabel: '解除引用',
+      tone: 'danger',
+    }))) return false;
     const success = await action.run('bind', async () => {
       const current = await modelResourcesApi.bindings(experimentId);
       if (current[purpose].resource_id !== submitted.base[purpose].resource_id) throw new Error('此用途的绑定已被修改，请刷新后重新选择。');
@@ -103,14 +109,19 @@ export const ModelBinding = memo(function ModelBinding({
       return '模型绑定已保存';
     });
     return success;
-  }, [experimentId, purpose, legacyDirty, candidateValid, action.run, onReload]);
+  }, [confirm, experimentId, purpose, legacyDirty, candidateValid, action.run, onReload]);
   useUnsavedChanges(`model-binding-${purpose}`, {
     label: purpose === 'inference' ? '默认推理模型绑定' : '训练模型来源绑定',
     resource: `model-binding-${purpose}`, dirty, busy: action.pending !== null, save,
   });
   const reload = async () => {
     if (action.pending !== null) return;
-    if (dirty && !window.confirm('放弃当前未保存的资源选择，重新载入服务端绑定？其他配置草稿不会改变。')) return;
+    if (dirty && !(await confirm({
+      title: '重新载入模型绑定？',
+      description: '当前未保存的资源选择将被放弃，其他配置草稿不会改变。',
+      confirmLabel: '放弃并载入',
+      tone: 'danger',
+    }))) return;
     await action.run('reload', async () => {
       const result = await modelResourcesApi.bindings(experimentId);
       if (!mounted.current) return;
@@ -157,7 +168,6 @@ export const ModelBinding = memo(function ModelBinding({
       }}>重试</Button>
     </InlineNotice>}
     {draft?.selected && !candidateValid && <p className="field-hint">所选模型尚未就绪，无法保存。</p>}
-    {action.notice?.tone === 'danger' && <InlineNotice tone="danger">{action.notice.message}</InlineNotice>}
   </div>;
 
   return <Section title={purpose === 'inference' ? '默认推理模型' : '训练模型来源'} actions={
@@ -207,7 +217,6 @@ export const ModelBinding = memo(function ModelBinding({
       <Button size="sm" variant="ghost" onClick={onManage}>管理模型</Button>
       <Button size="sm" variant="ghost" disabled={action.pending !== null} onClick={() => void reload()}>刷新</Button>
     </div>
-    {action.notice && <InlineNotice tone={action.notice.tone}>{action.notice.message}</InlineNotice>}
     {children}
   </Section>;
 });

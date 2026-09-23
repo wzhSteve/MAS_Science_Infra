@@ -120,7 +120,6 @@ const RunOutput = memo(function RunOutput({ experimentId, runId, active, picker,
     </InlineNotice>}
     {state?.state === 'interrupted' && <InlineNotice tone="warning">Control 无法确认原进程状态，不代表服务器进程已经停止。</InlineNotice>}
     {log.error && <InlineNotice tone="warning">{log.error}<Button size="sm" onClick={log.reconnect}>重试日志</Button></InlineNotice>}
-    {action.notice && <InlineNotice tone={action.notice.tone}>{action.notice.message}</InlineNotice>}
     <div className="training-log-tools">
       <Input aria-label="搜索当前已加载日志" placeholder="搜索当前窗口…" value={query} onChange={event => setQuery(event.target.value)} />
       {search && <><span>{hits.length ? `${match % hits.length + 1}/${hits.length}` : '0 个命中'}</span>

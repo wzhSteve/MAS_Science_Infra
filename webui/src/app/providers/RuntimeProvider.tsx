@@ -10,11 +10,12 @@ import { usePollingResource, type Resource } from '../../shared/hooks/usePolling
 import { useAction } from '../../shared/hooks/useAction';
 import { useTrainConfirmation } from '../../shared/ui/alert-dialog';
 import type { AglHealth, MonitorResponse } from '../../shared/api/types';
-import type { Notice } from '../../shared/components/InlineNotice';
 import { DraftRegistryContext, useUnsavedChanges } from '../../shared/hooks/useUnsavedChanges';
 import { ApiError, errorMessage } from '../../shared/api/http';
 import type { SettingsSection } from '../../features/settings/model/sections';
 import { isExperimentDraft, saveExperimentDrafts } from '../../features/experiment/model/saveExperiment';
+import { useConfirm } from '../../shared/feedback/useConfirm';
+import { useNotify } from '../../shared/feedback/useNotify';
 
 interface RuntimeCommands {
   startTrain: () => Promise<void>;
@@ -22,7 +23,7 @@ interface RuntimeCommands {
   viewTraining: (runId?: string) => void;
   diagnose: () => Promise<void>;
 }
-interface CommandStatus { pending: string | null; notice: Notice | null; status: string }
+interface CommandStatus { pending: string | null; status: string }
 const CommandsContext = createContext<RuntimeCommands | null>(null);
 const CommandStatusContext = createContext<CommandStatus | null>(null);
 const TrainingContext = createContext<Resource<TrainingSnapshot> | null>(null);
@@ -49,6 +50,8 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
   onConfigure: (section: SettingsSection) => void;
 }) {
   const registry = useContext(DraftRegistryContext);
+  const confirmAction = useConfirm();
+  const notify = useNotify();
   const [viewRequest, setViewRequest] = useState(0);
   const viewTraining = useCallback((runId?: string) => {
     setViewRequest(value => value + 1);
@@ -59,7 +62,7 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
   const monitorLoad = useCallback((signal: AbortSignal) => monitorApi.monitor(expId, signal), [expId]);
   const monitor = usePollingResource(`monitor:${expId}`, monitorLoad, 4000, active);
   const events = useExperimentEvents(expId, training.refresh, monitor.refresh, active);
-  const { run, pending, notice } = useAction();
+  const { run, pending } = useAction();
   const stopAction = useAction();
   const { confirm, dialog } = useTrainConfirmation(onConfigure);
   const [status, setStatus] = useState('idle');
@@ -68,6 +71,7 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
   });
   const alive = useRef(true);
   const pendingTrainRequest = useRef<Parameters<typeof rlApi.createRun>[1] | null>(null);
+  const previousTraining = useRef<TrainingSnapshot | null>(null);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     if (pendingTrainRequest.current && training.data?.requestId === pendingTrainRequest.current.request_id && training.data.runId) {
@@ -75,6 +79,24 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
       viewTraining(training.data.runId);
     }
   }, [training.data?.requestId, training.data?.runId, viewTraining]);
+  useEffect(() => {
+    const current = training.data;
+    const previous = previousTraining.current;
+    previousTraining.current = current;
+    if (!current?.runId || !previous?.runId || current.runId !== previous.runId || !previous.running || current.running) return;
+    const action = { label: '查看日志', run: () => viewTraining(current.runId || undefined) };
+    const options = { dedupeKey: `training:${expId}:${current.runId}:${current.state}`, action };
+    if (current.state === 'succeeded') notify.success(`训练已完成 · ${current.runId}`, options);
+    else if (current.state === 'cancelled') notify.info(`训练已取消 · ${current.runId}`, options);
+    else if (current.state === 'failed') notify.error(
+      current.error || `训练失败 · ${current.runId}`,
+      { ...options, title: `训练失败 · ${current.runId}`, duration: null },
+    );
+    else if (current.state === 'interrupted') notify.warning(
+      `训练托管中断 · ${current.runId}`,
+      { ...options, duration: null },
+    );
+  }, [expId, notify, training.data, viewTraining]);
 
   const startTrain = useCallback(async () => {
     await run('train', async () => {
@@ -83,7 +105,11 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
         const drafts = relevant();
         if (drafts.some(item => item.busy)) throw new Error('配置正在保存或执行，请稍后再启动训练。');
         const dirty = drafts.filter(item => item.dirty);
-        if (dirty.length && !window.confirm(`保存以下修改并检查训练？\n${dirty.map(item => item.label).join('\n')}\n已保存的内容不会因后续检查失败而撤销。`)) return;
+        if (dirty.length && !(await confirmAction({
+          title: '保存修改并检查训练？',
+          description: `将保存以下修改：\n${dirty.map(item => `• ${item.label}`).join('\n')}\n\n已保存内容不会因后续检查失败而撤销。`,
+          confirmLabel: '保存并检查',
+        }))) return;
         if (registry) await saveExperimentDrafts(registry, onReload);
         await onReload();
         if (!alive.current) return;
@@ -118,9 +144,14 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
       await monitor.refresh();
       return created.reused ? `已恢复训练进程：${created.run_id}` : `训练进程已启动：${created.run_id}`;
     });
-  }, [confirm, expId, run, monitor.refresh, registry, onReload, viewTraining]);
+  }, [confirm, confirmAction, expId, run, monitor.refresh, registry, onReload, viewTraining]);
   const stopTrain = useCallback(async (runId: string) => {
-    if (!window.confirm(`停止实验 ${expId} 的训练 ${runId}？`)) return;
+    if (!(await confirmAction({
+      title: '停止训练？',
+      description: `将停止实验 ${expId} 的运行 ${runId} 及其子进程。`,
+      confirmLabel: '停止训练',
+      tone: 'danger',
+    }))) return;
     await stopAction.run('stop', async () => {
       await rlApi.stopRun(expId, runId);
       if (!alive.current) return;
@@ -129,7 +160,7 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
       await monitor.refresh();
       return '已发送停止指令';
     });
-  }, [expId, stopAction.run, training.refresh, monitor.refresh]);
+  }, [confirmAction, expId, stopAction.run, training.refresh, monitor.refresh]);
   const diagnose = useCallback(async () => {
     await run('diagnose', async () => {
       await harnessApi.diagnose(expId);
@@ -143,9 +174,9 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
   const commands = useMemo(() => ({ startTrain, stopTrain, diagnose, viewTraining }),
     [startTrain, stopTrain, diagnose, viewTraining]);
   const commandStatus = useMemo(() => ({
-    pending, notice: stopAction.notice?.tone === 'danger' ? stopAction.notice : notice,
+    pending,
     status: events.latest || status,
-  }), [pending, notice, stopAction.notice, status, events.latest]);
+  }), [pending, status, events.latest]);
 
   return <CommandsContext.Provider value={commands}>
     <CommandStatusContext.Provider value={commandStatus}>

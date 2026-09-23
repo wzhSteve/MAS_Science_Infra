@@ -10,9 +10,11 @@ import { FormField } from '../../../shared/components/FormField';
 import { Section } from '../../../shared/components/Section';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { StatusBadge } from '../../../shared/components/StatusBadge';
+import { useConfirm } from '../../../shared/feedback/useConfirm';
+import { useNotify } from '../../../shared/feedback/useNotify';
 
 export interface ModelEditorTarget { id: string | null; type: ModelResourceType }
-export interface ModelEditorHandle { canLeave: () => boolean }
+export interface ModelEditorHandle { canLeave: () => Promise<boolean> }
 interface EditorProps {
   target: ModelEditorTarget;
   active: boolean;
@@ -77,7 +79,6 @@ export const ModelResourceEditor = memo(forwardRef<ModelEditorHandle, EditorProp
   const [loadVersion, setLoadVersion] = useState(0);
   const [pending, setPending] = useState<'save' | 'probe' | 'delete' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [probe, setProbe] = useState<{ revision: number; result: HealthResponse } | null>(null);
   const [conflict, setConflict] = useState(false);
   const loadedVersion = useRef(-1);
@@ -90,6 +91,8 @@ export const ModelResourceEditor = memo(forwardRef<ModelEditorHandle, EditorProp
   const ready = !target.id || base !== null;
   const dirty = ready && (JSON.stringify(draft) !== JSON.stringify(initial) || apiKey.length > 0 || clearKey);
   const busy = loading || pending !== null;
+  const confirm = useConfirm();
+  const notify = useNotify();
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
@@ -101,7 +104,7 @@ export const ModelResourceEditor = memo(forwardRef<ModelEditorHandle, EditorProp
     void modelResourcesApi.get(id, controller.signal).then(result => {
       if (controller.signal.aborted) return;
       setBase(result); setDraft(draftFor(result, result.type)); setReferences(result.references);
-      setApiKey(''); setClearKey(false); setProbe(null); setConflict(false); setNotice(null);
+      setApiKey(''); setClearKey(false); setProbe(null); setConflict(false);
       loadedVersion.current = loadVersion;
     }).catch(reason => {
       if (!controller.signal.aborted) {
@@ -114,15 +117,20 @@ export const ModelResourceEditor = memo(forwardRef<ModelEditorHandle, EditorProp
     return () => controller.abort();
   }, [active, target.id, loadVersion]);
 
-  const canLeave = useCallback(() => {
+  const canLeave = useCallback(async () => {
     if (operation.current) return false;
-    return !dirty || window.confirm('放弃此资源未保存的修改及已输入的密钥？此操作不会修改服务端资源。');
-  }, [dirty]);
+    return !dirty || confirm({
+      title: '放弃资源修改？',
+      description: '未保存的配置和已输入的密钥将丢失，不会修改服务端资源。',
+      confirmLabel: '放弃修改',
+      tone: 'danger',
+    });
+  }, [confirm, dirty]);
   useImperativeHandle(ref, () => ({ canLeave }), [canLeave]);
 
   const save = useCallback(async (): Promise<boolean> => {
     if (!ready || loading || operation.current || conflict) return false;
-    setError(null); setNotice(null);
+    setError(null);
     if (!draft.name.trim()) { setError('请填写资源名称。'); return false; }
     if (type === 'training' && !draft.modelPath.trim()) { setError('训练模型来源必须填写权重 / checkpoint 路径。'); return false; }
     if (type === 'inference' && !draft.model.trim()) { setError('请填写模型名称。'); return false; }
@@ -161,49 +169,61 @@ export const ModelResourceEditor = memo(forwardRef<ModelEditorHandle, EditorProp
       setBase(result); setDraft(draftFor(result, result.type)); setApiKey(''); setClearKey(false);
       setProbe(null); setConflict(false);
       loadedVersion.current = loadVersion;
-      setNotice('资源已保存。未自动检查连接、绑定实验或执行模型。');
+      notify.success('资源已保存。未自动检查连接、绑定实验或执行模型。');
       onSaved(result);
       return true;
     } catch (reason) {
       if (mounted.current) {
-        setError(failure(reason));
-        if (reason instanceof ApiError && reason.status === 409) setConflict(true);
+        const message = failure(reason);
+        if (reason instanceof ApiError && reason.status === 409) {
+          setError(message); setConflict(true);
+        } else notify.error(message, { title: '资源保存失败' });
       }
       return false;
     } finally { operation.current = false; if (mounted.current) setPending(null); }
-  }, [ready, loading, conflict, draft, type, apiKey, base, clearKey, loadVersion, onSaved]);
+  }, [ready, loading, conflict, draft, type, apiKey, base, clearKey, loadVersion, notify, onSaved]);
 
   useUnsavedChanges('model-resource-editor', {
     label: '个人模型资源草稿', resource: 'personal-model', dirty, busy, save,
   });
   const change = <K extends keyof Draft,>(key: K, value: Draft[K]) => {
-    setDraft(previous => ({ ...previous, [key]: value })); setNotice(null);
+    setDraft(previous => ({ ...previous, [key]: value }));
   };
-  const reload = () => {
+  const reload = async () => {
     if (operation.current || loading) return;
-    if (!canLeave()) return;
+    if (!(await canLeave())) return;
     setLoadVersion(value => value + 1);
   };
   const check = async () => {
     if (!base || dirty || busy || conflict || operation.current) return;
-    operation.current = true; setPending('probe'); setError(null); setNotice(null); setProbe(null);
+    operation.current = true; setPending('probe'); setError(null); setProbe(null);
     try {
       const result = await modelResourcesApi.probe(base.id, base.revision);
       if (mounted.current) setProbe({ revision: base.revision, result });
     } catch (reason) {
       if (mounted.current) {
-        setError(failure(reason));
-        if (reason instanceof ApiError && reason.status === 409) setConflict(true);
+        const message = failure(reason);
+        if (reason instanceof ApiError && reason.status === 409) {
+          setError(message); setConflict(true);
+        } else notify.error(message, { title: '资源删除失败' });
       }
     } finally { operation.current = false; if (mounted.current) setPending(null); }
   };
   const remove = async () => {
     if (!base || busy || operation.current || references === null || references.length > 0 || conflict) return;
-    if (!window.confirm(`删除个人资源“${base.name}”？${dirty ? '未保存修改和已输入的密钥也会丢弃。' : ''}不会删除模型文件或历史运行；服务端将再次检查实验引用。`)) return;
-    operation.current = true; setPending('delete'); setError(null); setNotice(null);
+    if (!(await confirm({
+      title: `删除资源“${base.name}”？`,
+      description: `${dirty ? '未保存修改和已输入的密钥也会丢失。\n' : ''}不会删除模型文件或历史运行；服务端将再次检查实验引用。`,
+      confirmLabel: '删除资源',
+      tone: 'danger',
+    }))) return;
+    operation.current = true; setPending('delete'); setError(null);
     try {
       await modelResourcesApi.remove(base.id, base.revision);
-      if (mounted.current) onDeleted();
+      if (mounted.current) {
+        notify.success(`已删除资源“${base.name}”。`);
+        onDeleted();
+      }
     } catch (reason) {
       if (mounted.current) {
         setError(failure(reason));
@@ -211,13 +231,22 @@ export const ModelResourceEditor = memo(forwardRef<ModelEditorHandle, EditorProp
       }
     } finally { operation.current = false; if (mounted.current) setPending(null); }
   };
-  const clearCredential = () => {
-    if (!window.confirm('确认清除该资源已保存的密钥？当前输入也会清空，并切换为不使用凭据。点击保存后才在服务端生效。')) return;
+  const clearCredential = async () => {
+    if (!(await confirm({
+      title: '清除已保存的密钥？',
+      description: '当前输入也会清空，并切换为不使用凭据。点击保存后才在服务端生效。',
+      confirmLabel: '清除密钥',
+      tone: 'danger',
+    }))) return;
     setApiKey(''); setClearKey(true); change('credentialMode', 'none');
   };
-  const changeCredentialMode = (mode: Draft['credentialMode']) => {
+  const changeCredentialMode = async (mode: Draft['credentialMode']) => {
     if (apiKey && mode !== 'saved') {
-      if (!window.confirm('切换凭据方式会丢弃当前输入的密钥，是否继续？服务端已有密钥不会因此自动清除。')) return;
+      if (!(await confirm({
+        title: '切换凭据方式？',
+        description: '当前输入的密钥将丢失，服务端已有密钥不会因此自动清除。',
+        confirmLabel: '继续切换',
+      }))) return;
       setApiKey('');
     }
     change('credentialMode', mode);
@@ -230,9 +259,8 @@ export const ModelResourceEditor = memo(forwardRef<ModelEditorHandle, EditorProp
     </div>}>
     {loading && <p className="field-hint" role="status">正在读取资源及引用关系…</p>}
     {error && <InlineNotice tone="danger">{error}</InlineNotice>}
-    {notice && <InlineNotice tone="success">{notice}</InlineNotice>}
     {(base || target.id) && <div className="model-catalog-actions">
-      <Button size="sm" disabled={busy} onClick={reload}>重新载入资源 / 引用</Button>
+      <Button size="sm" disabled={busy} onClick={() => void reload()}>重新载入资源 / 引用</Button>
       {base && <span className="field-hint">修订 {base.revision} · {base.id}</span>}
     </div>}
     {ready && <>
@@ -281,18 +309,18 @@ export const ModelResourceEditor = memo(forwardRef<ModelEditorHandle, EditorProp
           </>}
           {type === 'inference' && <>
             <FormField label="凭据方式" hint="不继承任何实验的密钥；服务默认凭据必须显式选择。">
-              <Select value={draft.credentialMode} onChange={event => changeCredentialMode(event.target.value as Draft['credentialMode'])}>
+              <Select value={draft.credentialMode} onChange={event => void changeCredentialMode(event.target.value as Draft['credentialMode'])}>
                 <option value="saved">保存资源专用密钥</option><option value="service">使用服务默认凭据</option><option value="none">不使用凭据</option>
               </Select>
             </FormField>
             {draft.credentialMode === 'saved' && <FormField label={base?.api_key_set ? '替换 API Key（可选）' : 'API Key'}
               hint={base?.api_key_set && !clearKey ? '留空保留服务端已有密钥；如需删除请使用显式清除。' : '此凭据方式需要填写密钥。密钥仅保留在当前表单内存，刷新不会恢复。'}>
               <Input type="password" autoComplete="new-password" spellCheck={false} value={apiKey} maxLength={8192}
-                onChange={event => { setApiKey(event.target.value); if (event.target.value) setClearKey(false); setNotice(null); }} />
+                onChange={event => { setApiKey(event.target.value); if (event.target.value) setClearKey(false); }} />
             </FormField>}
             <div className="model-catalog-credential">
               <span className="field-hint">{clearKey ? '待清除密钥（保存后生效）' : base?.api_key_set ? '服务端已保存资源密钥；切换凭据来源不等于删除密钥。' : '未保存资源专用密钥。'}</span>
-              {base?.api_key_set && !clearKey && <Button size="sm" variant="danger" onClick={clearCredential}>清除已保存密钥…</Button>}
+              {base?.api_key_set && !clearKey && <Button size="sm" variant="danger" onClick={() => void clearCredential()}>清除已保存密钥…</Button>}
               {clearKey && <Button size="sm" onClick={() => { setClearKey(false); change('credentialMode', base?.credential_mode || 'saved'); }}>撤销清除</Button>}
             </div>
           </>}

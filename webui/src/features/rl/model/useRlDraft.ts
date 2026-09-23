@@ -6,6 +6,7 @@ import { useUnsavedChanges } from '../../../shared/hooks/useUnsavedChanges';
 import { normalizeRlPayload } from './normalizeRlPayload';
 import { applyRlRecommendation } from './rlPrefills';
 import { HYDRA_FIELDS } from './hydraFields';
+import { useConfirm } from '../../../shared/feedback/useConfirm';
 
 export function useRlDraft(
   expId: string,
@@ -14,6 +15,7 @@ export function useRlDraft(
   onStartTrain: () => Promise<void>,
   sampling?: SamplingSpec,
 ) {
+  const confirm = useConfirm();
   const [{ rl, savedRl }, setDraft] = useState(() => ({
     rl: structuredClone(initial), savedRl: JSON.stringify(initial),
   }));
@@ -21,7 +23,7 @@ export function useRlDraft(
   const lastIncomingRl = useRef(incomingRl);
   const editRevision = useRef(0);
   const dirty = JSON.stringify(rl) !== savedRl;
-  const { pending, notice, run } = useAction();
+  const { pending, notice, run } = useAction({ errorFeedback: 'inline' });
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -100,13 +102,18 @@ export function useRlDraft(
         const changes = Object.entries(recommendation).map(([key, after]) => ({
           field: key, before: HYDRA_FIELDS.find(field => field.path === key)?.read(rl) ?? rl[key] ?? '继承', after,
         }));
-        if (!window.confirm(`将以下资源建议应用到草稿（不会改变模型、算法或 GPU 选择）：\n${JSON.stringify(changes, null, 2)}\n仍需保存才生效。`)) return;
+        if (!(await confirm({
+          title: '应用资源建议？',
+          description: `以下建议将写入当前草稿，不改变模型、算法或 GPU 选择：\n\n${changes.map(change =>
+            `• ${change.field}: ${String(change.before)} → ${String(change.after)}`).join('\n')}\n\n仍需保存才会生效。`,
+          confirmLabel: '应用建议',
+        }))) return;
         editRevision.current += 1;
         setDraft((current) => ({ ...current, rl: applyRlRecommendation(current.rl, recommendation) }));
       }
       return '已按当前机器推荐档位（需点保存）';
     });
-  }, [run, rl]);
+  }, [confirm, run, rl]);
 
   useUnsavedChanges('rl-settings', {
     label: 'RL 配置', resource: 'rl', dirty, busy: pending !== null, save,

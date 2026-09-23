@@ -40,6 +40,5 @@ export const InferenceSettings = memo(function InferenceSettings({ bundle, activ
         }}>停止本地模型</Button>
       </div>
     </Section>}
-    {environment && action.notice && <InlineNotice tone={action.notice.tone}>{action.notice.message}</InlineNotice>}
   </div>;
 });

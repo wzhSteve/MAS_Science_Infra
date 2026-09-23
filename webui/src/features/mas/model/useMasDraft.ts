@@ -28,7 +28,7 @@ export function useMasDraft({ expId, bundle, onReload }: {
   const savedLlm = useRef(bundle?.llm || {});
   if (bundle?.id === expId) savedLlm.current = bundle.llm;
   const workflowRef = useRef(workflow);
-  const action = useAction();
+  const action = useAction({ errorFeedback: 'silent' });
 
   const loadPalette = useCallback(async (signal?: AbortSignal) => {
     setPaletteError(null);
@@ -122,7 +122,7 @@ export function useMasDraft({ expId, bundle, onReload }: {
   });
   return {
     workflow, palette, workflowDirty, onWorkflowChange,
-    save, executeWithSavedWorkflow, pending: action.pending, notice: action.notice,
+    save, executeWithSavedWorkflow, pending: action.pending,
     paletteError, loadPalette, saveError, savingWorkflow,
   };
 }

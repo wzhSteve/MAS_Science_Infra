@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorMessage } from '../api/http';
 import type { Notice } from '../components/InlineNotice';
+import { useNotify } from '../feedback/useNotify';
 
-export function useAction() {
+interface UseActionOptions {
+  feedback?: 'toast' | 'inline' | 'silent';
+  successFeedback?: 'toast' | 'inline' | 'silent';
+  errorFeedback?: 'toast' | 'inline' | 'silent';
+  errorTitle?: string;
+}
+
+export function useAction(options: UseActionOptions = {}) {
+  const notify = useNotify();
+  const successFeedback = options.successFeedback || options.feedback || 'toast';
+  const errorFeedback = options.errorFeedback || options.feedback || 'toast';
   const [pending, setPending] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const lock = useRef(false);
@@ -16,15 +27,22 @@ export function useAction() {
     setNotice(null);
     try {
       const message = await action();
-      if (mounted.current && message) setNotice({ message, tone: 'success' });
+      if (mounted.current && message) {
+        if (successFeedback === 'toast') notify.success(message);
+        else if (successFeedback === 'inline') setNotice({ message, tone: 'success' });
+      }
       return true;
     } catch (error) {
-      if (mounted.current) setNotice({ message: errorMessage(error), tone: 'danger' });
+      if (mounted.current) {
+        const message = errorMessage(error);
+        if (errorFeedback === 'toast') notify.error(message, { title: options.errorTitle || '操作失败' });
+        else if (errorFeedback === 'inline') setNotice({ message, tone: 'danger' });
+      }
       return false;
     } finally {
       lock.current = false;
       if (mounted.current) setPending(null);
     }
-  }, []);
+  }, [errorFeedback, notify, options.errorTitle, successFeedback]);
   return { pending, notice, setNotice, run };
 }

@@ -93,6 +93,28 @@
   .dialog-title { font-size: 19px; font-weight: 600; margin: 4px 0 12px; }
   .dialog-description { font-size: 14px; color: var(--text-secondary); line-height: 1.8; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+  .feedback-viewport { position: fixed; z-index: 68; top: 70px; right: 18px; display: flex; flex-direction: column; gap: 10px; width: min(390px, calc(100vw - 24px)); margin: 0; padding: 0; list-style: none; outline: none; }
+  .feedback-toast { --toast-tone: var(--accent); position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: start; gap: 10px; padding: 13px 12px; border: 1px solid var(--border-subtle); border-left: 3px solid var(--toast-tone); border-radius: 8px; background: color-mix(in srgb, var(--surface) 96%, var(--toast-tone)); color: var(--text-primary); box-shadow: 0 10px 32px #20252b1c; overflow-wrap: anywhere; }
+  .feedback-toast--success { --toast-tone: var(--success); }
+  .feedback-toast--warning { --toast-tone: var(--warning); }
+  .feedback-toast--danger { --toast-tone: var(--danger); }
+  .feedback-toast-icon { color: var(--toast-tone); margin-top: 1px; }
+  .feedback-toast-content { min-width: 0; }
+  .feedback-toast-title { margin: 0 0 3px; font-size: 13px; font-weight: 600; }
+  .feedback-toast-description { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+  .feedback-toast-count { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 10px; }
+  .feedback-toast-action { align-self: center; border: 0; border-radius: 5px; padding: 5px 7px; background: var(--accent-subtle); color: var(--accent); font: inherit; font-size: 11px; cursor: pointer; }
+  .feedback-toast-close { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 5px; padding: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
+  .feedback-toast-close:hover, .feedback-toast-action:hover { filter: brightness(.96); }
+  .feedback-toast[data-state="open"] { animation: feedback-enter 180ms ease-out; }
+  .feedback-toast[data-state="closed"] { animation: feedback-exit 140ms ease-in; }
+  .feedback-toast[data-swipe="move"] { transform: translateX(var(--radix-toast-swipe-move-x)); }
+  .feedback-toast[data-swipe="cancel"] { transform: translateX(0); transition: transform 140ms ease-out; }
+  .feedback-toast[data-swipe="end"] { animation: feedback-swipe 140ms ease-out; }
+  .feedback-confirm-description { white-space: pre-wrap; }
+  @keyframes feedback-enter { from { opacity: 0; transform: translateX(18px); } }
+  @keyframes feedback-exit { to { opacity: 0; transform: translateX(12px); } }
+  @keyframes feedback-swipe { to { transform: translateX(var(--radix-toast-swipe-end-x)); opacity: 0; } }
   .training-preflight { display: grid; gap: 14px; margin-top: 18px; }
   .training-preflight dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }
   .training-preflight dl > div { min-width: 0; padding: 10px 12px; border-radius: 6px; background: var(--surface-subtle); }
@@ -105,7 +127,11 @@
   .training-preflight-check.is-error { border-left-color: var(--danger); }
   .training-preflight-check span { color: var(--text-secondary); overflow-wrap: anywhere; }
   @media (max-width: 767px) {
-    .form-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+    .form-grid { grid-template-columns: minmax(0, 1fr); gap: 16px;       .feedback-viewport { top: 62px; right: 12px; left: 12px; width: auto; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .feedback-toast[data-state="open"], .feedback-toast[data-state="closed"], .feedback-toast[data-swipe="end"] { animation: none; }
+    }
     .ui-section { padding: 18px 16px; }
     .page-header { flex-wrap: wrap; }
     .page-header h1 { font-size: 20px; }

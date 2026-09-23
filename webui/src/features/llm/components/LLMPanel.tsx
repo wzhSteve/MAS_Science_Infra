@@ -65,7 +65,7 @@ function LlmSettings({ expId, bundle, onReload, embedded = false, view = 'connec
   const probeStale = Boolean(probe && (probe.snapshot.inputRevision !== inputRevision.current
     || probe.snapshot.kind !== kind || probe.snapshot.model !== model || probe.snapshot.baseUrl !== baseUrl
     || probe.snapshot.configRevision !== bundle.llm.config_revision));
-  const { pending, notice, run } = useAction();
+  const { pending, run } = useAction();
   const stopAction = useAction();
   const mounted = useRef(true);
   useEffect(() => {
@@ -151,7 +151,6 @@ function LlmSettings({ expId, bundle, onReload, embedded = false, view = 'connec
       </ActionBar>
       <p className="field-hint">手动探测使用当前模式、模型、端点和临时 Key；Key 留空时使用实验密钥或服务默认密钥，不保存配置。
         只请求 /models，不生成内容，不验证实际推理或工具调用。不支持模型列表不等于无法推理。</p>
-      {notice && <InlineNotice tone={notice.tone}>{notice.message}</InlineNotice>}
     </Section>
     </div>
     {(view === 'environment' || !embedded) && kind === 'local' && <Section title="本地模型服务" description="启动前先保存当前模型配置；保存失败不会启动。Train 与本地 vLLM 互斥。">
@@ -170,7 +169,6 @@ function LlmSettings({ expId, bundle, onReload, embedded = false, view = 'connec
           void stopAction.run('stop', async () => { await api.llmStop(expId); return 'LLM stopped'; });
         }}>停止 LLM</Button>
       </ActionBar>
-      {stopAction.notice && <InlineNotice tone={stopAction.notice.tone}>{stopAction.notice.message}</InlineNotice>}
     </Section>}
     {view === 'environment' && kind !== 'local' && <Section title="推理环境">
       <p className="field-hint">{kind === 'api' ? '当前使用远程 API 推理，无需本机 GPU 或训练进程。'

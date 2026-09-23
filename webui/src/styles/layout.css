@@ -25,9 +25,6 @@
   .contract-summary dt { color: var(--text-secondary); }
   .contract-summary dd { margin: 0; font-family: var(--font-code); max-width: 300px; overflow-wrap: anywhere; }
   .workspace-actions { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
-  .global-actions { display: flex; align-items: center; gap: 6px; }
-  .global-action-area { max-width: 420px; }
-  .global-action-area .inline-notice { font-size: 11px; padding: 6px 8px; margin-top: 7px; }
   .action-reason { margin-top: 6px; }
   .gpu-picker { position: relative; }
   .gpu-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -43,11 +40,7 @@
   .workspace-content { flex: 1; min-height: 0; overflow: auto; padding: 26px 28px 32px; }
   .page-stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
   .settings-page { max-width: 1120px; }
-  .training-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 28px; border-bottom: 1px solid #d7e9df; background: #f3f9f5; font-size: 12px; }
-  .training-banner > .mono { color: var(--text-secondary); overflow-wrap: anywhere; }
   .runtime-error { padding: 0 28px 8px; }
-  .status-bar { display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 5px 20px; border-top: 1px solid var(--border-subtle); background: var(--surface); color: var(--text-secondary); font-size: 10px; }
-  .status-bar .status-badge { font-size: 10px; padding: 0 5px; }
   .status-tail { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-code); }
   .skip-link { position: fixed; top: -60px; left: 16px; background: var(--surface); padding: 12px; z-index: 100; border-radius: 6px; }
   .skip-link:focus { top: 10px; }
@@ -74,9 +67,7 @@
     .workspace-content { padding: 18px 12px 24px; }
     .contract-summary { column-gap: 10px; }
     .contract-summary dd { max-width: 160px; }
-    .status-bar { padding: 5px 10px; gap: 6px; }
-    .global-actions { flex-wrap: wrap; }
-    .training-banner, .runtime-error { padding-left: 16px; padding-right: 16px; }
+    .runtime-error { padding-left: 16px; padding-right: 16px; }
     .page-stack { gap: 16px; }
   }
 }

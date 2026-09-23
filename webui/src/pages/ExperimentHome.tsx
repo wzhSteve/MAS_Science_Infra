@@ -6,6 +6,7 @@ import { CreateExperimentDialog } from '../features/experiment/components/home/C
 import { Button } from '../shared/ui/button';
 import { Input } from '../shared/ui/input';
 import { InlineNotice } from '../shared/components/InlineNotice';
+import { useNotify } from '../shared/feedback/useNotify';
 import { LoadingState } from '../shared/components/LoadingState';
 import { StatusBadge } from '../shared/components/StatusBadge';
 
@@ -39,15 +40,15 @@ export const ExperimentHome = memo(function ExperimentHome({ active, currentExpe
   active: boolean; currentExperimentId: string | null; onOpenExperiment: (id: string) => void;
 }) {
   const catalog = useExperimentCatalog(active);
+  const notify = useNotify();
   const [creating, setCreating] = useState(false);
-  const [createdMessage, setCreatedMessage] = useState('');
   const activeRef = useRef(active);
   useLayoutEffect(() => { activeRef.current = active; }, [active]);
   const onCreated = useCallback((bundle: Bundle) => {
     catalog.created(bundle);
-    setCreatedMessage(`已创建“${bundle.meta.name || bundle.id}”。如果取消切换，仍可从首页打开新实验。`);
+    notify.success(`已创建“${bundle.meta.name || bundle.id}”。`);
     if (activeRef.current) onOpenExperiment(bundle.id);
-  }, [catalog.created, onOpenExperiment]);
+  }, [catalog.created, notify, onOpenExperiment]);
 
   return <div className="experiment-home">
     <header className="experiment-home-header">
@@ -66,7 +67,6 @@ export const ExperimentHome = memo(function ExperimentHome({ active, currentExpe
       <span className="field-hint">{catalog.loaded ? `${catalog.total} 个实验` : '读取实验列表'}</span>
       <Button size="sm" variant="ghost" loading={catalog.loading} onClick={catalog.refresh}><RefreshCw size={14} />刷新</Button>
     </div>
-    {createdMessage && <InlineNotice tone="success">{createdMessage}</InlineNotice>}
     {catalog.error && <InlineNotice tone="danger">实验列表加载失败：{catalog.error}
       <Button size="sm" onClick={catalog.refresh}>重试列表</Button>
     </InlineNotice>}

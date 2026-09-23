@@ -1,28 +1,24 @@
-import { memo, useState } from 'react';
+import { memo } from 'react';
 import { Download } from 'lucide-react';
 import { Button } from '../ui/button';
-import { InlineNotice } from './InlineNotice';
+import { useNotify } from '../feedback/useNotify';
 
 export const DownloadText = memo(function DownloadText({ text, filename, label = '下载详细日志' }: {
   text: string; filename: string; label?: string;
 }) {
-  const [error, setError] = useState(false);
+  const notify = useNotify();
   const download = () => {
-    setError(false);
     let url: string | undefined;
     const link = document.createElement('a');
     try {
       url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
       link.href = url; link.download = filename; link.hidden = true;
       document.body.appendChild(link); link.click();
-    } catch { setError(true); }
+    } catch { notify.warning('下载失败，请重试。'); }
     finally {
       link.remove();
       if (url) { const value = url; setTimeout(() => URL.revokeObjectURL(value), 1000); }
     }
   };
-  return <>
-    <Button size="sm" variant="ghost" onClick={download}><Download size={13} />{label}</Button>
-    {error && <InlineNotice tone="warning">下载失败，请重试。</InlineNotice>}
-  </>;
+  return <Button size="sm" variant="ghost" onClick={download}><Download size={13} />{label}</Button>;
 });

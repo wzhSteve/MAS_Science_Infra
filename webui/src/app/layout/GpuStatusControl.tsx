@@ -7,7 +7,6 @@ import { Button } from '../../shared/ui/button';
 export const GpuStatusControl = memo(function GpuStatusControl() {
   const { draft, gpu, selectedIds, selectGpus } = useTrainingConfig();
   const detected = gpu.data?.gpus || [];
-  const problem = gpu.error || gpu.data?.error;
   const detectedIds = useMemo(() => new Set(detected.map((item) => item.id)), [detected]);
   const missingIds = selectedIds.filter((id) => !detectedIds.has(id));
   const selectedDetected = detected.filter((item) => selectedIds.includes(item.id));
@@ -59,7 +58,7 @@ export const GpuStatusControl = memo(function GpuStatusControl() {
           })}
           {!detected.length && <div className="gpu-status-empty">
             <strong>当前环境未检测到 NVIDIA GPU</strong>
-            <span>{problem || '可以继续编辑实验，真实训练需在 GPU 环境执行。'}</span>
+            <span>可以继续编辑实验，真实训练需在 GPU 环境执行。</span>
           </div>}
           {missingIds.length > 0 && <div className="gpu-status-warning">
             目标配置：{selectedIds.map((id) => `GPU ${id}`).join('、')}<br />

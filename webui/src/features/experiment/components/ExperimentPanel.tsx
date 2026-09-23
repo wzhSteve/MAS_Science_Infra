@@ -45,7 +45,7 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
   }));
   const lastIncoming = useRef(incomingKey);
   const editRevision = useRef(0);
-  const { pending, notice, run } = useAction();
+  const { pending, run } = useAction();
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -139,10 +139,10 @@ function ExperimentSettings({ expId, bundle, onReload, setExpId }: Props & { bun
             setExpId(newId);
             setNewId('');
             onReload();
+            return `已创建实验 ${newId}`;
           });
         }}>创建</Button>
       </ActionBar>
     </Section>
-    {notice && <InlineNotice tone={notice.tone}>{notice.message}</InlineNotice>}
   </div>;
 }

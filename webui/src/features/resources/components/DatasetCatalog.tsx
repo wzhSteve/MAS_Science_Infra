@@ -9,6 +9,7 @@ import { Input } from '../../../shared/ui/input';
 import { FormField } from '../../../shared/components/FormField';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { DataPreview } from './DataPreview';
+import { useConfirm } from '../../../shared/feedback/useConfirm';
 
 type EditTarget = { resource: DatasetResource | null; revision: number };
 
@@ -18,16 +19,25 @@ function DatasetEditor({ target, onSaved, onClose }: {
   const [name, setName] = useState(target.resource?.name || '');
   const [path, setPath] = useState(target.resource?.path || '');
   const action = useAction();
+  const confirm = useConfirm();
   const dirty = name !== (target.resource?.name || '') || path !== (target.resource?.path || '');
   const save = useCallback(() => action.run('save', async () => {
     await datasetResourcesApi.save({ name, path, revision: target.revision }, target.resource?.id);
     onSaved();
+    return '数据资源已保存';
   }), [action.run, name, path, target, onSaved]);
   useUnsavedChanges('dataset-resource-editor', { label: '共享数据目录', resource: 'dataset-catalog', dirty, busy: action.pending !== null, save });
   return <section className="resource-details">
     <header><h2>{target.resource ? '编辑数据' : '登记数据'}</h2>
       <Button size="sm" variant="ghost" disabled={action.pending !== null} aria-label="关闭数据编辑" onClick={() => {
-        if (!dirty || window.confirm('放弃未保存的数据目录修改？')) onClose();
+        void (async () => {
+          if (!dirty || await confirm({
+            title: '放弃数据目录修改？',
+            description: '当前未保存的数据名称和服务器路径将丢失。',
+            confirmLabel: '放弃修改',
+            tone: 'danger',
+          })) onClose();
+        })();
       }}><X size={16} /></Button>
     </header>
     <form className="page-stack" onSubmit={event => { event.preventDefault(); void save(); }}>
@@ -35,7 +45,6 @@ function DatasetEditor({ target, onSaved, onClose }: {
       <FormField label="服务器 Parquet 路径">
         <Input required disabled={action.pending !== null} value={path} placeholder="/root/autodl-tmp/MAS_Science_Infra/data/train.parquet" onChange={event => setPath(event.target.value)} />
       </FormField>
-      {action.notice && <InlineNotice tone={action.notice.tone}>{action.notice.message}</InlineNotice>}
       <div className="action-bar"><Button type="submit" variant="primary" disabled={!dirty || action.pending !== null} loading={action.pending === 'save'}>保存数据</Button></div>
     </form>
   </section>;

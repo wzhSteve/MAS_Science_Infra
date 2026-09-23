@@ -18,6 +18,7 @@ import type { SettingsSection } from '../features/settings/model/sections';
 import { isTrainingSection } from '../features/settings/model/sections';
 import type { ModelResource } from '../features/resources/api';
 import type { MetaResponse } from '../shared/api/types';
+import { FeedbackProvider } from '../shared/feedback/FeedbackProvider';
 
 const WorkspacePanels = lazy(() => import('./layout/WorkspacePanels').then(module => ({ default: module.WorkspacePanels })));
 const Resources = lazy(() => import('../pages/Resources').then(module => ({ default: module.Resources })));
@@ -144,6 +145,6 @@ function Application() {
 
 export default function App() {
   return <Tooltip.Provider delayDuration={250}>
-    <NavigationGuardProvider><Application /></NavigationGuardProvider>
+    <FeedbackProvider><NavigationGuardProvider><Application /></NavigationGuardProvider></FeedbackProvider>
   </Tooltip.Provider>;
 }

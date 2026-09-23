@@ -5,7 +5,6 @@ import { usePollingResource } from '../../shared/hooks/usePollingResource';
 import { useAction } from '../../shared/hooks/useAction';
 import { Button } from '../../shared/ui/button';
 import { Tooltip } from '../../shared/ui/tooltip';
-import { InlineNotice } from '../../shared/components/InlineNotice';
 import { useUnsavedChanges } from '../../shared/hooks/useUnsavedChanges';
 export type { GpuInfo } from '../../shared/api/types';
 
@@ -13,7 +12,7 @@ export default memo(function GpuPicker({ selected, onChange, compact = false }: 
   selected: number[]; onChange: (ids: number[]) => void | Promise<void>; compact?: boolean;
 }) {
   const { data, loading, error, refresh } = usePollingResource('gpus', gpuApi.gpus);
-  const { pending, notice, run } = useAction();
+  const { pending, run } = useAction();
   useUnsavedChanges('gpu-selection', {
     label: 'GPU 配置保存', resource: 'rl', dirty: false, busy: pending !== null,
   });
@@ -38,6 +37,5 @@ export default memo(function GpuPicker({ selected, onChange, compact = false }: 
       <Button size="sm" variant="ghost" title="重新探测 GPU" aria-label="重新探测 GPU" onClick={() => void refresh()}><RefreshCw size={13} aria-hidden="true" />探测</Button>
     </div>
     {problem && <details className="gpu-diagnostic"><summary>设备探测详情</summary><span>{problem}</span></details>}
-    {notice && <InlineNotice tone={notice.tone}>{notice.message}</InlineNotice>}
   </div>;
 });

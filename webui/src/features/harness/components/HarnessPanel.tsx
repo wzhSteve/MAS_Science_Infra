@@ -4,7 +4,6 @@ import type { Bundle, Hypothesis, MetaResponse } from '../../../shared/api/types
 import { ActionBar } from '../../../shared/components/ActionBar';
 import { DataTable } from '../../../shared/components/DataTable';
 import { EmptyState } from '../../../shared/components/EmptyState';
-import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { LoadingState } from '../../../shared/components/LoadingState';
 import { PageHeader } from '../../../shared/components/PageHeader';
 import { Section } from '../../../shared/components/Section';
@@ -27,7 +26,7 @@ function HarnessSettings({ expId, bundle, meta, onReload, embedded = false }: Pr
   const editRevision = useRef(0);
   const dirty = JSON.stringify(selected) !== savedPlugins;
   const [hypotheses, setHypotheses] = useState<Hypothesis[] | null>(null);
-  const { pending, notice, run } = useAction();
+  const { pending, run } = useAction();
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -87,7 +86,6 @@ function HarnessSettings({ expId, bundle, meta, onReload, embedded = false }: Pr
           });
         }} title="保存检查规则后，诊断当前实验已有的 collect.json">保存并诊断已有产物</Button>
       </ActionBar>
-      {notice && <InlineNotice tone={notice.tone}>{notice.message}</InlineNotice>}
     </Section>
     <Section title="诊断结果">
       {hypotheses === null ? <EmptyState title="尚未执行诊断">已有 collect.json 时，可选择插件并执行诊断。</EmptyState> :

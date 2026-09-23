@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { runtimeApi } from '../api';
 import { usePollingResource } from '../../../shared/hooks/usePollingResource';
 
@@ -12,9 +12,17 @@ export interface TrainingSnapshot {
 }
 
 export function useTrainingRun(expId: string, active = true) {
+  const observedRun = useRef<{ experimentId: string; runId: string | null }>({ experimentId: expId, runId: null });
   const load = useCallback(async (signal: AbortSignal): Promise<TrainingSnapshot> => {
+    if (observedRun.current.experimentId !== expId) {
+      observedRun.current = { experimentId: expId, runId: null };
+    }
     const activity = await runtimeApi.trainingActivity(expId, signal);
-    const row = activity.run;
+    let row = activity.run;
+    if (row) observedRun.current.runId = row.run_id;
+    else if (observedRun.current.runId) {
+      row = await runtimeApi.trainingRun(expId, observedRun.current.runId, signal);
+    }
     return {
       runId: row?.run_id || null, state: row?.state || 'idle',
       running: Boolean(row?.running || ['preparing', 'starting', 'stopping'].includes(row?.state || '')),

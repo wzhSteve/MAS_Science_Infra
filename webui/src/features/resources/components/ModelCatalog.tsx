@@ -109,17 +109,17 @@ export const ModelCatalog = memo(function ModelCatalog({ active, returnExperimen
   const [refreshVersion, setRefreshVersion] = useState(0);
   const editor = useRef<ModelEditorHandle>(null);
   const sequence = useRef(0);
-  const open = useCallback((next: ModelEditorTarget) => {
-    if (editor.current && !editor.current.canLeave()) return;
+  const open = useCallback(async (next: ModelEditorTarget) => {
+    if (editor.current && !(await editor.current.canLeave())) return;
     setSelectedId(next.id);
     setTarget({ ...next, session: ++sequence.current });
   }, []);
   const select = useCallback((resource: ModelResource) => {
     if (resource.id === selectedId) return;
-    open({ id: resource.id, type: resource.type });
+    void open({ id: resource.id, type: resource.type });
   }, [open, selectedId]);
-  const close = useCallback(() => {
-    if (editor.current && !editor.current.canLeave()) return;
+  const close = useCallback(async () => {
+    if (editor.current && !(await editor.current.canLeave())) return;
     setTarget(null); setSelectedId(null);
   }, []);
   const saved = useCallback((resource: ModelResource) => {
@@ -133,8 +133,8 @@ export const ModelCatalog = memo(function ModelCatalog({ active, returnExperimen
     <div className="model-catalog-heading">
       <div><h2>个人模型资源库</h2></div>
       <div className="model-catalog-actions">
-        <Button variant="primary" onClick={() => open({ id: null, type: 'inference' })}>新增推理连接</Button>
-        <Button onClick={() => open({ id: null, type: 'training' })}>登记训练模型来源</Button>
+        <Button variant="primary" onClick={() => void open({ id: null, type: 'inference' })}>新增推理连接</Button>
+        <Button onClick={() => void open({ id: null, type: 'training' })}>登记训练模型来源</Button>
       </div>
     </div>
     {returnExperimentId && <InlineNotice>
@@ -144,6 +144,6 @@ export const ModelCatalog = memo(function ModelCatalog({ active, returnExperimen
     <ModelList active={active} refreshVersion={refreshVersion} selectedId={selectedId} onSelect={select} />
     {target && <ModelResourceEditor key={target.session} ref={editor} target={target} active={active}
       returnExperimentId={returnExperimentId} requestedType={requestedType} onUse={onUse}
-      onClose={close} onSaved={saved} onDeleted={removed} />}
+      onClose={() => void close()} onSaved={saved} onDeleted={removed} />}
   </div>;
 });

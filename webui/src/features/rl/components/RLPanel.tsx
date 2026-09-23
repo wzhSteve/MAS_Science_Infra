@@ -40,6 +40,5 @@ function RlWorkspace({ expId, bundle, meta, onReload, trainRunId, trainRunning, 
     <RlTrainingActions trainRunId={trainRunId} trainRunning={trainRunning} aglOnline={aglOnline} pending={draft.pending} onStart={draft.start} onStop={onStopTrain} />
     <LogPanel title="训练日志" log={trainLog} empty="训练 stdout 将在此显示；后台刷新不会覆盖上方配置草稿。" actions={trainRunId ?
       <Button size="sm" loading={refresh.pending !== null} onClick={() => { void refresh.run('refresh', onRefreshLog); }}>刷新日志</Button> : undefined} />
-    {refresh.notice && <InlineNotice tone={refresh.notice.tone}>{refresh.notice.message}</InlineNotice>}
   </div>;
 }
