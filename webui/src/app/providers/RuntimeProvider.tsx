@@ -18,7 +18,7 @@ import { isExperimentDraft, saveExperimentDrafts } from '../../features/experime
 
 interface RuntimeCommands {
   startTrain: () => Promise<void>;
-  stopTrain: (runId?: string) => Promise<void>;
+  stopTrain: (runId: string) => Promise<void>;
   viewTraining: (runId?: string) => void;
   diagnose: () => Promise<void>;
 }
@@ -54,8 +54,7 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
     setViewRequest(value => value + 1);
     onViewTraining(runId);
   }, [onViewTraining]);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const training = useTrainingRun(expId, selectedRunId, active);
+  const training = useTrainingRun(expId, active);
   const agl = usePollingResource('agl', runtimeApi.aglHealth, 5000, active);
   const monitorLoad = useCallback((signal: AbortSignal) => monitorApi.monitor(expId, signal), [expId]);
   const monitor = usePollingResource(`monitor:${expId}`, monitorLoad, 4000, active);
@@ -73,7 +72,6 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
   useEffect(() => {
     if (pendingTrainRequest.current && training.data?.requestId === pendingTrainRequest.current.request_id && training.data.runId) {
       pendingTrainRequest.current = null;
-      setSelectedRunId(training.data.runId);
       viewTraining(training.data.runId);
     }
   }, [training.data?.requestId, training.data?.runId, viewTraining]);
@@ -115,16 +113,13 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
       }
       if (!alive.current) return;
       pendingTrainRequest.current = null;
-      setSelectedRunId(created.run_id);
       viewTraining(created.run_id);
       setStatus('train_started');
       await monitor.refresh();
-      return created.reused ? `已恢复训练请求 ${created.run_id}` : `训练已启动：${created.run_id}`;
+      return created.reused ? `已恢复训练进程：${created.run_id}` : `训练进程已启动：${created.run_id}`;
     });
   }, [confirm, expId, run, monitor.refresh, registry, onReload, viewTraining]);
-  const stopTrain = useCallback(async (targetRunId?: string) => {
-    const runId = targetRunId || training.data?.runId;
-    if (!runId) return;
+  const stopTrain = useCallback(async (runId: string) => {
     if (!window.confirm(`停止实验 ${expId} 的训练 ${runId}？`)) return;
     await stopAction.run('stop', async () => {
       await rlApi.stopRun(expId, runId);
@@ -134,7 +129,7 @@ export function RuntimeProvider({ expId, onReload, active = true, children, onVi
       await monitor.refresh();
       return '已发送停止指令';
     });
-  }, [expId, stopAction.run, training.data?.runId, training.refresh, monitor.refresh]);
+  }, [expId, stopAction.run, training.refresh, monitor.refresh]);
   const diagnose = useCallback(async () => {
     await run('diagnose', async () => {
       await harnessApi.diagnose(expId);

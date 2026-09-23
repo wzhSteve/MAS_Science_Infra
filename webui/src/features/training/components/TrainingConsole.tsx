@@ -102,6 +102,8 @@ const RunOutput = memo(function RunOutput({ experimentId, runId, active, picker,
       <strong>{TRAIN_STATE[state?.state || ''] || '读取状态…'}</strong>
       {info?.algo != null && <span>{String(info.algo).toUpperCase()}</span>}
       {info?.cuda_visible_devices != null && <span>GPU {String(info.cuda_visible_devices)}</span>}
+      {info?.n_runners != null && <span>Runner {String(info.n_runners)}</span>}
+      {info?.group_n != null && <span>n={String(info.group_n)}</span>}
       <RunClock started={state?.started_at} ended={state?.ended_at} active={active && Boolean(state?.running)} />
       <span className="console-connection" title={log.connection} aria-label={log.connection} />
       <span className="console-heading-spacer" />

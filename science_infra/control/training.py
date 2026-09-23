@@ -628,6 +628,9 @@ def _launch_training(
         "training_source": plan.source.public(),
         "cuda_visible_devices": ",".join(str(value) for value in plan.gpu_ids),
         "n_gpus": len(plan.gpu_ids),
+        "n_runners": int(plan.rl.get("n_runners") or 1),
+        "group_n": plan.group_n,
+        "active_agent": plan.trainable_agents[0] if plan.trainable_agents else None,
         "snapshot": {
             "rl": str(rl_path),
             "workflow": str(workflow_path),

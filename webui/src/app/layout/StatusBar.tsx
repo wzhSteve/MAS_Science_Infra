@@ -17,6 +17,8 @@ export function StatusBar() {
     </StatusBadge>
     <span className="mono">reward={monitor.data?.mean_reward ?? '—'}{monitor.error ? ' (stale)' : ''}</span>
     <span className={`status-tail${events.error ? ' field-error' : ''}`} title={summary}>{summary}</span>
-    {data?.running && <Button size="sm" variant="danger" onClick={() => void stopTrain()}>Stop</Button>}
+    {data?.running && data.runId && <Button size="sm" variant="danger" onClick={() => {
+      if (data.runId) void stopTrain(data.runId);
+    }}>Stop</Button>}
   </footer>;
 }
