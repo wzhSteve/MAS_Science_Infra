@@ -13,6 +13,12 @@ export type GraphNodeData = Record<string, unknown> & {
   memory_scope?: string;
   system_prompt?: string;
   model?: string;
+  model_name?: string;
+  effective_model_name?: string;
+  model_source?: 'local' | 'api' | 'unknown';
+  model_inherited?: boolean;
+  model_available?: boolean;
+  model_trainable?: boolean;
   trainable?: boolean;
   profile?: Config;
   meta?: Config;

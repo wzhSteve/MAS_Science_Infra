@@ -10,12 +10,16 @@ import { HYDRA_FIELDS } from '../../rl/model/hydraFields';
 import { RlField } from '../../rl/components/RlField';
 import { ModelBinding, type BindingView } from '../../resources/components/ModelBinding';
 import { SamplingSettings } from '../../sampling/components/SamplingSettings';
-import { workflowToFlow, KNOWN_TOOLS } from '../../mas/model/workflowGraph';
+import { workflowToFlow } from '../../mas/model/workflowGraph';
 import { useTrainingConfig } from '../../../app/providers/TrainingConfigProvider';
-import { InferenceSettings } from './InferenceSettings';
 import { DatasetSelection } from '../../resources/components/DatasetSelection';
 import type { SettingsSection } from '../model/sections';
 import type { CanvasMode } from '../../mas/types';
+import {
+  resolveAgentModel,
+  type AgentDefaultModel,
+  type AgentModelOption,
+} from '../../resources/components/AgentModelSelect';
 
 const BASIC_DATA = HYDRA_FIELDS.filter(field => field.path === 'data.train_files' || field.path === 'data.val_files');
 const ENVIRONMENT = HYDRA_FIELDS.filter(field => field.group === 'Rollout' || field.path === 'trainer.nnodes');
@@ -25,6 +29,7 @@ export const TrainingSettings = memo(function TrainingSettings({
   bundle, meta, onReload, active, section, jump, expanded, onExpandedChange, onManageModels, onManageData,
   selectedResource, resourcePurpose, onSuggestionApplied, workflow, palette, onWorkflowChange, onLocate, onDemo,
   canvasMode, onCanvasModeChange, samplingPreview, samplingPreviewError, selectedSamplingOpportunity, onSelectSamplingOpportunity,
+  onTrainingModelState, modelOptions,
 }: {
   bundle: Bundle; meta: MetaResponse | null; onReload: () => void; active: boolean;
   section: SettingsSection | null; jump: number; expanded: boolean; onExpandedChange: (expanded: boolean) => void;
@@ -34,16 +39,16 @@ export const TrainingSettings = memo(function TrainingSettings({
   onCanvasModeChange: (mode: CanvasMode) => void;
   canvasMode: CanvasMode; samplingPreview: SamplingPreviewResponse | null; samplingPreviewError: string | null;
   selectedSamplingOpportunity: string | null; onSelectSamplingOpportunity: (id: string | null) => void;
+  onTrainingModelState?: (state: BindingView) => void;
+  modelOptions: AgentModelOption[];
 }) {
   const { draft, gpu, selectedIds } = useTrainingConfig();
   const { rl, patch, pending } = draft;
   const root = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(false);
-  const [executionOpen, setExecutionOpen] = useState(false);
   const [binding, setBinding] = useState<BindingView>({ loaded: false, bound: false, resource: null, error: null });
   const agents = useMemo(() => workflowToFlow(workflow).nodes.filter(node =>
-    node.type === 'agent' && node.data.kind !== 'tool' && !KNOWN_TOOLS.includes(node.id)), [workflow]);
-  const trainable = useMemo(() => agents.filter(node => node.data.trainable), [agents]);
+    node.type === 'agent'), [workflow]);
   const scrollToSection = useCallback((id: string) => {
     requestAnimationFrame(() => {
       const element = root.current;
@@ -54,10 +59,25 @@ export const TrainingSettings = memo(function TrainingSettings({
   useEffect(() => {
     if (!active || !section || section === 'diagnostics') return;
     setCollapsed(false);
-    if (section === 'inference') setExecutionOpen(true);
     scrollToSection(section === 'inference' ? 'model' : section);
   }, [active, section, jump, scrollToSection]);
   const legacyModel = rl.model_path || rl.actor_rollout_ref?.model?.path || '';
+  const defaultModelName = binding.resource?.name || legacyModel.split(/[\\/]/).pop() || '未选择';
+  const defaultModel = useMemo<AgentDefaultModel>(() => ({
+    name: defaultModelName,
+    source: 'local',
+    available: Boolean(binding.resource || legacyModel),
+    trainable: Boolean(binding.resource || legacyModel),
+    loaded: binding.loaded,
+  }), [binding.loaded, binding.resource, defaultModelName, legacyModel]);
+  const updateBinding = useCallback((state: BindingView) => {
+    setBinding(state);
+    onTrainingModelState?.(state);
+  }, [onTrainingModelState]);
+  const summaries = useMemo(() => agents.map(node => ({
+    node,
+    model: resolveAgentModel(node.data.model, modelOptions, defaultModel),
+  })), [agents, defaultModel, modelOptions]);
   const fields = (items: typeof HYDRA_FIELDS) => <div className="form-grid">{items.map(field =>
     <RlField key={field.path} field={field} value={field.read(rl)} onPatch={patch} compact />)}</div>;
 
@@ -76,35 +96,32 @@ export const TrainingSettings = memo(function TrainingSettings({
     <div ref={root} className="parameter-panel-scroll" hidden={collapsed && !expanded}>
       {draft.notice?.tone === 'danger' && <InlineNotice tone="danger">{draft.notice.message}</InlineNotice>}
       <section id="training-model" className="parameter-group">
-        <h3><span>01</span>训练对象</h3>
-        <div className="parameter-agent-list"><span>Agent</span>
-          <div>{trainable.map(node => <button type="button" key={node.id} onClick={() => onLocate(node.id)} title={`定位 ${node.id}`}>
-            {node.id}<LocateFixed size={12} />
-          </button>)}</div>
-        </div>
-        {!trainable.length && <InlineNotice tone="warning">未指定训练对象，后端将使用入口 {workflow.entry_agent || 'hub'}。</InlineNotice>}
-        {trainable.length > 1 && <InlineNotice tone="warning">当前后端仅训练首个可训练 Agent，实际对象以启动检查为准。</InlineNotice>}
+        <h3><span>01</span>模型与训练范围</h3>
         <ModelBinding experimentId={bundle.id} purpose="training" active={active} compact saveInHeader
-          fallbackName={legacyModel.split(/[\\/]/).pop()} onReload={onReload} onManage={onManageModels} onState={setBinding}
-          legacyDirty={draft.dirty || pending !== null} suggestedId={resourcePurpose === 'training' ? selectedResource : undefined} onSuggestionApplied={onSuggestionApplied} />
-        {binding.loaded && !binding.bound && !binding.error && <details className="parameter-details">
-          <summary>现有权重路径</summary>
-          <FormField label="模型路径"><Input value={legacyModel} onChange={event => patch(current => ({
-            ...current, model_path: event.target.value,
-            actor_rollout_ref: { ...current.actor_rollout_ref, model: { ...current.actor_rollout_ref?.model, path: event.target.value } },
-          }))} /></FormField>
-        </details>}
-        <details className="parameter-details" open={executionOpen} onToggle={event => setExecutionOpen(event.currentTarget.open)}>
-          <summary>执行模型</summary>
-          <InferenceSettings bundle={bundle} active={active && executionOpen} view="all" compact onReload={onReload} onManage={onManageModels}
-            suggestedId={resourcePurpose === 'inference' ? selectedResource : undefined} onSuggestionApplied={onSuggestionApplied} />
-          {agents.filter(node => !node.data.trainable).map(node => <div className="parameter-execution-agent" key={node.id}>
-            <span>{node.id}</span><span>{node.data.model === 'inherit' ? '默认推理模型' : node.data.model}</span>
-            <Button size="sm" variant="ghost" aria-label={`配置 ${node.id}`} onClick={() => onLocate(node.id)}><LocateFixed size={12} /></Button>
-          </div>)}
-          {import.meta.env.DEV && <details className="parameter-details"><summary>开发工具</summary>
-            <Button size="sm" onClick={onDemo}>模拟调试 · Mock</Button></details>}
-        </details>
+          label="实验默认模型"
+          fallbackName={legacyModel.split(/[\\/]/).pop()} onReload={onReload} onManage={onManageModels}
+          legacyDirty={draft.dirty || pending !== null} suggestedId={resourcePurpose === 'training' ? selectedResource : undefined}
+          onSuggestionApplied={onSuggestionApplied} onState={updateBinding} />
+        {agents.length > 0 && <div className="training-agent-summary" aria-label="Agent 模型与训练状态">
+          <div className="training-agent-summary__heading">
+            <span>Agent 模型与训练状态</span>
+            <small>{summaries.filter(({ node }) => node.data.trainable !== false).length} 个参与训练</small>
+          </div>
+          {summaries.map(({ node, model }) => {
+            const invalid = !model.available || (node.data.trainable !== false && !model.trainable);
+            return <button type="button" key={node.id} className={invalid ? 'is-invalid' : undefined}
+            onClick={() => onLocate(node.id)} title={`配置 ${node.id}`}>
+            <span>{node.id}</span>
+            <span>{model.name} · {model.inherited ? '继承' : model.source === 'api' ? 'API' : model.source === 'local' ? '本地' : '不可用'}</span>
+            <span className={node.data.trainable !== false ? 'is-trainable' : ''}>
+              {invalid ? '需配置' : node.data.trainable !== false ? '参与训练' : '已冻结'}
+            </span>
+            <LocateFixed size={12} />
+          </button>;
+          })}
+        </div>}
+        {import.meta.env.DEV && <details className="parameter-details"><summary>开发工具</summary>
+          <Button size="sm" onClick={onDemo}>模拟调试 · Mock</Button></details>}
       </section>
       <section id="training-data" className="parameter-group">
         <h3><span>02</span>训练数据<Button size="sm" variant="ghost" aria-label="打开数据资源" title="数据资源" onClick={onManageData}><ArrowUpRight size={13} /></Button></h3>

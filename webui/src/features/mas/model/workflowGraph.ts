@@ -33,7 +33,10 @@ function inferredKind(agent: AgentSpec): AgentKind {
   return 'blank';
 }
 
-export function workflowToFlow(wf: WorkflowSpec): { nodes: GraphNode[]; edges: GraphEdge[] } {
+export function workflowToFlow(
+  wf: WorkflowSpec,
+  modelNames: ReadonlyMap<string, string> = new Map(),
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const entry = wf.entry_agent || 'hub';
   const agents =
     wf.agents && (wf.agents.length > 0 || wf.topology === 'graph')
@@ -62,6 +65,7 @@ export function workflowToFlow(wf: WorkflowSpec): { nodes: GraphNode[]; edges: G
       memory_scope: a.memory_scope || 'agent',
       system_prompt: a.system_prompt ?? (a.id === 'hub' ? wf.hub?.system_prompt : '') ?? '',
       model: a.model || 'inherit',
+      model_name: a.model && a.model !== 'inherit' ? modelNames.get(a.model) || a.model : undefined,
       trainable: a.trainable !== false,
       profile: a.profile || {},
       meta: a.meta || {},

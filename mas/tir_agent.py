@@ -688,19 +688,20 @@ class TirAgent:
 
     def graph(self) -> CompiledStateGraph:
         builder = StateGraph(AgentState)
-        builder.add_node("agent", self.call_model)
+        model_node = f"agent:{self.agent_id}"
+        builder.add_node(model_node, self.call_model)
         builder.add_node("tools", self.call_tools)
         builder.add_node("finalize", self.request_finalize)
         builder.add_node("react", self.resume_react)
-        builder.add_edge(START, "agent")
+        builder.add_edge(START, model_node)
         builder.add_conditional_edges(
-            "agent",
+            model_node,
             self.should_continue,
             {"tools": "tools", "finalize": "finalize", "react": "react", "end": END},
         )
-        builder.add_edge("tools", "agent")
-        builder.add_edge("finalize", "agent")
-        builder.add_edge("react", "agent")
+        builder.add_edge("tools", model_node)
+        builder.add_edge("finalize", model_node)
+        builder.add_edge("react", model_node)
         return builder.compile()
 
 

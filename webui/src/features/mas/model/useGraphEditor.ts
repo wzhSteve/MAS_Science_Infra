@@ -11,8 +11,13 @@ import { defaultHandles, resolveHandles, serializeEdges } from './edgeGeometry';
 
 type Graph = { nodes: GraphNode[]; edges: GraphEdge[] };
 
-export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: WorkflowSpec) => void, palette: Palette = {}) {
-  const [graph, setGraph] = useState<Graph>(() => workflowToFlow(workflow));
+export function useGraphEditor(
+  workflow: WorkflowSpec,
+  onChange: (workflow: WorkflowSpec) => void,
+  palette: Palette = {},
+  modelNames: ReadonlyMap<string, string> = new Map(),
+) {
+  const [graph, setGraph] = useState<Graph>(() => workflowToFlow(workflow, modelNames));
   const [selection, setSelection] = useState<GraphSelection>(null);
   const [notice, setNotice] = useState('');
   const graphRef = useRef(graph);
@@ -35,14 +40,25 @@ export function useGraphEditor(workflow: WorkflowSpec, onChange: (workflow: Work
     const revision = workflowGraphRevision(workflow);
     if (revision === graphRevisionRef.current) return;
     graphRevisionRef.current = revision;
-    const next = workflowToFlow(workflow);
+    const next = workflowToFlow(workflow, modelNames);
     const previous = new Map(graphRef.current.nodes.map((node) => [node.id, node]));
     next.nodes = next.nodes.map((node) => ({
       ...node, position: previous.get(node.id)?.position ?? node.position,
       selected: previous.get(node.id)?.selected,
     }));
     replaceGraph(next);
-  }, [workflow, replaceGraph]);
+  }, [workflow, replaceGraph, modelNames]);
+
+  useEffect(() => {
+    const current = graphRef.current;
+    const nodes = current.nodes.map(node => {
+      if (node.type !== 'agent') return node;
+      const model = node.data.model;
+      const modelName = model && model !== 'inherit' ? modelNames.get(model) || model : undefined;
+      return node.data.model_name === modelName ? node : { ...node, data: { ...node.data, model_name: modelName } };
+    });
+    if (nodes.some((node, index) => node !== current.nodes[index])) replaceGraph({ ...current, nodes });
+  }, [modelNames, replaceGraph]);
 
   const commit = useCallback((next: Graph, geometryOnly = false) => {
     const nodeById = new Map(next.nodes.map((node) => [node.id, node]));

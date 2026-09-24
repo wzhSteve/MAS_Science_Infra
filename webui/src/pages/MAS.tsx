@@ -14,6 +14,11 @@ import type { SettingsSection } from '../features/settings/model/sections';
 import type { ResourceCategory } from '../app/navigation';
 import { useSamplingPreview } from '../features/sampling/model/useSamplingPreview';
 import type { CanvasMode } from '../features/mas/types';
+import type { BindingView } from '../features/resources/components/ModelBinding';
+import {
+  useAgentModelOptions,
+  type AgentDefaultModel,
+} from '../features/resources/components/AgentModelSelect';
 
 export type MASPanelProps = {
   expId: string; bundle: Bundle | null; onReload: () => void; meta: MetaResponse | null;
@@ -46,6 +51,14 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
   const [debugMode, setDebugMode] = useState<'live' | 'mock'>('live');
   const readiness = useModelReadiness(props.expId, props.bundle?.llm.config_revision, workflowVisible && debugOpen);
   const [traceFocus, setTraceFocus] = useState<TraceFocusRequest | null>(null);
+  const [defaultModel, setDefaultModel] = useState<AgentDefaultModel>({
+    name: '读取中',
+    source: 'local',
+    available: false,
+    trainable: false,
+    loaded: false,
+  });
+  const modelOptions = useAgentModelOptions(editing);
   const focusSequence = useRef(0);
   const configureModel = useCallback(() => {
     setModelRequest(value => value + 1);
@@ -69,6 +82,17 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
   const locateAgent = useCallback((agentId: string) => {
     locate({ agentId }); props.onWorkspace();
   }, [locate, props.onWorkspace]);
+  const captureTrainingModel = useCallback((state: BindingView) => {
+    const legacyPath = props.bundle?.rl.model_path || props.bundle?.rl.actor_rollout_ref?.model?.path || '';
+    const available = Boolean(state.resource || legacyPath);
+    setDefaultModel({
+      name: state.resource?.name || legacyPath.split(/[\\/]/).pop() || (state.loaded ? '未选择' : '读取中'),
+      source: 'local',
+      available,
+      trainable: available,
+      loaded: state.loaded,
+    });
+  }, [props.bundle?.rl.actor_rollout_ref?.model?.path, props.bundle?.rl.model_path]);
   const { workflow } = draft;
   const samplingPreview = useSamplingPreview(workflow, editing);
   const executable = useMemo(() => workflow ? executableInfo(workflow) : { ok: false, reason: '加载中…' }, [workflow]);
@@ -102,6 +126,8 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
         onManageModels={modelResources} onManageData={dataResources} selectedResource={props.selectedResource} resourcePurpose={props.resourcePurpose}
         onSuggestionApplied={consumeResourceSelection} workflow={workflow} palette={draft.palette}
         onWorkflowChange={draft.onWorkflowChange} onLocate={locateAgent} onDemo={openDemo}
+        onTrainingModelState={captureTrainingModel}
+        modelOptions={modelOptions.options}
         onCanvasModeChange={selectCanvasMode}
         canvasMode={canvasMode} samplingPreview={samplingPreview.data} samplingPreviewError={samplingPreview.error}
         selectedSamplingOpportunity={selectedSamplingOpportunity}
@@ -112,6 +138,9 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
         <MasGraphEditor workflow={workflow} palette={draft.palette} onChange={draft.onWorkflowChange}
           active={workflowVisible} libraryOpen={libraryOpen} onLibraryOpenChange={setLibraryOpen} traceFocus={traceFocus}
           inspectorVisible={!debugOpen} onInspect={closeDebug} onModelResources={modelResources}
+          defaultModel={defaultModel}
+          modelOptions={modelOptions.options} modelOptionsLoading={modelOptions.loading}
+          modelOptionsError={modelOptions.error} onRefreshModelOptions={modelOptions.refresh}
           mode={canvasMode} samplingPreview={samplingPreview.data}
           selectedSamplingOpportunity={selectedSamplingOpportunity}
           onSelectSamplingOpportunity={setSelectedSamplingOpportunity}

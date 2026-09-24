@@ -23,6 +23,16 @@
 .parameter-agent-list > span { padding-block: 5px; }
 .parameter-agent-list > div { display: flex; flex: 1; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .parameter-agent-list button { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 4px 8px; font-size: 11px; border: 1px solid #dce4f0; border-radius: 5px; background: #f4f7fc; color: var(--accent); cursor: pointer; overflow-wrap: anywhere; }
+.training-agent-summary { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--surface-subtle); }
+.training-agent-summary__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 4px; color: var(--text-secondary); font-size: 11px; }
+.training-agent-summary__heading small { font-size: 10px; }
+.training-agent-summary > button { display: grid; grid-template-columns: minmax(54px, auto) minmax(0, 1fr) auto auto; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-primary); font-size: 11px; text-align: left; cursor: pointer; }
+.training-agent-summary > button:hover { border-color: #d7e1ef; background: var(--surface); }
+.training-agent-summary > button.is-invalid { border-color: #ead2d2; background: var(--danger-subtle); }
+.training-agent-summary > button > span:nth-child(2) { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.training-agent-summary > button > span:nth-child(3) { padding: 2px 6px; border-radius: 999px; background: #edf0f4; color: var(--text-secondary); font-size: 10px; white-space: nowrap; }
+.training-agent-summary > button > span:nth-child(3).is-trainable { background: var(--accent-subtle); color: var(--accent); }
+.training-agent-summary > button > svg { color: var(--text-secondary); }
 .parameter-summary-row { display: flex; align-items: center; gap: 10px; font-size: 11px; min-height: 26px; }
 .parameter-summary-row > span:first-child { color: var(--text-secondary); margin-right: auto; }
 .parameter-summary-row > .ui-button { min-height: 24px; padding: 2px 5px; font-size: 11px; color: var(--accent); }
@@ -44,6 +54,8 @@
 .training-parameters .inline-notice { font-size: 11px; padding: 8px 10px; }
 .training-parameters .model-resource-choice { min-width: 0; }
 .training-parameters .model-resource-choice > .inline-notice { margin-top: 8px; }
+.training-model-select { display: grid; gap: 7px; }
+.training-model-select .inline-notice { margin: 0; }
 .training-parameters.is-expanded .parameter-panel-scroll { width: 100%; max-width: 920px; align-self: center; padding-inline: 36px; padding-bottom: 48px; }
 .training-parameters.is-expanded .parameter-group { padding-block: 28px; gap: 18px; }
 .training-parameters.is-expanded .parameter-group > h3 { font-size: 15px; }

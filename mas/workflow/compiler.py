@@ -307,14 +307,11 @@ def next_agent(compiled: CompiledWorkflow, current: str) -> Optional[str]:
 
 def trainable_agents(spec: MASSpec) -> List[str]:
     compiled = compile_spec(spec)
-    tool_ids = tool_agent_ids(spec)
     names = [
         aid
         for aid, a in compiled.agents.items()
-        if a.trainable and aid not in KNOWN_TOOLS and aid not in tool_ids
+        if a.trainable and aid not in KNOWN_TOOLS
     ]
-    if not names:
-        return [compiled.entry_agent]
     return names
 
 

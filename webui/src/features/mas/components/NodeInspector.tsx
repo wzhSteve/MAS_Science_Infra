@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Bot, Flag, Route, Trash2, Wrench, X } from 'lucide-react';
 import type { AgentKind, Config, Palette, RouterStrategy } from '../../../shared/api/types';
 import type { GraphNode, GraphNodeData, SelectedGraphNode } from '../types';
@@ -9,6 +9,12 @@ import { Textarea } from '../../../shared/ui/textarea';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { FormField } from '../../../shared/components/FormField';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
+import {
+  AgentModelSelect,
+  resolveAgentModel,
+  type AgentDefaultModel,
+  type AgentModelOption,
+} from '../../resources/components/AgentModelSelect';
 
 const AGENT_KINDS: Array<{ value: Exclude<AgentKind, 'tool'>; label: string }> = [
   { value: 'hub', label: 'Hub' },
@@ -44,11 +50,60 @@ function JsonObjectField({ label, value, onChange }: {
   </FormField>;
 }
 
-export const NodeInspector = memo(function NodeInspector({ selected, nodes, palette, entryId, onPatch, onEntry, onDelete, onClose, onModelResources }: {
+function AgentModelFields({ data, defaultModel, options, loading, error, onRefresh, onPatch }: {
+  data: GraphNodeData;
+  defaultModel: AgentDefaultModel;
+  options: AgentModelOption[];
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => Promise<unknown>;
+  onPatch: (patch: Partial<GraphNodeData>) => void;
+}) {
+  const trainable = data.trainable !== false;
+  const [trainableError, setTrainableError] = useState('');
+  const effective = useMemo(
+    () => resolveAgentModel(data.model, options, defaultModel),
+    [data.model, defaultModel, options],
+  );
+  useEffect(() => setTrainableError(''), [data.model]);
+  const changeTrainable = (next: boolean) => {
+    if (next && (!effective.available || !effective.trainable)) {
+      setTrainableError(effective.available
+        ? `${effective.name} 没有可训练权重。请先选择本地可训练模型。`
+        : `${effective.inherited ? '实验默认模型' : effective.name} 不可用。请先选择本地可训练模型。`);
+      return;
+    }
+    setTrainableError('');
+    onPatch({ trainable: next });
+  };
+  return <>
+    <FormField label="模型" hint="每个 Agent 都需要模型；继承表示使用实验默认模型。">
+      <AgentModelSelect value={data.model || 'inherit'} defaultModel={defaultModel}
+        trainable={trainable} options={options} loading={loading} error={error} onRefresh={onRefresh}
+        onChange={(model) => onPatch({ model })} />
+    </FormField>
+    <label className="mas-checkbox-row"><Checkbox checked={trainable}
+      onChange={(event) => changeTrainable(event.target.checked)} />参与训练</label>
+    {trainableError && <InlineNotice tone="warning">{trainableError}</InlineNotice>}
+    <p className="field-hint">{trainable
+      ? '该 Agent 的模型调用进入训练优化；模型必须具备可训练权重。'
+      : '该 Agent 仍参与 Workflow 执行，但模型参数保持冻结。'}</p>
+  </>;
+}
+
+export const NodeInspector = memo(function NodeInspector({
+  selected, nodes, palette, entryId, defaultModel, modelOptions, modelOptionsLoading, modelOptionsError,
+  onRefreshModelOptions, onPatch, onEntry, onDelete, onClose, onModelResources,
+}: {
   selected: SelectedGraphNode;
   nodes: GraphNode[];
   palette: Palette;
   entryId: string;
+  defaultModel: AgentDefaultModel;
+  modelOptions: AgentModelOption[];
+  modelOptionsLoading: boolean;
+  modelOptionsError: string | null;
+  onRefreshModelOptions: () => Promise<unknown>;
   onPatch: (patch: Partial<GraphNodeData>) => void;
   onEntry: (id: string) => void;
   onDelete: () => void;
@@ -79,17 +134,15 @@ export const NodeInspector = memo(function NodeInspector({ selected, nodes, pale
           <FormField label="工具标识"><Input value={selected.id} readOnly className="mono" /></FormField>
           <p className="field-hint">{selected.data.description || '智能工具可使用模型、Memory 和独立训练配置。'}</p>
           <FormField label="角色"><Input value={selected.data.role || 'tool'} onChange={(event) => onPatch({ role: event.target.value })} /></FormField>
-          <FormField label="模型" hint="inherit 表示继承实验默认模型。">
-            <Input value={selected.data.model || 'inherit'} onChange={(event) => onPatch({ model: event.target.value })} />
-          </FormField>
+          <AgentModelFields data={selected.data} defaultModel={defaultModel}
+            options={modelOptions} loading={modelOptionsLoading} error={modelOptionsError}
+            onRefresh={onRefreshModelOptions} onPatch={onPatch} />
           <FormField label="系统提示词">
             <Textarea rows={7} value={selected.data.system_prompt || ''} onChange={(event) => onPatch({ system_prompt: event.target.value })} />
           </FormField>
           <FormField label="Memory scope">
             <Input value={selected.data.memory_scope || 'agent'} onChange={(event) => onPatch({ memory_scope: event.target.value })} />
           </FormField>
-          <label className="mas-checkbox-row"><Checkbox checked={selected.data.trainable !== false}
-            onChange={(event) => onPatch({ trainable: event.target.checked })} />参与训练</label>
         </div>
         <details className="mas-property-section">
           <summary>扩展字段</summary>
@@ -162,17 +215,16 @@ export const NodeInspector = memo(function NodeInspector({ selected, nodes, pale
             <Input value={(selected.data.skills || []).join(', ')} onChange={(e) =>
               onPatch({ skills: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} />
           </FormField>
-          <FormField label="模型" hint="inherit 表示继承实验默认模型。">
-            <Input value={selected.data.model || 'inherit'} onChange={(event) => onPatch({ model: event.target.value })} />
-          </FormField>
           <FormField label="Memory scope">
             <Input value={selected.data.memory_scope || 'agent'} onChange={(event) => onPatch({ memory_scope: event.target.value })} />
           </FormField>
         </div>
         <div className="mas-property-section">
-          <h3>模型绑定</h3>
-          <p className="field-hint">默认继承实验模型；model 字段可声明运行时支持的节点级模型标识。</p>
-          <Button size="sm" variant="ghost" onClick={onModelResources}>查看实验模型资源</Button>
+          <h3>模型与训练</h3>
+          <AgentModelFields data={selected.data} defaultModel={defaultModel}
+            options={modelOptions} loading={modelOptionsLoading} error={modelOptionsError}
+            onRefresh={onRefreshModelOptions} onPatch={onPatch} />
+          <Button size="sm" variant="ghost" onClick={onModelResources}>管理模型</Button>
         </div>
         <fieldset className="mas-property-section">
           <legend>可调用工具</legend>
@@ -188,8 +240,6 @@ export const NodeInspector = memo(function NodeInspector({ selected, nodes, pale
           {selected.id === 'hub' && <p className="field-hint">hub 未显式绑定工具时会使用工作流的全局工具。移除绑定不等于禁止调用。</p>}
         </fieldset>
         <div className="mas-property-section">
-          <label className="mas-checkbox-row"><Checkbox checked={selected.data.trainable !== false}
-            onChange={(e) => onPatch({ trainable: e.target.checked })} />参与训练</label>
           <Button size="sm" disabled={selected.id === entryId} onClick={() => onEntry(selected.id)}>
             <Flag size={14} />{selected.id === entryId ? '当前运行入口' : '设为运行入口'}
           </Button>

@@ -520,6 +520,36 @@ def register_and_bind_training(
         }
 
 
+def ensure_local_training_resource(*, name: str, model_path: str) -> dict[str, Any]:
+    """Return the training resource for a discovered local model, creating it once."""
+    from .training import local_model_candidate
+
+    candidate = local_model_candidate(model_path)
+    canonical_path = candidate["path"]
+    clean = validate_resource(
+        {
+            "name": name or candidate["name"],
+            "type": "training",
+            "config": {"model_path": canonical_path},
+            "credential_mode": "none",
+        }
+    )
+    with transaction(write=True) as connection:
+        existing = connection.execute(
+            """
+            SELECT id FROM model_resources
+            WHERE type = 'training' AND json_extract(config, '$.model_path') = ?
+            ORDER BY created_at LIMIT 1
+            """,
+            (canonical_path,),
+        ).fetchone()
+        return (
+            _resource(connection, existing["id"])
+            if existing
+            else _create(connection, clean)
+        ).public()
+
+
 def migrate_binding(
     exp_id: str,
     *,

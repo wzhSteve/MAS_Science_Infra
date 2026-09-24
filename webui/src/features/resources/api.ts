@@ -96,6 +96,10 @@ export const modelResourcesApi = {
     request<{ resource: ModelResource; bindings: ModelBindings }>(`${bindingPath(id)}/register-local`, {
       method: 'POST', body: JSON.stringify(body),
     }),
+  ensureLocal: (body: { name: string; model_path: string }) =>
+    request<ModelResource>('/api/model-resources/register-local', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
   migrate: (id: string, body: { revision: number; purpose: ModelResourceType; name: string; credential_mode: 'copy' | 'service' }) =>
     request<{ resource: ModelResource; bindings: ModelBindings }>(`${bindingPath(id)}/migrate`, { method: 'POST', body: JSON.stringify(body) }),
   discoverLocal: (signal?: AbortSignal) =>

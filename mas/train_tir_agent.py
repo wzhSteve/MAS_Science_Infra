@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
@@ -154,7 +155,7 @@ def config_train_a800_2gpu() -> Dict[str, Any]:
     return config
 
 
-def train(config: Dict[str, Any], n_runners: int, active_agent: Optional[str]) -> None:
+def train(config: Dict[str, Any], n_runners: int, active_agents: list[str]) -> None:
     import pandas as pd
     from tir_agent import LitTirAgent
 
@@ -201,21 +202,20 @@ def train(config: Dict[str, Any], n_runners: int, active_agent: Optional[str]) -
             trainer_cls=TirAgentLightningTrainer,
             daemon_cls=bound_daemon_cls(tir_algo, tir_cfg),
         )
-    # MAS agent names (e.g. "hub") live in a different namespace from the langgraph
-    # span agent names (langchain.chain.type = langgraph node names: "agent", "tools",
-    # "should_continue", "finalize", "react"). TracerTraceToTriplet.agent_name() reads
-    # the langgraph namespace, so map the MAS trainable agent onto the langgraph node
-    # that owns all LLM calls (the "agent" node), otherwise agent_match filters out
-    # every LLM span and the training batch ends up empty.
-    agent_match = "agent" if active_agent else None
+    # TirAgent names its LangGraph LLM node "agent:<MAS id>", allowing the
+    # adapter to select one Agent without mixing spans from the rest of the graph.
+    agent_match = (
+        rf"^agent:({'|'.join(re.escape(agent) for agent in active_agents)})$"
+        if active_agents else None
+    )
     trainer = agl.Trainer(
         n_runners=n_runners,
         algorithm=algorithm,
         adapter={"agent_match": agent_match} if agent_match else None,
     )
-    if active_agent:
+    if active_agents:
         print(
-            f"Adapter agent match: {agent_match!r} (MAS agent {active_agent!r} -> langgraph node)"
+            f"Adapter agent match: {agent_match!r} (MAS agents {active_agents!r})"
         )
 
     train_path = _resolve_parquet_path(config["data"]["train_files"], "train.parquet")
@@ -241,7 +241,7 @@ def train(config: Dict[str, Any], n_runners: int, active_agent: Optional[str]) -
 
 def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
     out = deepcopy(base)
-    skip = {"profile", "algo", "n_runners", "model_path", "devices", "rollout_per_gpu"}
+    skip = {"profile", "algo", "n_runners", "model_path", "devices", "rollout_per_gpu", "active_agent"}
     for k, v in overlay.items():
         if k in skip:
             continue
@@ -285,6 +285,7 @@ def main() -> None:
     parser.add_argument("config", choices=["fast", "a800", "a800_2gpu"])
     parser.add_argument("--algo", type=str, default="grpo", choices=list(VALID_ALGOS))
     parser.add_argument("--active-agent", type=str, default=None)
+    parser.add_argument("--active-agents", type=str, default=None)
     parser.add_argument("--n-runners", type=int, default=None)
     parser.add_argument("--model", type=str, default=None, help=f"Override model path (default: {DEFAULT_MODEL_PATH})")
     parser.add_argument(
@@ -374,7 +375,12 @@ def main() -> None:
             print(f"CUDA_VISIBLE_DEVICES={vis} → trainer.n_gpus_per_node={n_vis}")
 
     print(f"Starting training with '{args.config}' / algo={algo} ...")
-    train(config, n_runners=n_runners, active_agent=args.active_agent)
+    active_agents = [
+        value.strip()
+        for value in str(args.active_agents or args.active_agent or "").split(",")
+        if value.strip()
+    ]
+    train(config, n_runners=n_runners, active_agents=active_agents)
 
 
 if __name__ == "__main__":

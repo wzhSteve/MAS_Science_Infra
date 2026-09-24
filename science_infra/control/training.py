@@ -29,7 +29,13 @@ from .experiments import (
     normalize_rl_data_paths,
     workflow_executable,
 )
-from .model_resources import ResourceSnapshot, list_resources, resolve_binding
+from .model_resources import (
+    ResourceError,
+    ResourceSnapshot,
+    get_resource,
+    list_resources,
+    resolve_binding,
+)
 from .paths import tir_agent_root
 
 _LAUNCH_LOCK = threading.Lock()
@@ -57,6 +63,8 @@ class TrainingSource:
     resource_id: str | None = None
     resource_revision: int | None = None
     resource_name: str | None = None
+    selection_source: str = "legacy"
+    agent_id: str | None = None
 
     def public(self) -> dict[str, Any]:
         return {
@@ -65,6 +73,8 @@ class TrainingSource:
             "resource_id": self.resource_id,
             "resource_revision": self.resource_revision,
             "resource_name": self.resource_name,
+            "selection_source": self.selection_source,
+            "agent_id": self.agent_id,
         }
 
 
@@ -81,6 +91,7 @@ class TrainingPlan:
     group_n: int
     branch_site_count: int
     trainable_agents: list[str]
+    active_agents: list[str]
     checks: list[dict[str, str]]
     blocking_issues: list[dict[str, str]]
     warnings: list[dict[str, str]]
@@ -105,6 +116,7 @@ class TrainingPlan:
                 "group_n": self.group_n,
                 "branch_site_count": self.branch_site_count,
                 "trainable_agents": self.trainable_agents,
+                "active_agents": self.active_agents,
                 "data": dict(self.rl.get("data") or {}),
             },
             "checks": self.checks,
@@ -128,9 +140,41 @@ def _model_path(rl: dict[str, Any]) -> str:
     ).strip()
 
 
+def _agent_model_id(
+    workflow: dict[str, Any], agent_id: str | None
+) -> str | None:
+    if not agent_id:
+        return None
+    for agent in workflow.get("agents") or []:
+        if isinstance(agent, dict) and str(agent.get("id") or "") == agent_id:
+            value = str(agent.get("model") or "").strip()
+            return value if value and value != "inherit" else None
+    return None
+
+
 def resolve_training_source(
-    exp_id: str, rl: dict[str, Any] | None = None
+    exp_id: str,
+    rl: dict[str, Any] | None = None,
+    *,
+    workflow: dict[str, Any] | None = None,
+    agent_id: str | None = None,
 ) -> TrainingSource:
+    workflow = workflow or {}
+    override_id = _agent_model_id(workflow, agent_id)
+    if override_id:
+        resource = get_resource(override_id)
+        if resource.data["type"] != "training":
+            raise ResourceError("Agent 指定的模型不可用于训练。")
+        path = str(resource.data["config"]["model_path"]).strip()
+        return TrainingSource(
+            source="resource",
+            model_path=path,
+            resource_id=resource.data["id"],
+            resource_revision=resource.data["revision"],
+            resource_name=resource.data["name"],
+            selection_source="agent_override",
+            agent_id=agent_id,
+        )
     resource = resolve_binding(exp_id, "training")
     if resource is not None:
         path = str(resource.data["config"]["model_path"]).strip()
@@ -140,9 +184,16 @@ def resolve_training_source(
             resource_id=resource.data["id"],
             resource_revision=resource.data["revision"],
             resource_name=resource.data["name"],
+            selection_source="experiment_default",
+            agent_id=agent_id,
         )
     config = rl if rl is not None else load_bundle(exp_id)["rl"]
-    return TrainingSource(source="legacy", model_path=_model_path(config))
+    return TrainingSource(
+        source="legacy",
+        model_path=_model_path(config),
+        selection_source="legacy",
+        agent_id=agent_id,
+    )
 
 
 def _allowed_model_roots() -> list[Path]:
@@ -217,7 +268,7 @@ def local_model_candidate(model_path: str) -> dict[str, Any]:
         None,
     )
     if candidate is None:
-        raise ValueError("本地模型不在允许的发现目录中。")
+        raise ResourceError("本地模型不在允许的发现目录中。")
     return candidate
 
 
@@ -271,13 +322,47 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
 
     bundle = load_bundle(exp_id)
     raw_rl = deepcopy(bundle["rl"])
-    source = resolve_training_source(exp_id, raw_rl)
+    workflow = bundle.get("workflow") or {}
+    candidate_agents: list[str] = []
+    try:
+        _workflow_path()
+        from workflow.compiler import trainable_agents as compile_trainable_agents
+        from workflow.spec import MASSpec
+
+        candidate_agents = compile_trainable_agents(MASSpec.model_validate(workflow))
+    except Exception:
+        candidate_agents = []
+    active_agents = list(candidate_agents)
+    source_error: str | None = None
+    agent_sources: list[TrainingSource] = []
+    for agent_id in active_agents or [None]:
+        try:
+            agent_sources.append(resolve_training_source(
+                exp_id,
+                raw_rl,
+                workflow=workflow,
+                agent_id=agent_id,
+            ))
+        except ResourceError as error:
+            source_error = str(error)
+            break
+    source = agent_sources[0] if agent_sources else TrainingSource(
+        source="invalid",
+        model_path="",
+        selection_source="agent_override",
+        agent_id=active_agents[0] if active_agents else None,
+    )
+    distinct_models = {
+        (item.resource_id or "", str(Path(item.model_path).expanduser()))
+        for item in agent_sources
+    }
+    if not source_error and len(distinct_models) > 1:
+        source_error = "多个参与训练的 Agent 使用了不同模型；当前单个训练进程只能优化一套权重，请统一模型后启动。"
     ids = [int(value) for value in (raw_rl.get("devices") or {}).get("ids") or [0]]
     try:
         rl = normalize_rl_data_paths(apply_gpu_selection(raw_rl, ids))
     except ValueError as error:
         raise TrainingError("invalid_data_path", str(error)) from error
-    workflow = bundle.get("workflow") or {}
     try:
         rl = _sync_workflow_sampling_into_rl(rl, workflow)
     except ValueError as error:
@@ -290,6 +375,7 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     profile = str(rl.get("profile") or "fast")
     profile_note = rl.get("_profile_downgraded")
     rl = {key: value for key, value in rl.items() if not str(key).startswith("_")}
+    rl.pop("active_agent", None)
     rl["model_path"] = source.model_path
     actor_rollout_ref = dict(rl.get("actor_rollout_ref") or {})
     model = dict(actor_rollout_ref.get("model") or {})
@@ -346,7 +432,9 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     )
 
     model_path = Path(source.model_path).expanduser() if source.model_path else None
-    if model_path and model_path.is_dir() and (model_path / "config.json").is_file():
+    if source_error:
+        record("model", "训练模型", "error", source_error)
+    elif model_path and model_path.is_dir() and (model_path / "config.json").is_file():
         record("model", "训练模型", "pass", f"{source.source} · {model_path}")
     else:
         record(
@@ -410,6 +498,13 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
             )
         else:
             record("workflow", "Workflow", "error", "Workflow 没有可训练 Agent。")
+        if trainable_agents:
+            record(
+                "training_scope",
+                "训练范围",
+                "pass",
+                "、".join(trainable_agents),
+            )
     else:
         record(
             "workflow",
@@ -486,13 +581,14 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     ]
     if rl.get("n_runners") is not None:
         launch_preview.extend(["--n-runners", str(int(rl["n_runners"]))])
-    if trainable_agents:
-        launch_preview.extend(["--active-agent", trainable_agents[0]])
+    if active_agents:
+        launch_preview.extend(["--active-agents", ",".join(active_agents)])
     revision_payload = {
         "experiment_id": exp_id,
         "rl": rl,
         "workflow": bundle.get("workflow"),
         "model": source.public(),
+        "active_agents": active_agents,
         "gpu_ids": ids,
     }
     revision = hashlib.sha256(
@@ -512,6 +608,7 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
         group_n=group_n,
         branch_site_count=branch_site_count,
         trainable_agents=trainable_agents,
+        active_agents=active_agents,
         checks=checks,
         blocking_issues=blocking,
         warnings=warnings,
@@ -651,7 +748,7 @@ def _launch_training(
         "n_gpus": len(plan.gpu_ids),
         "n_runners": int(plan.rl.get("n_runners") or 1),
         "group_n": plan.group_n,
-        "active_agent": plan.trainable_agents[0] if plan.trainable_agents else None,
+        "active_agents": plan.active_agents,
         "snapshot": {
             "rl": str(rl_path),
             "workflow": str(workflow_path),
@@ -687,8 +784,8 @@ def _launch_training(
             argv.extend(
                 ["--n-runners", str(int(plan.rl["n_runners"]))]
             )
-        if plan.trainable_agents:
-            argv.extend(["--active-agent", plan.trainable_agents[0]])
+        if plan.active_agents:
+            argv.extend(["--active-agents", ",".join(plan.active_agents)])
         launch = {
             "schema_version": 1,
             "run_id": run_id,

@@ -22,6 +22,11 @@ import { GraphInteractionContext } from './GraphInteractionContext';
 import { deriveBranchCandidates, effectiveSites, findCandidateSite } from '../../sampling/model/branchSites';
 import { edgeForOpportunity, opportunitiesByEdge as mapOpportunitiesByEdge } from '../../sampling/model/samplingCanvas';
 import { SamplingSettings } from '../../sampling/components/SamplingSettings';
+import {
+  resolveAgentModel,
+  type AgentDefaultModel,
+  type AgentModelOption,
+} from '../../resources/components/AgentModelSelect';
 
 type Props = {
   workflow: WorkflowSpec;
@@ -31,6 +36,11 @@ type Props = {
   libraryOpen: boolean;
   onLibraryOpenChange: (open: boolean) => void;
   onModelResources: () => void;
+  defaultModel: AgentDefaultModel;
+  modelOptions: AgentModelOption[];
+  modelOptionsLoading: boolean;
+  modelOptionsError: string | null;
+  onRefreshModelOptions: () => Promise<unknown>;
   inspectorVisible?: boolean;
   onInspect?: () => void;
   traceFocus?: TraceFocusRequest | null;
@@ -51,11 +61,13 @@ function samplingState(opportunity?: SamplingOpportunity): SamplingCanvasState |
 }
 
 function GraphWorkbench({
-  workflow, palette, onChange, active, libraryOpen, onLibraryOpenChange, onModelResources, traceFocus,
+  workflow, palette, onChange, active, libraryOpen, onLibraryOpenChange, onModelResources, defaultModel,
+  modelOptions, modelOptionsLoading, modelOptionsError, onRefreshModelOptions, traceFocus,
   inspectorVisible = true, onInspect, mode, samplingPreview, selectedSamplingOpportunity, onSelectSamplingOpportunity,
   onModeChange, onDebug, debugOpen,
 }: Props) {
-  const graph = useGraphEditor(workflow, onChange, palette);
+  const modelNames = useMemo(() => new Map(modelOptions.map(option => [option.id, option.name])), [modelOptions]);
+  const graph = useGraphEditor(workflow, onChange, palette, modelNames);
   const flow = useReactFlow<GraphNode, GraphEdge>();
   const root = useRef<HTMLDivElement>(null);
   const lastTraceFocus = useRef<number | null>(null);
@@ -112,20 +124,30 @@ function GraphWorkbench({
     const samplingEdge = focusedSamplingEdge
       ? graph.edges.find(edge => edge.id === focusedSamplingEdge)
       : undefined;
-    return graph.nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        issue: node.id === executable.nodeId ? executable.reason : undefined,
-        related: mode === 'sampling'
-          ? samplingEdge?.source === node.id || samplingEdge?.target === node.id
-          : selectedEdge?.source === node.id || selectedEdge?.target === node.id,
-        branchCount: branchCounts.get(node.id) || 0,
-        canvasMode: mode,
-        samplingState: undefined,
-      },
-    }));
-  }, [graph.nodes, graph.edges, executable, selectedEdge, selectedSamplingEdge, hoveredSamplingEdge, branchCounts, mode]);
+    return graph.nodes.map((node) => {
+      const effectiveModel = node.type === 'agent'
+        ? resolveAgentModel(node.data.model, modelOptions, defaultModel)
+        : null;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          issue: node.id === executable.nodeId ? executable.reason : undefined,
+          related: mode === 'sampling'
+            ? samplingEdge?.source === node.id || samplingEdge?.target === node.id
+            : selectedEdge?.source === node.id || selectedEdge?.target === node.id,
+          branchCount: branchCounts.get(node.id) || 0,
+          canvasMode: mode,
+          samplingState: undefined,
+          effective_model_name: effectiveModel?.name,
+          model_source: effectiveModel?.source,
+          model_inherited: effectiveModel?.inherited,
+          model_available: effectiveModel?.available,
+          model_trainable: effectiveModel?.trainable,
+        },
+      };
+    });
+  }, [graph.nodes, graph.edges, executable, selectedEdge, selectedSamplingEdge, hoveredSamplingEdge, branchCounts, mode, modelOptions, defaultModel]);
   const lanes = useMemo(() => edgeLanes(graph.edges), [graph.edges]);
   const edges = useMemo(() => graph.edges.map((edge) => {
     const opportunity = opportunitiesByEdge.get(edge.id);
@@ -439,7 +461,9 @@ function GraphWorkbench({
         requestAnimationFrame(() => void flow.fitView({ padding: 0.25, maxZoom: 1 }));
       }} />}
     {mode === 'workflow' && inspectorVisible && (graph.selected ? <NodeInspector selected={graph.selected} nodes={graph.nodes} palette={palette} entryId={workflow.entry_agent || 'hub'}
-        onModelResources={onModelResources}
+        onModelResources={onModelResources} defaultModel={defaultModel}
+        modelOptions={modelOptions} modelOptionsLoading={modelOptionsLoading} modelOptionsError={modelOptionsError}
+        onRefreshModelOptions={onRefreshModelOptions}
         onPatch={graph.updateSelected} onEntry={graph.setEntry} onDelete={graph.deleteSelected} onClose={closePanels} />
       : selectedEdge ? <EdgeInspector key={selectedEdge.id} edge={selectedEdge} nodes={graph.nodes}
         rules={graph.rules} topology={workflow.topology}

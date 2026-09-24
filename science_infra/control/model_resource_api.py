@@ -54,6 +54,16 @@ def discover_local_models() -> dict[str, Any]:
     return {"items": discover()}
 
 
+@router.post("/api/model-resources/register-local")
+def register_local_model(body: dict[str, Any]) -> dict[str, Any]:
+    _fields(body, {"name", "model_path"})
+    return _call(
+        catalog.ensure_local_training_resource,
+        name=body["name"],
+        model_path=body["model_path"],
+    )
+
+
 @router.get("/api/model-resources/{resource_id}")
 def get_model_resource(resource_id: str) -> dict[str, Any]:
     return _call(catalog.resource_detail, resource_id)

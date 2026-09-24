@@ -116,6 +116,10 @@
   @keyframes feedback-exit { to { opacity: 0; transform: translateX(12px); } }
   @keyframes feedback-swipe { to { transform: translateX(var(--radix-toast-swipe-end-x)); opacity: 0; } }
   .training-preflight { display: grid; gap: 14px; margin-top: 18px; }
+  .training-plan-agents { display: grid; gap: 7px; }
+  .training-plan-agents > div { display: grid; grid-template-columns: 78px minmax(72px, auto) minmax(0, 1fr); align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--surface); }
+  .training-plan-agents span, .training-plan-agents small { color: var(--text-secondary); font-size: 11px; }
+  .training-plan-agents small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
   .training-preflight dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }
   .training-preflight dl > div { min-width: 0; padding: 10px 12px; border-radius: 6px; background: var(--surface-subtle); }
   .training-preflight dt { color: var(--text-secondary); font-size: 11px; }

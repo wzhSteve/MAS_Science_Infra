@@ -33,7 +33,7 @@ from science_infra.control.llm_config import (
     resolve_llm_config,
     resource_llm_config,
 )
-from science_infra.control.model_resources import resolve_binding
+from science_infra.control.model_resources import get_resource, resolve_binding
 from science_infra.control.readiness import probe_llm
 
 
@@ -569,9 +569,32 @@ def run_collect(
     _ensure_tir_on_path()
     from workflow import Collector, batch_to_train_signal
     from workflow.contracts import TrajectoryBatch
+    from workflow.runtime import LLMConfig
 
     spec_path = str(exp_dir(exp_id) / "workflow.yaml")
     effective = resolve_llm_config(exp_id, llm=bundle["llm"])
+    agent_llms: dict[str, LLMConfig] = {}
+    for agent in wf.get("agents") or []:
+        if not isinstance(agent, dict):
+            continue
+        agent_id = str(agent.get("id") or "").strip()
+        model_ref = str(agent.get("model") or "inherit").strip()
+        if not agent_id or not model_ref or model_ref == "inherit":
+            continue
+        resource = get_resource(model_ref)
+        if resource.data["type"] == "inference":
+            config = resource_llm_config(resource)
+            agent_llms[agent_id] = LLMConfig(
+                endpoint=config.base_url,
+                model=config.model,
+                api_key=config.api_key,
+            )
+        else:
+            model_path = str(resource.data["config"]["model_path"])
+            agent_llms[agent_id] = LLMConfig(
+                endpoint="http://127.0.0.1:8000/v1",
+                model=model_path,
+            )
 
     if tasks is not None:
         task_list = list(tasks)
@@ -594,6 +617,7 @@ def run_collect(
         endpoint=effective.base_url or None,
         model=effective.model or None,
         api_key=effective.api_key,
+        agent_llms=agent_llms,
         n=1,
         spec_path=spec_path,
         archive_root=str(exp_dir(exp_id) / "artifacts" / "archives"),

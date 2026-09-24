@@ -22,12 +22,13 @@ const UNLOADED: BindingView = { loaded: false, bound: false, resource: null, err
 
 export const ModelBinding = memo(function ModelBinding({
   experimentId, purpose, active, onReload, onManage, onState, legacyDirty = false, suggestedId, onSuggestionApplied, children, saveInHeader = false, compact = false, fallbackName,
+  label,
 }: {
   experimentId: string; purpose: ModelResourceType; active: boolean; onReload: () => void;
   onManage: () => void; onState?: (state: BindingView) => void; legacyDirty?: boolean;
   suggestedId?: string; onSuggestionApplied?: () => void; children?: ReactNode;
   saveInHeader?: boolean;
-  compact?: boolean; fallbackName?: string;
+  compact?: boolean; fallbackName?: string; label?: string;
 }) {
   const confirm = useConfirm();
   const [query, setQuery] = useState('');
@@ -47,7 +48,7 @@ export const ModelBinding = memo(function ModelBinding({
   }, [purpose, search, offset, compact]);
   const list = usePollingResource(`binding-options:${purpose}:${search}:${offset}`, loadList, undefined, active);
   const loadLocalModels = useCallback((signal: AbortSignal) => modelResourcesApi.discoverLocal(signal), []);
-  const localModels = usePollingResource('local-training-models', loadLocalModels, undefined, active && purpose === 'training' && !compact);
+  const localModels = usePollingResource('local-training-models', loadLocalModels, undefined, active && purpose === 'training');
   const [draft, setDraft] = useState<{ base: ModelBindings; selected: string | null } | null>(null);
   const action = useAction();
   const handledSuggestion = useRef<string>();
@@ -147,21 +148,43 @@ export const ModelBinding = memo(function ModelBinding({
     });
   }, [action.run, experimentId, list.refresh, onReload, purpose, legacyDirty]);
 
+  const chooseCompact = useCallback(async (value: string) => {
+    if (!value.startsWith('__local__:')) {
+      setDraft(previous => previous && ({ ...previous, selected: value || null }));
+      return;
+    }
+    const modelPath = decodeURIComponent(value.slice('__local__:'.length));
+    const model = localModels.data?.items.find(item => item.path === modelPath);
+    if (!model) return;
+    await action.run('ensure-local', async () => {
+      const resource = await modelResourcesApi.ensureLocal({ name: model.name, model_path: model.path });
+      if (!mounted.current) return;
+      setDraft(previous => previous && ({ ...previous, selected: resource.id }));
+      await list.refresh();
+      return `已选择本地模型 ${resource.name}`;
+    });
+  }, [action.run, list.refresh, localModels.data?.items]);
+
   if (compact) return <div className="model-resource-choice">
-    <FormField label={purpose === 'training' ? '初始权重' : '默认推理模型'}>
+    <FormField label={label || (purpose === 'training' ? '默认训练模型' : '默认推理模型')}>
       <Select value={draft?.selected || ''} disabled={!draft || action.pending !== null} onChange={event => {
         if (event.target.value === '__manage__') { onManage(); return; }
-        setDraft(previous => previous && ({ ...previous, selected: event.target.value || null }));
+        void chooseCompact(event.target.value);
       }}>
         <option value="">{saved?.resource_id ? '原有模型配置' : fallbackName || '选择已有模型'}</option>
         {draft?.selected && !list.data?.items.some(item => item.id === draft.selected) &&
           <option value={draft.selected}>{candidate?.name || draft.selected}</option>}
         {list.data?.items.map(resource => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+        {purpose === 'training' && localModels.data?.items.filter(model =>
+          !model.registered_resource_id || !list.data?.items.some(resource => resource.id === model.registered_resource_id))
+          .map(model => model.registered_resource_id
+            ? <option key={model.path} value={model.registered_resource_id}>{model.name} · 本地扫描</option>
+            : <option key={model.path} value={`__local__:${encodeURIComponent(model.path)}`}>{model.name} · 本地扫描</option>)}
         <option value="__manage__">在模型与数据中管理…</option>
       </Select>
     </FormField>
-    {(error || list.error || selectedResource.error) && <InlineNotice tone="danger">
-      {error || list.error || selectedResource.error}
+    {(error || list.error || selectedResource.error || localModels.error) && <InlineNotice tone="danger">
+      {error || list.error || selectedResource.error || localModels.error}
       <Button size="sm" onClick={() => {
         void remote.refresh(); void list.refresh();
         if (draft?.selected && !selected) void selectedResource.refresh();

@@ -31,9 +31,16 @@ export function useTrainConfirmation(onConfigure?: (section: SettingsSection) =>
         triggerRef.current?.focus();
       }}>
         <div className="eyebrow">TRAINING</div>
-        <AlertDialog.Title className="dialog-title">启动训练</AlertDialog.Title>
-        <AlertDialog.Description className="dialog-description">确认本次训练使用的服务端配置与执行条件。</AlertDialog.Description>
+        <AlertDialog.Title className="dialog-title">训练计划</AlertDialog.Title>
+        <AlertDialog.Description className="dialog-description">按 Agent 的模型与训练状态生成，不需要再次选择训练对象。</AlertDialog.Description>
         {review && <div className="training-preflight">
+          <div className="training-plan-agents">
+            {review.effective.trainable_agents.map((agent, index) => <div key={agent}>
+              <span>{review.effective.trainable_agents.length > 1 ? `优化单元 ${index + 1}` : '训练对象'}</span>
+              <strong>{agent}</strong>
+              <small>{review.effective.model.resource_name || review.effective.model.model_path || '未配置模型'}</small>
+            </div>)}
+          </div>
           <dl>
             <div><dt>算法</dt><dd>{review.effective.algorithm.toUpperCase()} · {review.effective.algorithm_source === 'workflow.sampling' ? 'Sampling Policy' : 'RL 配置'}</dd></div>
             <div><dt>模型</dt><dd>{review.effective.model.resource_name || review.effective.model.model_path || '未配置'}</dd></div>

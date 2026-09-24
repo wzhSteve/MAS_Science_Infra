@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, runtime_checkable
 from uuid import uuid4
 
 from .archive import Archive, branch_point_to_resume_task_fields, register_archive
@@ -617,6 +617,7 @@ def run_compiled_episode(
     spec: MASSpec,
     memory: MemoryStore,
     runner: EpisodeRunner,
+    agent_llms: Optional[Mapping[str, LLMConfig]] = None,
 ) -> EpisodeRaw:
     """Walk compiled route/message/feedback; each non-verifier hop is a Tir/mock episode."""
     compiled = compile_spec(spec)
@@ -689,7 +690,8 @@ def run_compiled_episode(
         if prompt:
             sub_spec.hub = spec.hub.model_copy(update={"system_prompt": prompt})
 
-        raw = runner.run(task_i, llm, archive, sub_spec, memory, agent_id=current_agent_id)
+        node_llm = (agent_llms or {}).get(current_agent_id, llm)
+        raw = runner.run(task_i, node_llm, archive, sub_spec, memory, agent_id=current_agent_id)
         last_raw = raw
         n_search += int(raw.n_search)
         n_python += int(raw.n_python)
@@ -731,6 +733,7 @@ class ExecutionService:
         spec: Optional[MASSpec] = None,
         spec_path: Optional[str] = None,
         llm: Optional[LLMConfig] = None,
+        agent_llms: Optional[Mapping[str, LLMConfig]] = None,
         archive_root: Optional[str] = None,
         memory: Optional[MemoryStore] = None,
         runner: Optional[EpisodeRunner] = None,
@@ -738,6 +741,7 @@ class ExecutionService:
         self.mock = mock
         self.spec = spec or load_spec(spec_path)
         self.llm = llm
+        self.agent_llms = dict(agent_llms or {})
         self.archive_root = archive_root
         self.memory = memory or MemoryStore()
         self.runner: EpisodeRunner = runner or (MockRunner() if mock else TirRunner())
@@ -752,12 +756,14 @@ class ExecutionService:
         compiled = compile_spec(self.spec)
         if compiled.ok and compiled.multi_agent:
             raw = run_compiled_episode(
-                task_run, self.llm, arch, self.spec, self.memory, self.runner
+                task_run, self.llm, arch, self.spec, self.memory, self.runner,
+                self.agent_llms,
             )
         else:
-            raw = self.runner.run(task_run, self.llm, arch, self.spec, self.memory)
+            entry_llm = self.agent_llms.get(compiled.entry_agent, self.llm)
+            raw = self.runner.run(task_run, entry_llm, arch, self.spec, self.memory)
             raw = apply_verifier_feedback(
-                task_run, raw, self.llm, arch, self.spec, self.memory, self.runner
+                task_run, raw, entry_llm, arch, self.spec, self.memory, self.runner
             )
         collector = "mock" if self.mock else "tir_agent"
         traj = episode_to_trajectory(

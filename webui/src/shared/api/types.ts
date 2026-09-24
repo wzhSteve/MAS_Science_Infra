@@ -361,16 +361,19 @@ export interface TrainingPreflightResponse {
     algorithm_source: 'workflow.sampling' | 'rl';
     profile: string;
     model: {
-      source: 'resource' | 'legacy';
+      source: 'resource' | 'legacy' | 'invalid';
       model_path: string;
       resource_id?: string | null;
       resource_revision?: number | null;
       resource_name?: string | null;
+      selection_source?: 'agent_override' | 'experiment_default' | 'legacy';
+      agent_id?: string | null;
     };
     gpu_ids: number[];
     group_n: number;
     branch_site_count: number;
     trainable_agents: string[];
+    active_agents?: string[];
     data: Config;
   };
   checks: TrainingCheck[];

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from .contracts import Trajectory, TrajectoryBatch
 from .env_load import load_repo_dotenv
@@ -57,6 +57,7 @@ class Collector:
         archive_root: Optional[str] = None,
         spec_path: Optional[str] = None,
         api_key: Optional[str] = None,
+        agent_llms: Optional[Mapping[str, LLMConfig]] = None,
     ) -> None:
         self.mock = mock
         self.endpoint = endpoint or os_environ_endpoint()
@@ -69,6 +70,7 @@ class Collector:
         self.archive_root = archive_root
         self.spec_path = spec_path
         self.api_key = api_key
+        self.agent_llms = dict(agent_llms or {})
         self.spec = load_spec(spec_path)
 
     def _service(self) -> ExecutionService:
@@ -91,6 +93,7 @@ class Collector:
             mock=self.mock,
             spec=self.spec,
             llm=llm,
+            agent_llms=self.agent_llms,
             archive_root=self.archive_root,
         )
 
