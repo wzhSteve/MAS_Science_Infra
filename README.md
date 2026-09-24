@@ -1,3 +1,5 @@
+
+
 # Agent Science Infra
 
 面向 **Agent RL 研究**的多智能体系统（MAS）科学基础设施：把「多 Agent 工作流采样 → 分支 Rollout → GRPO 族训练（ARPO/AEPO/RAE）→ 实时诊断」做成一条可复现、可观测、可声明的实验链路，训练后端复用 [Agent-Lightning](https://github.com/qihoo360/agent-lightning)（AGL）+ VERL。
@@ -37,7 +39,7 @@ Agent RL 实验的三个痛点，本项目逐一给出工程答案：
 - **分层架构与硬边界**：`science_infra`（Control/UI）→ `mas`（工作流/采样，禁 import AGL）→ `rl`（训练 overlay/hooks）→ AGL（黑盒，仅 `mas/train_tir_agent.py` 一处 import）
 - **七页 Control UI**：Experiment / LLM / MAS 画布 / RL / RolloutTree / Harness / Monitor（FastAPI + React + SSE，`/docs` 全量 API）
 - **声明式分支采样**：`BranchSite` = anchor（after_tool / after_agent_turn / after_verifier / on_token / after_edge）× gate（entropy_delta / dual_entropy / always / tool_ok / … 共 9 种）× fork 预算，UI 小窗编辑、API 持久化回归验证
-- **GRPO 族算法**：grpo / arpo / aepo / appo / rae 六算法 overlay；两波采样（initial 独立 + branch resume + global 补齐凑满 group_n）；RAE verdict / k-hop credit assignment
+- **GRPO 族算法**：grpo / arpo / aepo / appo / rae 五算法 overlay；两波采样（initial 独立 + branch resume + global 补齐凑满 group_n）；RAE verdict / k-hop credit assignment
 - **真实 rollout id 的 RolloutTree**：Daemon 训练期把分支树落盘为 `mas/.local_expansion/tree_*.json`，React Flow 分层渲染 + SSE `node_added` 实时帧
 - **agent 化工作流（schema 0.3）**：kind/profile/routers 合同、RouterSpec 适配器、blank agent tool-call shell（`blank:<id>`）、两层 memory、per-agent window_events
 - **实时 Harness 诊断**：训练 stdout JSONL 帧 → SSE → `Diagnoser.consume`；RewardHackingMonitor leave-one-out z-score
