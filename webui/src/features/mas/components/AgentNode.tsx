@@ -3,11 +3,10 @@ import type { NodeProps } from '@xyflow/react';
 import { Bot, Flag, GitBranch, Wrench } from 'lucide-react';
 import type { GraphNode } from '../types';
 import { NodeHandles } from './NodeHandles';
-import { SamplingNodeStatus } from './SamplingNodeStatus';
 
 function AgentNode({ id, data: d, selected }: NodeProps<GraphNode>) {
   const toolAgent = d.kind === 'tool';
-  const cls = ['mas-node', 'mas-node--agent', toolAgent ? 'mas-node--tool-agent' : '', selected ? 'is-selected' : '', d.entry ? 'is-entry' : '', d.issue ? 'has-issue' : '', d.related ? 'is-related' : '', d.canvasMode === 'sampling' ? 'is-sampling' : '']
+  const cls = ['mas-node', 'mas-node--agent', toolAgent ? 'mas-node--tool-agent' : '', selected ? 'is-selected' : '', d.entry ? 'is-entry' : '', d.issue ? 'has-issue' : '', d.related ? 'is-related' : '', d.canvasMode === 'sampling' ? 'is-sampling-context' : '']
     .filter(Boolean)
     .join(' ');
   return (
@@ -20,10 +19,9 @@ function AgentNode({ id, data: d, selected }: NodeProps<GraphNode>) {
       </div>
       <div className="mas-node__footer">
         {d.entry ? <span className="mas-node__entry"><Flag size={10} />入口</span> : <span>Agent</span>}
-        <span>{d.branchCount ? <span className="mas-node__branch"><GitBranch size={10} />{d.branchCount}</span>
+        <span>{d.canvasMode !== 'sampling' && d.branchCount ? <span className="mas-node__branch"><GitBranch size={10} />{d.branchCount}</span>
           : d.tools?.length ? `${d.tools.length} 个工具` : d.trainable === false ? '不参与训练' : '参与训练'}</span>
       </div>
-      {d.canvasMode === 'sampling' && <SamplingNodeStatus state={d.samplingState} label={d.samplingLabel} />}
       {d.issue && <div className="mas-node__issue">{d.issue}</div>}
     </div>
   );

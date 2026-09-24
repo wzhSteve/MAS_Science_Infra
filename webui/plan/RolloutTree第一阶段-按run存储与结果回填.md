@@ -2,7 +2,7 @@
 
 本阶段把现有“分支计划树”补为按训练 run 归档的事实树：记录题目、初始 rollout、实际入队的分支及其完成状态与 outcome。继续使用既有 Store/ForkPlan 执行训练，树是这些事实的结构化投影，不把展示 JSON 反过来当成训练输入。
 
-依赖[采样编排第一阶段：可执行站点与续跑前缀](采样编排第一阶段-可执行站点与续跑前缀.md)的事件/快照身份；采样 UI 可按[第二阶段](采样编排第二阶段-画布与策略编辑.md)并行接入。展示和实时更新留给[下一阶段](RolloutTree第二阶段-节点详情与实时更新.md)。
+依赖 [Sampling S0：窗口合同与适配器核心](Sampling框架第一阶段-窗口合同与适配器核心.md)冻结的 Window/Decision/Expansion 身份，以及 [Sampling S1：ARPO Tool Result Window 适配](Sampling框架第二阶段-ARPO工具窗口适配.md)的服务器闭环。采样设计态 UI 见 [Sampling S2](Sampling框架第三阶段-适配器驱动画布交互.md)。展示和实时更新留给[下一阶段](RolloutTree第二阶段-节点详情与实时更新.md)。
 
 ## Position in the Project
 

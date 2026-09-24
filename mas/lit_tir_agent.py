@@ -150,6 +150,9 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     tool_ok=task_run.get("tool_ok"),
                     final_failed=bool(task_run.get("final_failed") or False),
                     h_branch=task_run.get("h_branch"),
+                    strategy=str(
+                        task_run.get("sampling_strategy") or "configured_gate"
+                    ),
                 )
             )
             if ready_batch and local_expand and bool(task_run.get("use_scheduler", True)):
@@ -270,8 +273,12 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     "tir.tool_wait_skew": float(session_metrics.get("tool_wait_skew") or 0),
                     "tir.rollout_role": str(task_run.get("rollout_role") or ("child" if resume_parent else "parent")),
                     "tir.site_id": str(task_run.get("site_id") or ""),
-                    "tir.window_event_id": str(task_run.get("event_id") or ""),
+                    "tir.sampling_strategy": str(task_run.get("sampling_strategy") or ""),
+                    "tir.window_id": str(task_run.get("window_id") or task_run.get("event_id") or ""),
                     "tir.boundary_snapshot_ref": str(task_run.get("snapshot_ref") or ""),
+                    "tir.sampling_decision": str(
+                        (task_run.get("decision") or {}).get("reason") or ""
+                    ),
                     "tir.action_key": str(task_run.get("action_key") or ""),
                     "tir.reward_scheme": str(task_run.get("reward_scheme") or ""),
                     "tir.resume_boundary": int(task_run.get("resume_boundary") or 0),

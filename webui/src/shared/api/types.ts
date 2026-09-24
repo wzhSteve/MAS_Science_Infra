@@ -50,6 +50,8 @@ export interface SamplingOpportunity {
   id: string;
   node_id: string;
   edge_id?: string | null;
+  edge_source?: string | null;
+  edge_target?: string | null;
   anchor: BranchSiteSpec['anchor'];
   label: string;
   support: SamplingSupport;
@@ -63,6 +65,10 @@ export interface SamplingOpportunity {
 }
 
 export interface SamplingPreviewResponse {
+  strategy?: {
+    id: string;
+    source_mode: string;
+  };
   policy: {
     mode: string;
     group_n: number;
@@ -76,7 +82,17 @@ export interface SamplingPreviewResponse {
     site_id: string;
     status: 'pass' | 'warning' | 'error';
     message: string;
-    opportunity_id: string;
+    opportunity_id?: string | null;
+  }>;
+  legacy_sites?: Array<{
+    site_id: string;
+    enabled: boolean;
+    selector: {
+      kind?: string;
+      owner_agent_id?: string | null;
+      interaction?: Config;
+    };
+    message: string;
   }>;
   legacy?: {
     barriers: string[];

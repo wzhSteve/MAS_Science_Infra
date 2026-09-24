@@ -28,8 +28,27 @@ class TestResumeBoundaryAndMeta(unittest.TestCase):
         from workflow.active_set import ActiveSetConfig, ActiveSetSession
         from workflow.contracts import BranchAnchor, BranchGate, BranchSite, BranchSiteReward
 
+        prefix = [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "", "tool_calls": [{"name": "execute_python", "id": "1"}]},
+            {"role": "tool", "content": "42"},
+        ]
         raw = SimpleNamespace(
-            branch_messages=[
+            branch_messages=prefix,
+            window_events=[{
+                "event_id": "w1",
+                "snapshot_ref": "archive:s1",
+                "agent_id": "hub",
+                "kind": "after_tool",
+                "tool_id": "execute_python",
+                "turn": 1,
+                "metrics": {"h_root": 0.1, "h_tool": 0.9},
+            }],
+            window_snapshots=[{
+                "event_id": "w1",
+                "messages": prefix,
+            }],
+            messages=[
                 {"role": "user", "content": "q"},
                 {"role": "assistant", "content": "", "tool_calls": [{"name": "execute_python", "id": "1"}]},
                 {"role": "tool", "content": "42"},
@@ -260,9 +279,7 @@ class TestPlanForksTrajectorySites(unittest.TestCase):
         )
         sess = ActiveSetSession(ActiveSetConfig(beam_size=2, sites=[site], run_probes=False))
         plans = sess.plan_forks_from_raw(raw, parent_id="p0", remaining=2)
-        self.assertGreaterEqual(len(plans), 1)
-        self.assertEqual(plans[0].meta.get("event_kind"), "after_agent_turn")
-        self.assertEqual(plans[0].site_id, "turn_hub")
+        self.assertEqual(plans, [])
 
     def test_after_verifier_fail_gate(self):
         from types import SimpleNamespace
@@ -291,8 +308,7 @@ class TestPlanForksTrajectorySites(unittest.TestCase):
             ActiveSetConfig(beam_size=2, sites=[site], run_probes=False, verifier_ok=False)
         )
         plans = sess.plan_forks_from_raw(raw, parent_id="root", remaining=2)
-        self.assertGreaterEqual(len(plans), 1)
-        self.assertEqual(plans[0].meta.get("event_kind"), "after_verifier")
+        self.assertEqual(plans, [])
 
         sess_ok = ActiveSetSession(
             ActiveSetConfig(beam_size=2, sites=[site], run_probes=False, verifier_ok=True)
@@ -331,22 +347,19 @@ class TestPlanForksTrajectorySites(unittest.TestCase):
             gate=BranchGate(type="always"),
             reward=BranchSiteReward(scheme="shared_outcome"),
         )
-        # Prefer asserting turn site; messages fallback applies to both kinds.
+        # Explicit sites require real Window events and snapshots.
         sess = ActiveSetSession(
             ActiveSetConfig(beam_size=2, sites=[tool_site, turn_site], run_probes=False)
         )
         plans = sess.plan_forks_from_raw(raw, parent_id="p0", remaining=2)
-        self.assertTrue(plans)
-        kinds = {p.meta.get("event_kind") for p in plans}
-        self.assertIn("after_agent_turn", kinds)
+        self.assertEqual(plans, [])
 
-        # Only after_tool site still plans via messages fallback (current semantics).
+        # Explicit Tool sites do not use legacy messages fallback either.
         sess_tool = ActiveSetSession(
             ActiveSetConfig(beam_size=2, sites=[tool_site], run_probes=False)
         )
         tool_plans = sess_tool.plan_forks_from_raw(raw, parent_id="p0", remaining=2)
-        self.assertTrue(tool_plans)
-        self.assertEqual(tool_plans[0].meta.get("event_kind"), "after_tool")
+        self.assertEqual(tool_plans, [])
 
     def test_window_events_match_and_fallback(self):
         """P2: real WindowEndEvent stream matching + legacy fallback when empty."""
@@ -368,7 +381,10 @@ class TestPlanForksTrajectorySites(unittest.TestCase):
         raw = SimpleNamespace(
             branch_messages=[{"role": "user", "content": "q"}],
             window_events=[
-                {"agent_id": "hub", "kind": "after_tool", "tool_id": "execute_python", "turn": 1},
+                {"event_id": "w1", "snapshot_ref": "archive:s1", "agent_id": "hub", "kind": "after_tool", "tool_id": "execute_python", "turn": 1},
+            ],
+            window_snapshots=[
+                {"event_id": "w1", "messages": [{"role": "user", "content": "q"}]},
             ],
             h_root=0.1,
             h_tool=0.2,
@@ -395,7 +411,7 @@ class TestPlanForksTrajectorySites(unittest.TestCase):
         sess2 = ActiveSetSession(ActiveSetConfig(beam_size=2, sites=[site], run_probes=False))
         self.assertEqual(sess2.plan_forks_from_raw(raw_mismatch, parent_id="p0", remaining=2), [])
 
-        # 3) no events → legacy kind self-match fallback still works
+        # 3) explicit sites do not self-match when no Window event exists
         raw_no_events = SimpleNamespace(
             branch_messages=[{"role": "user", "content": "q"}],
             window_events=[],
@@ -406,9 +422,9 @@ class TestPlanForksTrajectorySites(unittest.TestCase):
         )
         sess3 = ActiveSetSession(ActiveSetConfig(beam_size=2, sites=[site], run_probes=False))
         plans3 = sess3.plan_forks_from_raw(raw_no_events, parent_id="p0", remaining=2)
-        self.assertTrue(plans3)
+        self.assertEqual(plans3, [])
 
-        # 4) gates.site_matches_event direct: after_agent_turn aliases after_tool in stream
+        # 4) Agent Window no longer aliases a Tool Result event
         turn_site = BranchSite(
             id="turn_site",
             enabled=True,
@@ -416,7 +432,7 @@ class TestPlanForksTrajectorySites(unittest.TestCase):
             gate=BranchGate(type="always"),
             reward=BranchSiteReward(scheme="shared_outcome"),
         )
-        self.assertTrue(
+        self.assertFalse(
             site_matches_event(
                 turn_site,
                 event_kind="after_agent_turn",

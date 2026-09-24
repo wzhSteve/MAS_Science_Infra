@@ -197,6 +197,43 @@ branch rollout = 树上分支路径
 3. **糖而非删**：旧 `tools:` 字段、`after_tool` anchor、平铺 expansion 读法全部保留为向后兼容糖，编译/读取期映射到新模型。
 4. **AGL 黑盒不动**：训练侧仍走 `TirAgentModeDaemon` 子类 + Store enqueue；窗口快照与续跑仍用可恢复 messages。
 
+### 2.0.1 目标合同与当前实现边界
+
+本节以后描述的是**目标模型**，不能仅凭 Pydantic 字段或 UI 候选存在就宣称运行时已经实现。当前最准确的状态是：
+
+```text
+通用 Sampling 合同与部分执行骨架
+        +
+ARPO Tool Result Window 纵向切片
+```
+
+| 能力 | 目标合同 | 当前实现 |
+| --- | --- | --- |
+| Tool Result Window | Tool-agent 工作窗口的一种 | 已有 messages Snapshot、entropy Gate 和 ARPO 二波 enqueue；待正式 Adapter 收口与服务器验收 |
+| 普通 Agent Window | `agent_complete` | 未实现；旧 `after_agent_turn(hub)` 仅为 Tool Event 兼容输入 |
+| Router Decision Window | `router_decision` | 仅有 Router schema/目标设计，没有可恢复运行窗口 |
+| Verifier Window | `verification_complete` | Gate/credit 部分存在，没有完整 Window/Snapshot/Resume 闭环 |
+| Edge Window | `on_edge` selector | 目前主要是声明 |
+| Token Window | window 内细粒度前缀 | 当前 messages 执行路径不支持 |
+| RolloutTree | run 级事实投影 | 基础合同与计划树存在，run 隔离和完整 outcome 回填未完成 |
+
+Sampling 后续实施不再把所有目标 Window 同时开放，而采用：
+
+```text
+Sampling Core
+→ Strategy Adapter
+→ Adapter capability 驱动 UI
+→ 运行事实进入 Rollout Tree
+```
+
+当前权威实施路线见 [Sampling 框架实施总览](../webui/plan/Sampling框架实施总览.md)：
+
+1. [S0 窗口合同与适配器核心](../webui/plan/Sampling框架第一阶段-窗口合同与适配器核心.md)
+2. [S1 ARPO Tool Result Window 适配](../webui/plan/Sampling框架第二阶段-ARPO工具窗口适配.md)
+3. [S2 适配器驱动画布交互](../webui/plan/Sampling框架第三阶段-适配器驱动画布交互.md)
+
+本轮到 ARPO 为止。AEPO、RAE、IGPO、GIGPO 作为后续独立 Adapter 实施；Rollout Tree 在 ARPO 纵向闭环之后建设。
+
 
 
 ### 2.1 统一 Agent 模型（schema 0.3）

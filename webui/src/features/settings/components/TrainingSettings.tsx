@@ -24,15 +24,16 @@ const OPTIMIZATION = HYDRA_FIELDS.filter(field => !BASIC_DATA.includes(field) &&
 export const TrainingSettings = memo(function TrainingSettings({
   bundle, meta, onReload, active, section, jump, expanded, onExpandedChange, onManageModels, onManageData,
   selectedResource, resourcePurpose, onSuggestionApplied, workflow, palette, onWorkflowChange, onLocate, onDemo,
-  canvasMode, samplingPreview, samplingPreviewError, selectedSamplingOpportunity, onSelectSamplingOpportunity,
+  canvasMode, onCanvasModeChange, samplingPreview, samplingPreviewError, selectedSamplingOpportunity, onSelectSamplingOpportunity,
 }: {
   bundle: Bundle; meta: MetaResponse | null; onReload: () => void; active: boolean;
   section: SettingsSection | null; jump: number; expanded: boolean; onExpandedChange: (expanded: boolean) => void;
   onManageModels: () => void; onManageData: () => void; selectedResource?: string; resourcePurpose?: 'training' | 'inference';
   onSuggestionApplied: () => void; onDemo: () => void;
   workflow: WorkflowSpec; palette: Palette; onWorkflowChange: (workflow: WorkflowSpec) => void; onLocate: (agentId: string) => void;
+  onCanvasModeChange: (mode: CanvasMode) => void;
   canvasMode: CanvasMode; samplingPreview: SamplingPreviewResponse | null; samplingPreviewError: string | null;
-  selectedSamplingOpportunity: string | null; onSelectSamplingOpportunity: (id: string) => void;
+  selectedSamplingOpportunity: string | null; onSelectSamplingOpportunity: (id: string | null) => void;
 }) {
   const { draft, gpu, selectedIds } = useTrainingConfig();
   const { rl, patch, pending } = draft;
@@ -56,20 +57,12 @@ export const TrainingSettings = memo(function TrainingSettings({
     if (section === 'inference') setExecutionOpen(true);
     scrollToSection(section === 'inference' ? 'model' : section);
   }, [active, section, jump, scrollToSection]);
-  useEffect(() => {
-    if (canvasMode !== 'sampling') return;
-    setCollapsed(false);
-    scrollToSection('training');
-  }, [canvasMode, scrollToSection]);
-  const expandBranches = useCallback(() => {
-    onExpandedChange(true);
-    scrollToSection('training');
-  }, [onExpandedChange, scrollToSection]);
   const legacyModel = rl.model_path || rl.actor_rollout_ref?.model?.path || '';
   const fields = (items: typeof HYDRA_FIELDS) => <div className="form-grid">{items.map(field =>
     <RlField key={field.path} field={field} value={field.read(rl)} onPatch={patch} compact />)}</div>;
 
-  return <aside className={`training-parameters${expanded ? ' is-expanded' : collapsed ? ' is-collapsed' : ''}`} aria-label="训练配置">
+  return <aside className={`training-parameters${expanded ? ' is-expanded' : collapsed ? ' is-collapsed' : ''}`}
+    aria-label="训练配置" hidden={canvasMode === 'sampling'}>
     <header className="parameter-panel-heading">
       {collapsed && !expanded ? <Button size="sm" variant="ghost" title="展开训练配置" aria-label="展开训练配置" onClick={() => setCollapsed(false)}>
         <PanelLeftOpen size={16} />
@@ -120,7 +113,7 @@ export const TrainingSettings = memo(function TrainingSettings({
       <section id="training-training" className="parameter-group">
         <h3><span>03</span>训练策略</h3>
         <SamplingSettings workflow={workflow} palette={palette} onChange={onWorkflowChange} onLocate={onLocate}
-          compact expanded={expanded} onExpand={expandBranches} canvasMode={canvasMode}
+          compact onOpenDesign={() => onCanvasModeChange('sampling')} canvasMode={canvasMode}
           preview={samplingPreview} previewError={samplingPreviewError}
           selectedOpportunityId={selectedSamplingOpportunity} onSelectOpportunity={onSelectSamplingOpportunity} />
         <details className="parameter-details"><summary>训练与优化参数</summary>{fields(OPTIMIZATION)}</details>

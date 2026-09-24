@@ -36,6 +36,7 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [canvasMode, setCanvasMode] = useState<CanvasMode>('workflow');
   const [selectedSamplingOpportunity, setSelectedSamplingOpportunity] = useState<string | null>(null);
+  const workflowExpanded = useRef(false);
   const [modelRequest, setModelRequest] = useState(0);
   const editing = active && section !== 'diagnostics';
   const workflowVisible = editing && !expanded;
@@ -75,11 +76,19 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
     setCanvasMode(mode);
     setLibraryOpen(false);
     setDebugOpen(false);
+    if (mode === 'workflow') {
+      setSelectedSamplingOpportunity(null);
+      if (workflowExpanded.current) {
+        setExpanded(true);
+        workflowExpanded.current = false;
+      }
+    }
     if (mode === 'sampling') {
+      workflowExpanded.current = expanded;
       setExpanded(false);
       props.onWorkspace();
     }
-  }, [props.onWorkspace]);
+  }, [expanded, props.onWorkspace]);
   if (!workflow || !props.bundle) return <LoadingState label="加载工作流…" />;
   return <div className="mas-workspace mas-workspace--parameters">
     {(draft.paletteError || draft.saveError) && <div className="mas-workspace-notice">
@@ -93,6 +102,7 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
         onManageModels={modelResources} onManageData={dataResources} selectedResource={props.selectedResource} resourcePurpose={props.resourcePurpose}
         onSuggestionApplied={consumeResourceSelection} workflow={workflow} palette={draft.palette}
         onWorkflowChange={draft.onWorkflowChange} onLocate={locateAgent} onDemo={openDemo}
+        onCanvasModeChange={selectCanvasMode}
         canvasMode={canvasMode} samplingPreview={samplingPreview.data} samplingPreviewError={samplingPreview.error}
         selectedSamplingOpportunity={selectedSamplingOpportunity}
         onSelectSamplingOpportunity={setSelectedSamplingOpportunity} />

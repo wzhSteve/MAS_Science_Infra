@@ -53,6 +53,7 @@ describe('branch site model', () => {
 
     expect(updated.extra).toEqual({ keep: true });
     expect(site?.gate).toEqual({ type: 'always', params: { keep: true } });
-    expect(site?.fork).toMatchObject({ beam_size: 2, resume_mode: 'messages' });
+    expect(site?.fork).toMatchObject({ resume_mode: 'messages' });
+    expect(site?.fork?.beam_size).toBeUndefined();
   });
 });

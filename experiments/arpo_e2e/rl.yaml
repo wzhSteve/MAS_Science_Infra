@@ -52,29 +52,6 @@ algorithm:
         k_min: 2
         epsilon_f: 0.001
       priority: 10
-    - id: site_after_turn_hub
-      enabled: true
-      anchor:
-        kind: after_agent_turn
-        agent_id: hub
-        tool_id: null
-        edge_id: null
-      when: first
-      nth: 1
-      gate:
-        type: entropy_delta
-        params: {}
-      fork:
-        beam_size: 2
-        share_observation: true
-        resume_mode: messages
-        probe_max_tokens: 128
-      reward:
-        scheme: scalar_grpo
-        p_plus: 0.8
-        k_min: 2
-        epsilon_f: 0.001
-      priority: 10
     zero_prefix_adv_for_children: true
     ready_batch: true
     rae_p_plus: 0.8

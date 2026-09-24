@@ -14,16 +14,15 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 from uuid import uuid4
 
-from rl.hooks.branch_policy import allocate_forks
 from workflow.contracts import (
-    BranchAnchor,
-    BranchGate,
     BranchSite,
     RolloutTree,
     RolloutTreeNode,
 )
-from workflow.gates import GateContext, evaluate_gate, site_matches_anchor, site_matches_event
 from workflow.probes import ProbeResult, action_key_from_messages, aggregate_probes
+from workflow.sampling.compat import resolve_configured_sites, window_from_event
+from workflow.sampling.core import ResumableWindow, SamplingCore
+from workflow.sampling.registry import sampling_adapters
 
 RunEpisodeFn = Callable[[Dict[str, Any]], Any]
 RewardFn = Callable[[Any, Dict[str, Any]], float]
@@ -103,6 +102,7 @@ class ActiveSetConfig:
     h_branch: Optional[float] = None
     probe_k: int = 2
     run_probes: bool = True
+    strategy: str = "configured_gate"
     """When True, run local probes before dual_entropy / rae_adjudicate gates."""
 
 
@@ -112,48 +112,11 @@ class ActiveSetSession:
     def __init__(self, config: ActiveSetConfig, *, rng: Any = None) -> None:
         self.config = config
         self._rng = rng
-        self._site_hits: Dict[str, int] = {}
         self._probe_metrics: Dict[str, Any] = {}
+        self._core = SamplingCore(sampling_adapters.resolve(config.strategy))
 
     def _sites(self) -> List[BranchSite]:
-        if self.config.sites is not None:
-            resolved: List[BranchSite] = []
-            for site in self.config.sites:
-                if not site.enabled:
-                    continue
-                params = dict(site.gate.params or {})
-                if site.gate.type in ("entropy_delta", "arpo"):
-                    params = {
-                        "use_official_arpo_gate": self.config.use_official_arpo_gate,
-                        "branch_probability": self.config.branch_probability,
-                        "entropy_weight": self.config.entropy_weight,
-                        "entropy_threshold": self.config.entropy_threshold,
-                        **params,
-                    }
-                elif site.gate.type == "dual_entropy":
-                    params = {"probe_k": self.config.probe_k, **params}
-                resolved.append(site.model_copy(update={
-                    "gate": site.gate.model_copy(update={"params": params}),
-                }))
-            return resolved
-        # legacy single entropy gate as one synthetic site
-        return [
-            BranchSite(
-                id="default_after_tool",
-                anchor=BranchAnchor(kind="after_tool"),
-                gate=BranchGate(
-                    type="entropy_delta",
-                    params={
-                        "use_official_arpo_gate": self.config.use_official_arpo_gate,
-                        "branch_probability": self.config.branch_probability,
-                        "entropy_weight": self.config.entropy_weight,
-                        "entropy_threshold": self.config.entropy_threshold,
-                        "alpha": self.config.alpha,
-                        "gamma": self.config.gamma,
-                    },
-                ),
-            )
-        ]
+        return resolve_configured_sites(self.config.sites, self.config)
 
     def _site_needs_probes(self, site: BranchSite) -> bool:
         gtype = str(site.gate.type or "").lower()
@@ -235,8 +198,6 @@ class ActiveSetSession:
         if getattr(raw, "error", None):
             return []
         ek = str(event_kind or cfg.event_kind or "after_tool")
-        plans: List[ForkPlan] = []
-        budget_left = remaining
         window_events = list(getattr(raw, "window_events", None) or [])
         windows = {
             window.get("event_id"): window
@@ -247,6 +208,8 @@ class ActiveSetSession:
             msgs = list(getattr(raw, "branch_messages", None) or getattr(raw, "messages", None) or [])
             if msgs:
                 window_events = [{
+                    "event_id": f"legacy:{parent_id}:0",
+                    "snapshot_ref": f"legacy:{parent_id}:0",
                     "kind": ek, "agent_id": cfg.agent_id, "tool_id": cfg.tool_id,
                     "messages": msgs, "metrics": {
                         "h_root": getattr(raw, "h_root", 0.0),
@@ -254,104 +217,110 @@ class ActiveSetSession:
                         "consecutive_high": getattr(raw, "consecutive_high", 0),
                     },
                 }]
-        for site in self._sites():
-            if budget_left <= 0:
-                break
-            for event in window_events:
-                if budget_left <= 0:
-                    break
-                if not site_matches_anchor(
-                    site, event_kind=str(event.get("kind") or ""),
-                    agent_id=event.get("agent_id"), tool_id=event.get("tool_id"),
-                    edge_id=event.get("edge_id"),
-                ):
-                    continue
-                hits = self._site_hits.get(site.id, 0)
-                self._site_hits[site.id] = hits + 1
-                if not site_matches_event(
-                    site, event_kind=str(event.get("kind") or ""),
-                    agent_id=event.get("agent_id"), tool_id=event.get("tool_id"),
-                    edge_id=event.get("edge_id"), hit_count=hits,
-                ):
-                    continue
-                window = windows.get(event.get("event_id"))
-                msgs = list((window or {}).get("messages") or event.get("messages") or [])
-                if not msgs:
-                    logging.getLogger(__name__).warning(
-                        "Branch site %s matched an event without a resumable window", site.id
-                    )
-                    continue
-                metrics = event.get("metrics") or {}
-                if site.gate.type in ("entropy_delta", "arpo", "dual_entropy") and "h_tool" not in metrics:
-                    logging.getLogger(__name__).warning(
-                        "Branch site %s has no entropy measurement at its window", site.id
-                    )
-                    continue
-                h_root = float(metrics.get("h_root", getattr(raw, "h_root", 0.0)) or 0.0)
-                h_tool = float(metrics.get("h_tool", getattr(raw, "h_tool", 0.0)) or 0.0)
-                h_branch = cfg.h_branch
-                if cfg.run_probes and self._site_needs_probes(site) and h_branch is None and run_episode and root_task:
-                    h_branch = self.collect_h_branch(
-                        raw, root_task, run_episode, site=site, messages=msgs
-                    )
-                    self._probe_metrics["probes_ran"] = h_branch is not None
-                    self._probe_metrics["h_branch"] = h_branch
-                    if h_branch is None:
-                        logging.getLogger(__name__).warning(
-                            "Branch site %s could not compute probe outcome entropy", site.id
-                        )
-                if site.gate.type == "dual_entropy" and h_branch is None:
-                    logging.getLogger(__name__).warning(
-                        "Branch site %s requires outcome entropy before training can fork", site.id
-                    )
-                    continue
-                ctx = GateContext(
-                    h_root=h_root, h_tool=h_tool,
-                    consecutive_high=int(metrics.get("consecutive_high", 0) or 0),
-                    tool_ok=metrics.get("tool_ok", cfg.tool_ok),
-                    verifier_ok=metrics.get("verifier_ok", cfg.verifier_ok),
-                    final_failed=bool(metrics.get("final_failed", cfg.final_failed)),
-                    h_branch=h_branch, rng=self._rng,
+        resumable: List[ResumableWindow] = []
+        for event in window_events:
+            event_id = event.get("event_id")
+            snapshot = windows.get(event_id)
+            messages = list((snapshot or {}).get("messages") or event.get("messages") or [])
+            if event_id and not snapshot and not event.get("messages"):
+                logging.getLogger(__name__).warning(
+                    "Sampling window %s has no resumable snapshot", event_id
                 )
-                decision = evaluate_gate(site.gate, ctx)
-                if not decision.passed:
-                    continue
-                beam = int(site.fork.beam_size if site.fork.beam_size is not None else cfg.beam_size)
-                counts = allocate_forks(remaining=budget_left, beam_size=beam, n_sources=1)
-                n = counts[0] if counts else 0
-                for _ in range(n):
-                    plans.append(ForkPlan(
-                        resume_messages=deepcopy(msgs),
-                        parent_id=parent_id, depth=depth + 1,
-                        reason=f"{site.gate.type}_branch", site_id=site.id, role="child",
-                        meta={
-                            "h_root": h_root, "h_tool": h_tool,
-                            "h_branch": h_branch,
-                            "consecutive_high": ctx.consecutive_high,
-                            "gate": decision.reason, "gate_score": decision.score,
-                            "site_id": site.id, "event_kind": event.get("kind"),
-                            "event_id": event.get("event_id"),
-                            "snapshot_ref": event.get("snapshot_ref"),
-                            "reward_scheme": site.reward.scheme,
-                            "share_observation": site.fork.share_observation,
-                            "resume_mode": site.fork.resume_mode,
-                            "action_key": action_key_from_messages(msgs),
-                            "role": "child",
-                            "resume_boundary": resume_boundary_from_messages(msgs),
-                            "boundary_unit": "messages",
-                            "p_plus": site.reward.p_plus,
-                            "k_min": site.reward.k_min,
-                            "epsilon_f": site.reward.epsilon_f,
-                            "dead_end_backprop": site.reward.dead_end_backprop,
-                        },
-                    ))
-                if n:
-                    logging.getLogger(__name__).info(
-                        "Branch site=%s event=%s snapshot=%s parent=%s prefix_messages=%s children=%s",
-                        site.id, event.get("event_id"), event.get("snapshot_ref"),
-                        parent_id, len(msgs), n,
+            metrics = dict(event.get("metrics") or {})
+            if not event_id:
+                metrics.setdefault("h_root", getattr(raw, "h_root", 0.0))
+                metrics.setdefault("h_tool", getattr(raw, "h_tool", 0.0))
+                metrics.setdefault("consecutive_high", getattr(raw, "consecutive_high", 0))
+            normalized = dict(event)
+            normalized["metrics"] = metrics
+            try:
+                window = window_from_event(normalized)
+            except ValueError:
+                continue
+            resumable.append(ResumableWindow(window=window, resume_messages=messages))
+
+        def context_for(site: BranchSite, resolved: ResumableWindow) -> Dict[str, Any]:
+            h_branch = cfg.h_branch
+            if cfg.run_probes and self._site_needs_probes(site) and h_branch is None and run_episode and root_task:
+                h_branch = self.collect_h_branch(
+                    raw,
+                    root_task,
+                    run_episode,
+                    site=site,
+                    messages=list(resolved.resume_messages),
+                )
+                self._probe_metrics["probes_ran"] = h_branch is not None
+                self._probe_metrics["h_branch"] = h_branch
+            return {
+                "h_branch": h_branch,
+                "tool_ok": cfg.tool_ok,
+                "verifier_ok": cfg.verifier_ok,
+                "final_failed": cfg.final_failed,
+                "rng": self._rng,
+            }
+
+        planned = self._core.plan(
+            parent_rollout_id=parent_id,
+            sites=self._sites(),
+            windows=resumable,
+            remaining=remaining,
+            depth=depth,
+            max_depth=cfg.max_branch_depth,
+            default_beam=cfg.beam_size,
+            context_factory=context_for,
+        )
+        plans: List[ForkPlan] = []
+        for expansion in planned:
+            window = expansion.window
+            site = expansion.site
+            decision = expansion.plan.decision
+            h_branch = decision.metadata.get("h_branch")
+            metadata = {
+                "h_root": float(window.metrics.get("h_root", 0.0) or 0.0),
+                "h_tool": float(window.metrics.get("h_tool", 0.0) or 0.0),
+                "h_branch": h_branch,
+                "consecutive_high": int(window.metrics.get("consecutive_high", 0) or 0),
+                "gate": decision.reason,
+                "gate_score": decision.score,
+                "site_id": site.id,
+                "event_kind": window.interaction.get("legacy_event_kind") or window.kind.value,
+                "window_id": window.window_id,
+                "event_id": window.window_id,
+                "snapshot_ref": window.snapshot_ref,
+                "decision": decision.model_dump(mode="json"),
+                "reward_scheme": site.reward.scheme,
+                "share_observation": site.fork.share_observation,
+                "resume_mode": site.fork.resume_mode,
+                "action_key": action_key_from_messages(expansion.resume_messages),
+                "role": "child",
+                "resume_boundary": resume_boundary_from_messages(expansion.resume_messages),
+                "boundary_unit": "messages",
+                "p_plus": site.reward.p_plus,
+                "k_min": site.reward.k_min,
+                "epsilon_f": site.reward.epsilon_f,
+                "dead_end_backprop": site.reward.dead_end_backprop,
+            }
+            for _ in range(expansion.plan.count):
+                plans.append(
+                    ForkPlan(
+                        resume_messages=deepcopy(expansion.resume_messages),
+                        parent_id=parent_id,
+                        depth=expansion.plan.depth,
+                        reason=f"{site.gate.type}_branch",
+                        site_id=site.id,
+                        role="child",
+                        meta=deepcopy(metadata),
                     )
-                budget_left -= n
+                )
+            logging.getLogger(__name__).info(
+                "Branch site=%s window=%s snapshot=%s parent=%s prefix_messages=%s children=%s",
+                site.id,
+                window.window_id,
+                window.snapshot_ref,
+                parent_id,
+                len(expansion.resume_messages),
+                expansion.plan.count,
+            )
         return plans
 
     def run(

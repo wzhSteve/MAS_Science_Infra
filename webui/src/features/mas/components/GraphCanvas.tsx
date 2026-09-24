@@ -68,7 +68,7 @@ export const GraphCanvas = memo(function GraphCanvas({
     <ReactFlow<GraphNode, GraphEdge> {...flowProps} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
       connectionMode={ConnectionMode.Loose} connectionLineComponent={ConnectionPreview} reconnectRadius={12}
       minZoom={0.2} maxZoom={2} deleteKeyCode={active && mode === 'workflow' ? ['Backspace', 'Delete'] : null}
-      nodesDraggable={mode === 'workflow'} nodesConnectable={mode === 'workflow'} edgesReconnectable={mode === 'workflow'}
+      nodesDraggable nodesConnectable={mode === 'workflow'} edgesReconnectable={mode === 'workflow'}
       onlyRenderVisibleElements
       ariaLabelConfig={{ 'minimap.ariaLabel': '画布小地图' }}>
       <Background id="mas-dots" variant={BackgroundVariant.Dots} gap={20} size={1.5}

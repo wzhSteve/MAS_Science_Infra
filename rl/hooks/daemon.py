@@ -260,6 +260,9 @@ class TirAgentModeDaemon(AgentModeDaemon):
         budget = max(1, (n_target + n_init - 1) // max(1, n_init))
         fields: Dict[str, Any] = {
             "expand_in_runner": True,
+            "sampling_strategy": str(
+                self.tir_config.get("sampling_strategy") or self.tir_algo
+            ),
             "sampling_budget": budget,
             "max_branch_depth": int(self.tir_config.get("max_branch_depth", 2)),
             "tir_beam_size": int(self.tir_config.get("beam_size", 2)),
@@ -291,6 +294,9 @@ class TirAgentModeDaemon(AgentModeDaemon):
             for rid, budget in zip(rids, budgets):
                 sample = self._task_id_to_original_sample[rid]
                 sample["expand_in_runner"] = True
+                sample["sampling_strategy"] = str(
+                    self.tir_config.get("sampling_strategy") or self.tir_algo
+                )
                 sample["sampling_budget"] = int(budget)
                 sample["max_branch_depth"] = int(self.tir_config.get("max_branch_depth", 2))
                 sample["tir_beam_size"] = int(self.tir_config.get("beam_size", 2))
@@ -343,7 +349,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 sample["action_key"] = plan_meta.get("action_key")
             if plan_meta.get("reward_scheme") is not None:
                 sample["reward_scheme"] = plan_meta.get("reward_scheme")
-            for field in ("event_id", "snapshot_ref"):
+            for field in ("window_id", "event_id", "snapshot_ref", "decision"):
                 if plan_meta.get(field) is not None:
                     sample[field] = plan_meta[field]
             try:
@@ -503,7 +509,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                         sample["action_key"] = plan_meta.get("action_key")
                     if plan_meta.get("reward_scheme") is not None:
                         sample["reward_scheme"] = plan_meta.get("reward_scheme")
-                    for field in ("event_id", "snapshot_ref"):
+                    for field in ("window_id", "event_id", "snapshot_ref", "decision"):
                         if plan_meta.get(field) is not None:
                             sample[field] = plan_meta[field]
                     try:

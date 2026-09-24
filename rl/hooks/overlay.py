@@ -75,6 +75,10 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
     }
     algo = algo_map.get(mode, mode if mode in VALID_ALGOS else "grpo")
     cfg = apply_algo_overlay(cfg, algo)
+    from workflow.sampling.registry import sampling_adapters
+
+    adapter = sampling_adapters.resolve(algo)
+    cfg = adapter.training_overlay(cfg, policy)
     tir = dict(cfg["algorithm"].get("tir") or {})
     if group_n is not None:
         n = max(1, int(group_n))

@@ -123,7 +123,7 @@ def site_matches_anchor(
         return False
     if kind == "after_verifier" and ek not in ("after_verifier", "feedback"):
         return False
-    if kind == "after_agent_turn" and ek not in ("after_agent_turn", "agent_message", "after_tool"):
+    if kind == "after_agent_turn" and ek not in ("after_agent_turn", "agent_message"):
         return False
     if kind == "on_edge" and ek not in ("on_edge", "sample_barrier"):
         return False
