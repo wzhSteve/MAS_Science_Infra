@@ -28,7 +28,7 @@ function agentsOf(workflow: WorkflowSpec): AgentSpec[] {
       }];
 }
 
-function candidateId(anchor: BranchSiteSpec['anchor']): string {
+export function anchorKey(anchor: BranchSiteSpec['anchor']): string {
   return [
     anchor.kind,
     anchor.agent_id || '',
@@ -41,7 +41,7 @@ export function deriveBranchCandidates(workflow: WorkflowSpec): BranchCandidate[
   const candidates: BranchCandidate[] = [];
   const seen = new Set<string>();
   const add = (candidate: Omit<BranchCandidate, 'id'>) => {
-    const id = candidateId(candidate.anchor);
+    const id = anchorKey(candidate.anchor);
     if (!seen.has(id)) {
       seen.add(id);
       candidates.push({ ...candidate, id });
@@ -127,7 +127,7 @@ export function defaultSite(candidate: BranchCandidate): BranchSiteSpec {
     when: 'first',
     nth: 1,
     gate: { type: candidate.recommendedGate, params: {} },
-    fork: { beam_size: 2, share_observation: true, resume_mode: 'messages', probe_max_tokens: 128 },
+    fork: { share_observation: true, resume_mode: 'messages', probe_max_tokens: 128 },
     reward: { scheme: 'scalar_grpo', p_plus: 0.8, k_min: 2, epsilon_f: 0.001, dead_end_backprop: 1 },
     priority: 10,
   };

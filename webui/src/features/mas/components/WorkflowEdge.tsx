@@ -29,7 +29,7 @@ export const WorkflowEdge = memo(function WorkflowEdge(props: EdgeProps<GraphEdg
   }
   const color = data?.issue ? 'var(--danger)' : definition.color;
   const style = { '--edge-color': color, '--edge-width': `${definition.width}px` } as CSSProperties;
-  return <g className={`mas-flow-edge${selected ? ' is-selected' : ''}${data?.issue ? ' has-issue' : ''}`} style={style}>
+  return <g className={`mas-flow-edge${selected ? ' is-selected' : ''}${data?.issue ? ' has-issue' : ''}${data?.canvasMode === 'sampling' ? ` is-sampling is-${data.samplingState || 'unavailable'}` : ''}`} style={style}>
       {definition.directional && <defs><marker id={markerId} viewBox="0 0 12 10" markerWidth={12} markerHeight={10}
         refX={9} refY={5} orient="auto-start-reverse" markerUnits="userSpaceOnUse">
         <path d="M 3 1.5 L 9 5 L 3 8.5" fill="none" stroke={color}

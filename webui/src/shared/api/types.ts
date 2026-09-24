@@ -44,6 +44,47 @@ export interface SamplingSpec extends Config {
   extra?: Config;
 }
 
+export type SamplingSupport = 'native' | 'compatibility' | 'unavailable';
+
+export interface SamplingOpportunity {
+  id: string;
+  node_id: string;
+  edge_id?: string | null;
+  anchor: BranchSiteSpec['anchor'];
+  label: string;
+  support: SamplingSupport;
+  message: string;
+  runtime_event?: string | null;
+  prefix?: 'messages' | null;
+  allowed_gates: string[];
+  configured: boolean;
+  enabled: boolean;
+  site_id?: string | null;
+}
+
+export interface SamplingPreviewResponse {
+  policy: {
+    mode: string;
+    group_n: number;
+    initial_rollouts: number;
+    remaining_budget: number;
+    beam_size: number;
+    max_branch_depth: number;
+  };
+  opportunities: SamplingOpportunity[];
+  diagnostics: Array<{
+    site_id: string;
+    status: 'pass' | 'warning' | 'error';
+    message: string;
+    opportunity_id: string;
+  }>;
+  legacy?: {
+    barriers: string[];
+    count: number;
+    message: string;
+  } | null;
+}
+
 export type BranchAnchorKind = 'after_agent_turn' | 'after_tool' | 'after_verifier' | 'on_edge' | 'on_token';
 
 export interface BranchSiteSpec extends Config {

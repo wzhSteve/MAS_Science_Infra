@@ -3,9 +3,10 @@ import type { NodeProps } from '@xyflow/react';
 import { GitBranch, Wrench } from 'lucide-react';
 import type { GraphNode } from '../types';
 import { NodeHandles } from './NodeHandles';
+import { SamplingNodeStatus } from './SamplingNodeStatus';
 
 function ToolNode({ id, data: d, selected }: NodeProps<GraphNode>) {
-  const cls = ['mas-node', 'mas-node--tool', selected ? 'is-selected' : '', d.issue ? 'has-issue' : '', d.related ? 'is-related' : ''].filter(Boolean).join(' ');
+  const cls = ['mas-node', 'mas-node--tool', selected ? 'is-selected' : '', d.issue ? 'has-issue' : '', d.related ? 'is-related' : '', d.canvasMode === 'sampling' ? 'is-sampling' : ''].filter(Boolean).join(' ');
   return (
     <div className={cls}>
       <NodeHandles id={id} />
@@ -14,6 +15,7 @@ function ToolNode({ id, data: d, selected }: NodeProps<GraphNode>) {
       </div>
       {d.branchCount ? <div className="mas-node__footer"><span>Branch Site</span>
         <span className="mas-node__branch"><GitBranch size={10} />{d.branchCount}</span></div> : null}
+      {d.canvasMode === 'sampling' && <SamplingNodeStatus state={d.samplingState} label={d.samplingLabel} />}
       {d.issue && <div className="mas-node__issue">{d.issue}</div>}
     </div>
   );

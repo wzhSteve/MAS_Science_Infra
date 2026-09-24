@@ -1,6 +1,9 @@
 import type { Edge, Node } from '@xyflow/react';
 import type { AgentKind, Config, RouterStrategy } from '../../shared/api/types';
 
+export type CanvasMode = 'workflow' | 'sampling';
+export type SamplingCanvasState = 'available' | 'configured' | 'compatibility' | 'unavailable';
+
 export type GraphNodeData = Record<string, unknown> & {
   label?: string;
   kind?: AgentKind;
@@ -23,6 +26,9 @@ export type GraphNodeData = Record<string, unknown> & {
   llm_required?: boolean;
   description?: string;
   branchCount?: number;
+  canvasMode?: CanvasMode;
+  samplingState?: SamplingCanvasState;
+  samplingLabel?: string;
   issue?: string;
   related?: boolean;
 };
@@ -45,6 +51,8 @@ export type GraphEdge = Edge<{
   meta?: Config;
   lane?: number;
   issue?: string;
+  canvasMode?: CanvasMode;
+  samplingState?: SamplingCanvasState;
 }, 'workflow'>;
 export type EdgePatch = Partial<Pick<GraphEdge, 'source' | 'target' | 'sourceHandle' | 'targetHandle'>> & { kind?: EdgeKind };
 export type GraphSelection = { kind: 'node' | 'edge'; id: string } | null;

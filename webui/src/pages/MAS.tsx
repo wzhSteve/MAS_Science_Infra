@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { FlaskConical, Plus } from 'lucide-react';
 import type { Bundle, MetaResponse } from '../shared/api/types';
 import { MasGraphEditor, useMasDraft } from '../features/mas';
 import { WorkflowDebug } from '../features/mas/components/WorkflowDebug';
@@ -13,6 +12,8 @@ import { TrainingSettings } from '../features/settings/components/TrainingSettin
 import { HarnessPanel } from '../features/harness/components/HarnessPanel';
 import type { SettingsSection } from '../features/settings/model/sections';
 import type { ResourceCategory } from '../app/navigation';
+import { useSamplingPreview } from '../features/sampling/model/useSamplingPreview';
+import type { CanvasMode } from '../features/mas/types';
 
 export type MASPanelProps = {
   expId: string; bundle: Bundle | null; onReload: () => void; meta: MetaResponse | null;
@@ -33,6 +34,8 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
   const active = props.active ?? true;
   const section = props.requestedSettings;
   const [expanded, setExpanded] = useState(false);
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>('workflow');
+  const [selectedSamplingOpportunity, setSelectedSamplingOpportunity] = useState<string | null>(null);
   const [modelRequest, setModelRequest] = useState(0);
   const editing = active && section !== 'diagnostics';
   const workflowVisible = editing && !expanded;
@@ -66,7 +69,17 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
     locate({ agentId }); props.onWorkspace();
   }, [locate, props.onWorkspace]);
   const { workflow } = draft;
+  const samplingPreview = useSamplingPreview(workflow, editing);
   const executable = useMemo(() => workflow ? executableInfo(workflow) : { ok: false, reason: '加载中…' }, [workflow]);
+  const selectCanvasMode = useCallback((mode: CanvasMode) => {
+    setCanvasMode(mode);
+    setLibraryOpen(false);
+    setDebugOpen(false);
+    if (mode === 'sampling') {
+      setExpanded(false);
+      props.onWorkspace();
+    }
+  }, [props.onWorkspace]);
   if (!workflow || !props.bundle) return <LoadingState label="加载工作流…" />;
   return <div className="mas-workspace mas-workspace--parameters">
     {(draft.paletteError || draft.saveError) && <div className="mas-workspace-notice">
@@ -79,23 +92,20 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
         section={section} jump={props.trainingJump + modelRequest} expanded={expanded} onExpandedChange={setExpanded}
         onManageModels={modelResources} onManageData={dataResources} selectedResource={props.selectedResource} resourcePurpose={props.resourcePurpose}
         onSuggestionApplied={consumeResourceSelection} workflow={workflow} palette={draft.palette}
-        onWorkflowChange={draft.onWorkflowChange} onLocate={locateAgent} onDemo={openDemo} />
+        onWorkflowChange={draft.onWorkflowChange} onLocate={locateAgent} onDemo={openDemo}
+        canvasMode={canvasMode} samplingPreview={samplingPreview.data} samplingPreviewError={samplingPreview.error}
+        selectedSamplingOpportunity={selectedSamplingOpportunity}
+        onSelectSamplingOpportunity={setSelectedSamplingOpportunity} />
     </div>
     <div id="workflow-view" className="workflow-view" hidden={!workflowVisible} role="region" aria-label="工作流">
       <div className="workflow-canvas-column">
-        <div className="workflow-floating-tools">
-          <div><Button size="sm" aria-expanded={libraryOpen} aria-controls="mas-node-library" onClick={() => { setDebugOpen(false); setLibraryOpen(value => !value); }}>
-            <Plus size={15} />添加节点
-          </Button></div>
-          <div>
-            <Button id="workflow-debug-trigger" size="sm" aria-expanded={debugOpen} aria-controls="workflow-debug" onClick={debugOpen ? closeDebug : openDebug}>
-              <FlaskConical size={14} />单题调试
-            </Button>
-          </div>
-        </div>
         <MasGraphEditor workflow={workflow} palette={draft.palette} onChange={draft.onWorkflowChange}
           active={workflowVisible} libraryOpen={libraryOpen} onLibraryOpenChange={setLibraryOpen} traceFocus={traceFocus}
-          inspectorVisible={!debugOpen} onInspect={closeDebug} onModelResources={modelResources} />
+          inspectorVisible={!debugOpen} onInspect={closeDebug} onModelResources={modelResources}
+          mode={canvasMode} samplingPreview={samplingPreview.data}
+          selectedSamplingOpportunity={selectedSamplingOpportunity}
+          onSelectSamplingOpportunity={setSelectedSamplingOpportunity}
+          onModeChange={selectCanvasMode} onDebug={debugOpen ? closeDebug : openDebug} debugOpen={debugOpen} />
       </div>
       {debugVisited && <WorkflowDebug experimentId={props.expId} draft={draft} active={workflowVisible}
         open={debugOpen} mode={debugMode} executable={executable} readiness={readiness}

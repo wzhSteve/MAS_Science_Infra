@@ -4,12 +4,29 @@
   .branch-site-item { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; padding: 8px 9px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface); color: var(--text-primary); text-align: left; cursor: pointer; }
   .branch-site-item:hover { background: var(--surface-subtle); }
   .branch-site-item.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-subtle); }
+  .branch-site-item.is-unavailable { border-style: dashed; background: #fafbfc; }
   .branch-site-item > span:nth-child(3) { display: grid; min-width: 0; }
   .branch-site-item strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-  .branch-site-item small { margin-top: 2px; color: var(--text-secondary); font-size: 9px; }
+  .branch-site-item small { margin-top: 2px; color: var(--text-secondary); font-size: 9px; line-height: 1.45; white-space: normal; }
+  .branch-site-statuses { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .branch-site-icon { display: grid; place-items: center; color: var(--text-secondary); }
   .branch-site-editor { display: grid; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle); }
   .branch-site-editor-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; }
-  .branch-site-editor-title > span { color: var(--text-secondary); }
+  .branch-site-editor-title > div { display: grid; gap: 3px; min-width: 0; }
+  .branch-site-editor-title small { color: var(--text-secondary); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+  .branch-site-editor-title strong { overflow-wrap: anywhere; }
   .branch-gate-parameters { margin-top: 2px; padding-top: 13px; border-top: 1px dashed var(--border-subtle); }
+  .sampling-budget-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+  .sampling-budget-summary > span { display: grid; gap: 3px; padding: 9px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--canvas); }
+  .sampling-budget-summary small { color: var(--text-secondary); font-size: 9px; }
+  .sampling-budget-summary strong { font-size: 13px; font-weight: 600; }
+  .sampling-implementation { margin-top: 10px; }
+  .sampling-capability { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--canvas); color: var(--text-secondary); font-size: 10px; line-height: 1.55; }
+  .sampling-capability.is-native { border-color: #c8ddcd; background: #f7fbf8; }
+  .sampling-capability.is-compatibility { border-color: #ead9b8; background: #fdfaf4; }
+  .sampling-inspector-heading { margin: 4px 0 -2px; color: var(--text-secondary); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  .sampling-contract dl { display: grid; gap: 6px; margin: 10px 0 0; }
+  .sampling-contract dl > div { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 8px; font-size: 10px; }
+  .sampling-contract dt { color: var(--text-secondary); }
+  .sampling-contract dd { margin: 0; overflow-wrap: anywhere; font-family: var(--font-code); }
 }

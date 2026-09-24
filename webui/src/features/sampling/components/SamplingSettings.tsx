@@ -1,11 +1,12 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
-import { GitBranch } from 'lucide-react';
-import type { BranchSiteSpec, Palette, SamplingSpec, WorkflowSpec } from '../../../shared/api/types';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GitBranch, Trash2 } from 'lucide-react';
+import type { BranchSiteSpec, Palette, SamplingOpportunity, SamplingPreviewResponse, SamplingSpec, WorkflowSpec } from '../../../shared/api/types';
 import { ActionBar } from '../../../shared/components/ActionBar';
 import { FormField } from '../../../shared/components/FormField';
 import { HelpLabel } from '../../../shared/components/HelpLabel';
 import { Section } from '../../../shared/components/Section';
 import { StatusBadge } from '../../../shared/components/StatusBadge';
+import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { Button } from '../../../shared/ui/button';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { Input } from '../../../shared/ui/input';
@@ -14,16 +15,16 @@ import { useTrainingConfig } from '../../../app/providers/TrainingConfigProvider
 import {
   BRANCH_GATE_OPTIONS,
   SAMPLING_MODE_OPTIONS,
-  candidateTypeLabel,
+  anchorKey,
   deriveBranchCandidates,
   effectiveSites,
   findCandidateSite,
-  gateOptionsFor,
   isBranchingMode,
   legacySiteCount,
   updateCandidateSite,
   type BranchCandidate,
 } from '../model/branchSites';
+import type { CanvasMode } from '../../mas/types';
 
 const DEFAULT_SAMPLING: SamplingSpec = {
   mode: 'grpo_n',
@@ -36,7 +37,14 @@ const DEFAULT_SAMPLING: SamplingSpec = {
   sites: [],
 };
 
-const CandidateRow = memo(function CandidateRow({ candidate, site, selected, onSelect, onToggle }: {
+const SUPPORT = {
+  native: { tone: 'success', label: '可执行' },
+  compatibility: { tone: 'warning', label: '兼容' },
+  unavailable: { tone: 'neutral', label: '暂不支持' },
+} as const;
+
+const CandidateRow = memo(function CandidateRow({ opportunity, candidate, site, selected, onSelect, onToggle }: {
+  opportunity: SamplingOpportunity;
   candidate: BranchCandidate;
   site?: BranchSiteSpec;
   selected: boolean;
@@ -44,19 +52,27 @@ const CandidateRow = memo(function CandidateRow({ candidate, site, selected, onS
   onToggle: (candidate: BranchCandidate, enabled: boolean) => void;
 }) {
   const enabled = Boolean(site && site.enabled !== false);
+  const support = SUPPORT[opportunity.support];
   return <button type="button"
-    className={`branch-site-item${selected ? ' is-selected' : ''}`}
-    onClick={() => onSelect(candidate.id)}>
+    className={`branch-site-item is-${opportunity.support}${selected ? ' is-selected' : ''}`}
+    onClick={() => onSelect(opportunity.id)}>
     <Checkbox checked={enabled} aria-label={`${enabled ? '关闭' : '开启'} ${candidate.label}`}
+      disabled={opportunity.support === 'unavailable' && !site}
       onClick={(event) => event.stopPropagation()}
       onChange={() => onToggle(candidate, !enabled)} />
     <span className="branch-site-icon"><GitBranch size={14} /></span>
-    <span><strong>{candidate.label}</strong><small>{candidateTypeLabel(candidate.kind)}</small></span>
-    <StatusBadge tone={enabled ? 'success' : 'neutral'}>{enabled ? '开启' : '关闭'}</StatusBadge>
+    <span><strong>{opportunity.label}</strong><small>{opportunity.message}</small></span>
+    <span className="branch-site-statuses">
+      {enabled && <StatusBadge tone="info">已配置</StatusBadge>}
+      <StatusBadge tone={support.tone}>{support.label}</StatusBadge>
+    </span>
   </button>;
 });
 
-export const SamplingSettings = memo(function SamplingSettings({ workflow, palette, onChange, onSave, saving, onLocate, compact = false, expanded = false, onExpand }: {
+export const SamplingSettings = memo(function SamplingSettings({
+  workflow, palette, onChange, onSave, saving, onLocate, compact = false, expanded = false, onExpand,
+  canvasMode = 'workflow', preview, previewError, selectedOpportunityId, onSelectOpportunity,
+}: {
   workflow: WorkflowSpec;
   palette: Palette;
   onChange: (workflow: WorkflowSpec) => void;
@@ -64,16 +80,46 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
   saving?: boolean;
   onLocate?: (agentId: string) => void;
   compact?: boolean; expanded?: boolean; onExpand?: () => void;
+  canvasMode?: CanvasMode;
+  preview?: SamplingPreviewResponse | null;
+  previewError?: string | null;
+  selectedOpportunityId?: string | null;
+  onSelectOpportunity?: (id: string) => void;
 }) {
   const { draft: training } = useTrainingConfig();
   const sampling = useMemo(() => ({ ...DEFAULT_SAMPLING, ...(workflow.sampling || {}) }), [workflow.sampling]);
   const candidates = useMemo(() => deriveBranchCandidates(workflow),
     [workflow.agents, workflow.edges, workflow.hub, workflow.routers, workflow.tools]);
   const sites = useMemo(() => effectiveSites(sampling), [sampling]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = useMemo(() =>
-    candidates.find((candidate) => candidate.id === selectedId) || candidates[0] || null,
-  [candidates, selectedId]);
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
+  const opportunityId = selectedOpportunityId ?? localSelectedId;
+  const opportunities = preview?.opportunities || [];
+  const selectedOpportunity = opportunities.find(item => item.id === opportunityId)
+    || opportunities.find(item => item.configured && item.enabled)
+    || opportunities.find(item => item.support === 'native')
+    || opportunities[0];
+  useEffect(() => {
+    if (!selectedOpportunity || selectedOpportunity.id === opportunityId) return;
+    if (onSelectOpportunity) onSelectOpportunity(selectedOpportunity.id);
+    else setLocalSelectedId(selectedOpportunity.id);
+  }, [selectedOpportunity, opportunityId, onSelectOpportunity]);
+  const selectOpportunity = useCallback((id: string) => {
+    if (onSelectOpportunity) onSelectOpportunity(id);
+    else setLocalSelectedId(id);
+  }, [onSelectOpportunity]);
+  const selected = useMemo(() => {
+    if (!selectedOpportunity) return null;
+    const existing = candidates.find(candidate => anchorKey(candidate.anchor) === selectedOpportunity.id);
+    if (existing) return existing;
+    const kind = selectedOpportunity.anchor.kind === 'after_tool' ? 'tool'
+      : selectedOpportunity.anchor.kind === 'after_verifier' ? 'verifier'
+        : selectedOpportunity.anchor.kind === 'on_edge' ? 'edge' : 'agent';
+    return {
+      id: selectedOpportunity.id, kind, label: selectedOpportunity.label,
+      nodeId: selectedOpportunity.node_id, anchor: selectedOpportunity.anchor,
+      recommendedGate: selectedOpportunity.allowed_gates[0] || 'entropy_delta',
+    } satisfies BranchCandidate;
+  }, [candidates, selectedOpportunity]);
   const selectedSite = useMemo(() => selected ? findCandidateSite(sites, selected) : undefined,
     [sites, selected]);
   const branching = isBranchingMode(sampling.mode);
@@ -83,11 +129,11 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
     Array.from(new Set([sampling.mode || 'grpo_n', ...(palette.sampling_modes || []), ...SAMPLING_MODE_OPTIONS.map((item) => item.value)])),
   [palette.sampling_modes, sampling.mode]);
   const gates = useMemo(() => {
-    if (!selected) return [];
-    const compatible = gateOptionsFor(sampling.mode, selected.kind);
+    if (!selectedOpportunity) return [];
+    const compatible = selectedOpportunity.allowed_gates;
     const current = selectedSite?.gate.type;
     return current && !compatible.includes(current) ? [...compatible, current] : compatible;
-  }, [sampling.mode, selected, selectedSite?.gate.type]);
+  }, [selectedOpportunity, selectedSite?.gate.type]);
   const workflowRef = useRef(workflow);
   const samplingRef = useRef(sampling);
   const candidatesRef = useRef(candidates);
@@ -104,7 +150,13 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
   const toggleSite = useCallback((candidate: BranchCandidate, enabled: boolean) => {
     patchSite(candidate, { enabled });
   }, [patchSite]);
-  const modeLabel = (mode: string) => SAMPLING_MODE_OPTIONS.find((item) => item.value === mode)?.label || mode;
+  const removeSite = useCallback((siteId: string) => {
+    patchSampling({ barriers: [], sites: sites.filter(site => site.id !== siteId) });
+  }, [patchSampling, sites]);
+  const modeLabel = (mode: string) => ({
+    grpo_n: '独立多次采样', grpo: '独立多次采样', arpo: '自适应分支采样',
+    aepo: '信息增益预算', appo: '自适应路径采样', rae: '结果判定与回溯',
+  }[mode] || SAMPLING_MODE_OPTIONS.find((item) => item.value === mode)?.label || mode);
   const gateLabel = (gate: string) => BRANCH_GATE_OPTIONS.find((item) => item.value === gate)?.label || gate;
   const gateParams = selectedSite?.gate.params || {};
   const officialArpoGate = gateParams.use_official_arpo_gate !== false;
@@ -166,11 +218,11 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
     </Section>;
   }
   return <div className="sampling-settings">
-    <Section title="采样策略 · Sampling Policy" actions={<StatusBadge tone={branching ? 'info' : 'neutral'}>
-      {branching ? 'Branch Sampling' : 'Independent Rollouts'}
+    <Section title="采样策略" actions={<StatusBadge tone={branching ? 'info' : 'neutral'}>
+      {modeLabel(sampling.mode || 'grpo_n')}
     </StatusBadge>}>
       <div className="form-grid">
-        <FormField label={<HelpLabel help="选择 GRPO、ARPO、AEPO、APPO 或 RAE 的 Rollout 策略。">算法</HelpLabel>}>
+        <FormField label={<HelpLabel help="选择如何为每道题生成候选。底层实现名称在高级说明中保留。">采样方式</HelpLabel>}>
           <Select value={sampling.mode} onChange={(event) => patchSampling({ mode: event.target.value })}>
             {modes.map((mode) => <option key={mode} value={mode}>{modeLabel(mode)}</option>)}
           </Select>
@@ -195,55 +247,78 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
           </FormField>
         </details>}
       </div>
+      {branching && <div className="sampling-budget-summary">
+        <span><small>最终候选</small><strong>{preview?.policy.group_n ?? sampling.group_n}</strong></span>
+        <span><small>先独立运行</small><strong>{preview?.policy.initial_rollouts ?? sampling.initial_rollouts}</strong></span>
+        <span><small>剩余分支预算</small><strong>{preview?.policy.remaining_budget ?? Math.max(0, Number(sampling.group_n) - Number(sampling.initial_rollouts))}</strong></span>
+      </div>}
+      <details className="parameter-details sampling-implementation">
+        <summary>实现与配置说明</summary>
+        <p className="field-hint">运行实现：{String(sampling.mode || 'grpo_n').toUpperCase()} · VERL estimator：GRPO compatibility。画布声明潜在边界，实际命中结果由 Rollout Tree 展示。</p>
+      </details>
     </Section>
 
-    {branching && compact && !expanded && <div className="parameter-summary-row"><span>分支位置</span>
+    {previewError && <InlineNotice tone="warning">采样能力读取失败：{previewError}</InlineNotice>}
+    {branching && canvasMode !== 'sampling' && compact && !expanded && <div className="parameter-summary-row"><span>分支位置</span>
       <span>{enabledCount} 处</span><Button size="sm" variant="ghost" onClick={onExpand}>编辑</Button></div>}
-    {branching && (!compact || expanded) && <Section title="分支位置"
-      description={compact ? undefined : 'Branch Site 定义保存 Snapshot 的执行位置；Gate 再决定到达该位置时是否创建 Branch。'}
+    {branching && (canvasMode === 'sampling' || !compact || expanded) && <Section title="潜在采样位置"
+      description={compact ? undefined : '选择一次运行可能到达的边界；这里只表示设计能力，不表示本次训练已经命中。'}
       actions={<StatusBadge tone={enabledCount ? 'success' : 'warning'}>
-      {enabledCount} 个已开启
+      {enabledCount} 个已配置
     </StatusBadge>}>
-      {legacyCount > 0 && <p className="field-hint">
-        旧版 barriers 配置：{sampling.barriers?.join('、') || 'after_tool'}（{legacyCount} 个通用站点）。
-        选择下方的具体位置会替换通用站点，不会自动启用每个 Tool。
-      </p>}
+      {preview?.legacy && <InlineNotice tone="warning"><strong>兼容规则：</strong>{preview.legacy.message}</InlineNotice>}
       <div className="branch-site-list">
-        {candidates.map((candidate) => {
+        {opportunities.map(opportunity => {
+          const candidate = candidates.find(item => anchorKey(item.anchor) === opportunity.id) || {
+            id: opportunity.id,
+            kind: opportunity.anchor.kind === 'after_tool' ? 'tool' : opportunity.anchor.kind === 'after_verifier' ? 'verifier'
+              : opportunity.anchor.kind === 'on_edge' ? 'edge' : 'agent',
+            label: opportunity.label,
+            nodeId: opportunity.node_id,
+            anchor: opportunity.anchor,
+            recommendedGate: opportunity.allowed_gates[0] || 'entropy_delta',
+          } satisfies BranchCandidate;
           const site = findCandidateSite(sites, candidate);
-          return <CandidateRow key={candidate.id} candidate={candidate} site={site}
-            selected={selected?.id === candidate.id} onSelect={setSelectedId} onToggle={toggleSite} />;
+          return <CandidateRow key={opportunity.id} opportunity={opportunity} candidate={candidate} site={site}
+            selected={selectedOpportunity?.id === opportunity.id} onSelect={selectOpportunity} onToggle={toggleSite} />;
         })}
-        {!candidates.length && <p className="field-hint">画布中还没有可以尝试其他路径的位置。</p>}
+        {!opportunities.length && <p className="field-hint">当前 Workflow 还没有可识别的采样边界。</p>}
       </div>
 
-      {selected && selectedSite && <div className="branch-site-editor">
+      {selected && selectedOpportunity && <div className="branch-site-editor">
         <div className="branch-site-editor-title">
-          <strong>{selected.label}</strong>
-          <span>{candidateTypeLabel(selected.kind)}</span>
-          {onLocate && <Button size="sm" variant="ghost" onClick={() => onLocate(selected.nodeId)}>定位到画布</Button>}
+          <div><small>采样位置</small><strong>{selectedOpportunity.label}</strong></div>
+          {canvasMode !== 'sampling' && onLocate && <Button size="sm" variant="ghost" onClick={() => onLocate(selected.nodeId)}>定位到画布</Button>}
         </div>
+        <div className={`sampling-capability is-${selectedOpportunity.support}`}>
+          <StatusBadge tone={SUPPORT[selectedOpportunity.support].tone}>{SUPPORT[selectedOpportunity.support].label}</StatusBadge>
+          <span>{selectedOpportunity.message}</span>
+        </div>
+        {!selectedSite && selectedOpportunity.support !== 'unavailable' && <Button size="sm" variant="primary"
+          onClick={() => toggleSite(selected, true)}>在此位置尝试其他路径</Button>}
+        {selectedSite && <>
+        <h4 className="sampling-inspector-heading">条件</h4>
         <div className="form-grid">
           <FormField label={<HelpLabel help={BRANCH_GATE_OPTIONS.find((item) => item.value === selectedSite.gate.type)?.help
-            || '决定到达 Branch Site 时是否创建 Branch。'}>Gate</HelpLabel>}>
+            || '决定到达该位置时是否创建新的后续路径。'}>什么情况下扩展</HelpLabel>}>
             <Select value={selectedSite.gate.type} onChange={(event) =>
               patchSite(selected, { gate: { ...selectedSite.gate, type: event.target.value } })}>
               {gates.map((gate) => <option key={gate} value={gate}>{gateLabel(gate)}</option>)}
             </Select>
           </FormField>
-          <FormField label={<HelpLabel help="同一个 Branch Site 在一次执行中第几次命中时应用 Gate。">Apply on</HelpLabel>}>
+          <FormField label={<HelpLabel help="同一位置在一次执行中第几次到达时检查条件。">何时检查</HelpLabel>}>
             <Select value={selectedSite.when || 'first'} onChange={(event) =>
               patchSite(selected, { when: event.target.value as BranchSiteSpec['when'] })}>
-              <option value="first">First</option>
-              <option value="every">Every</option>
-              <option value="nth">Nth</option>
+              <option value="first">第一次到达</option>
+              <option value="every">每次到达</option>
+              <option value="nth">第 N 次到达</option>
             </Select>
           </FormField>
           {selectedSite.when === 'nth' && <FormField label={<HelpLabel help="第几次命中 Branch Site 时应用 Gate。">nth</HelpLabel>}>
             <Input type="number" min={1} value={selectedSite.nth || 1}
               onChange={(event) => patchSite(selected, { nth: Number(event.target.value) })} />
           </FormField>}
-          <FormField label={<HelpLabel help="留空继承全局值；填写数字只覆盖当前分支位置。">局部分支宽度</HelpLabel>}>
+          <FormField label={<HelpLabel help="保留当前位置之前的上下文，只重新生成后续内容。留空继承全局值。">最多新增后续路径</HelpLabel>}>
             <Input type="number" min={1} step={1} value={selectedSite.fork?.beam_size ?? ''}
               placeholder={`继承全局 ${sampling.beam_size}`} onChange={(event) => {
                 const fork = { ...selectedSite.fork };
@@ -252,7 +327,7 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
                 patchSite(selected, { fork });
               }} />
           </FormField>
-          <FormField label={<HelpLabel help="Branch Rollout 使用的 Reward / Credit Assignment 方案。">Reward Scheme</HelpLabel>}>
+          <FormField label={<HelpLabel help="新后续路径使用的奖励与归因方式。">结果评价方式</HelpLabel>}>
             <Select value={selectedSite.reward?.scheme || 'scalar_grpo'} onChange={(event) =>
               patchSite(selected, { reward: { ...selectedSite.reward, scheme: event.target.value } })}>
               <option value="scalar_grpo">scalar_grpo</option>
@@ -308,6 +383,20 @@ export const SamplingSettings = memo(function SamplingSettings({ workflow, palet
             </FormField>
           </div>
         </div>}
+        <details className="parameter-details sampling-contract">
+          <summary>高级合同信息</summary>
+          <dl>
+            <div><dt>anchor</dt><dd>{selectedOpportunity.anchor.kind}</dd></div>
+            <div><dt>agent</dt><dd>{selectedOpportunity.anchor.agent_id || '—'}</dd></div>
+            <div><dt>tool</dt><dd>{selectedOpportunity.anchor.tool_id || '—'}</dd></div>
+            <div><dt>runtime event</dt><dd>{selectedOpportunity.runtime_event || '未实现'}</dd></div>
+            <div><dt>resume</dt><dd>{selectedOpportunity.prefix || '不可用'}</dd></div>
+          </dl>
+        </details>
+        <ActionBar><Button size="sm" variant="ghost" onClick={() => removeSite(selectedSite.id)}>
+          <Trash2 size={13} />删除此位置
+        </Button></ActionBar>
+        </>}
       </div>}
     </Section>}
 

@@ -20,9 +20,6 @@
 .experiment-editors > #panel-experiment > .page-stack, .experiment-editors > #panel-monitor > .page-stack { margin-inline: auto; }
 .workflow-view { display: flex; flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; }
 .workflow-canvas-column { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-.workflow-floating-tools { position: absolute; inset: 16px 16px auto; z-index: 15; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; pointer-events: none; }
-.workflow-floating-tools > div { display: flex; gap: 6px; pointer-events: auto; }
-.workflow-floating-tools .ui-button { min-height: 32px; background: var(--surface); box-shadow: 0 2px 8px #20252b08; font-size: 12px; border-color: #d7dde6; }
 .workflow-canvas-column .mas-panel { top: 62px; }
 .workflow-canvas-column .mas-library { max-height: calc(100% - 76px); }
 .mas-workspace-notice { top: 60px; }
@@ -118,9 +115,6 @@
   .experiment-header-actions { gap: 4px; }
   .experiment-header-actions .ui-button { padding-inline: 8px; font-size: 11px; }
   .experiment-header-actions .ui-button > svg, .experiment-header-divider, .experiment-save-status, .experiment-header > .ui-button > span { display: none; }
-  .workflow-floating-tools { inset: 12px 10px auto; }
-  .workflow-floating-tools .ui-button { font-size: 11px; padding-inline: 8px; }
-  .workflow-floating-tools .ui-button > svg { display: none; }
   .training-document-body, .workspace-document { padding: 24px 16px 40px; }
   .training-document .form-grid, .workspace-document .form-grid { grid-template-columns: minmax(0, 1fr); }
   .training-document .ui-section, .workspace-document .ui-section { padding: 16px; }

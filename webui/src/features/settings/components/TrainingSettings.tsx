@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, LocateFixed, Maximize2, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import type { Bundle, MetaResponse, Palette, WorkflowSpec } from '../../../shared/api/types';
+import type { Bundle, MetaResponse, Palette, SamplingPreviewResponse, WorkflowSpec } from '../../../shared/api/types';
 import { FormField } from '../../../shared/components/FormField';
 import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { Button } from '../../../shared/ui/button';
@@ -15,6 +15,7 @@ import { useTrainingConfig } from '../../../app/providers/TrainingConfigProvider
 import { InferenceSettings } from './InferenceSettings';
 import { DatasetSelection } from '../../resources/components/DatasetSelection';
 import type { SettingsSection } from '../model/sections';
+import type { CanvasMode } from '../../mas/types';
 
 const BASIC_DATA = HYDRA_FIELDS.filter(field => field.path === 'data.train_files' || field.path === 'data.val_files');
 const ENVIRONMENT = HYDRA_FIELDS.filter(field => field.group === 'Rollout' || field.path === 'trainer.nnodes');
@@ -23,12 +24,15 @@ const OPTIMIZATION = HYDRA_FIELDS.filter(field => !BASIC_DATA.includes(field) &&
 export const TrainingSettings = memo(function TrainingSettings({
   bundle, meta, onReload, active, section, jump, expanded, onExpandedChange, onManageModels, onManageData,
   selectedResource, resourcePurpose, onSuggestionApplied, workflow, palette, onWorkflowChange, onLocate, onDemo,
+  canvasMode, samplingPreview, samplingPreviewError, selectedSamplingOpportunity, onSelectSamplingOpportunity,
 }: {
   bundle: Bundle; meta: MetaResponse | null; onReload: () => void; active: boolean;
   section: SettingsSection | null; jump: number; expanded: boolean; onExpandedChange: (expanded: boolean) => void;
   onManageModels: () => void; onManageData: () => void; selectedResource?: string; resourcePurpose?: 'training' | 'inference';
   onSuggestionApplied: () => void; onDemo: () => void;
   workflow: WorkflowSpec; palette: Palette; onWorkflowChange: (workflow: WorkflowSpec) => void; onLocate: (agentId: string) => void;
+  canvasMode: CanvasMode; samplingPreview: SamplingPreviewResponse | null; samplingPreviewError: string | null;
+  selectedSamplingOpportunity: string | null; onSelectSamplingOpportunity: (id: string) => void;
 }) {
   const { draft, gpu, selectedIds } = useTrainingConfig();
   const { rl, patch, pending } = draft;
@@ -52,6 +56,11 @@ export const TrainingSettings = memo(function TrainingSettings({
     if (section === 'inference') setExecutionOpen(true);
     scrollToSection(section === 'inference' ? 'model' : section);
   }, [active, section, jump, scrollToSection]);
+  useEffect(() => {
+    if (canvasMode !== 'sampling') return;
+    setCollapsed(false);
+    scrollToSection('training');
+  }, [canvasMode, scrollToSection]);
   const expandBranches = useCallback(() => {
     onExpandedChange(true);
     scrollToSection('training');
@@ -111,7 +120,9 @@ export const TrainingSettings = memo(function TrainingSettings({
       <section id="training-training" className="parameter-group">
         <h3><span>03</span>训练策略</h3>
         <SamplingSettings workflow={workflow} palette={palette} onChange={onWorkflowChange} onLocate={onLocate}
-          compact expanded={expanded} onExpand={expandBranches} />
+          compact expanded={expanded} onExpand={expandBranches} canvasMode={canvasMode}
+          preview={samplingPreview} previewError={samplingPreviewError}
+          selectedOpportunityId={selectedSamplingOpportunity} onSelectOpportunity={onSelectSamplingOpportunity} />
         <details className="parameter-details"><summary>训练与优化参数</summary>{fields(OPTIMIZATION)}</details>
       </section>
       <section id="training-environment" className="parameter-group">

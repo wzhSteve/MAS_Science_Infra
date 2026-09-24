@@ -3,11 +3,12 @@ import type { NodeProps } from '@xyflow/react';
 import { GitBranch, Route } from 'lucide-react';
 import type { GraphNode } from '../types';
 import { NodeHandles } from './NodeHandles';
+import { SamplingNodeStatus } from './SamplingNodeStatus';
 
 function RouterNode({ id, data, selected }: NodeProps<GraphNode>) {
   const cls = [
     'mas-node', 'mas-node--router', selected ? 'is-selected' : '',
-    data.issue ? 'has-issue' : '', data.related ? 'is-related' : '',
+    data.issue ? 'has-issue' : '', data.related ? 'is-related' : '', data.canvasMode === 'sampling' ? 'is-sampling' : '',
   ].filter(Boolean).join(' ');
   return <div className={cls}>
     <NodeHandles id={id} />
@@ -20,6 +21,7 @@ function RouterNode({ id, data, selected }: NodeProps<GraphNode>) {
       <span>Router</span><span>{data.branchCount ? <span className="mas-node__branch"><GitBranch size={10} />{data.branchCount}</span>
         : `${data.candidates?.length || 0} 个候选`}</span>
     </div>
+    {data.canvasMode === 'sampling' && <SamplingNodeStatus state={data.samplingState} label={data.samplingLabel} />}
     {data.issue && <div className="mas-node__issue">{data.issue}</div>}
   </div>;
 }

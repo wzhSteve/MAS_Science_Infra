@@ -260,6 +260,15 @@ def create_app() -> FastAPI:
     def palette() -> Dict[str, Any]:
         return services.mas_palette()
 
+    @app.post("/api/mas/sampling/preview")
+    def preview_sampling(body: SectionBody) -> Dict[str, Any]:
+        try:
+            from workflow.site_policy import sampling_preview
+
+            return sampling_preview(body.data)
+        except Exception as e:
+            raise HTTPException(400, str(e)) from e
+
     @app.get("/api/mas/rollout-trees")
     def rollout_trees(experiment_id: str = Query("demo")) -> Dict[str, Any]:
         """Read-only scan of mas/.local_expansion/*.json → list of RolloutTree payloads."""

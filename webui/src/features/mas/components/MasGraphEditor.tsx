@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlowProvider, useReactFlow, type Connection, type XYPosition, type ReactFlowProps } from '@xyflow/react';
 import { AlertCircle, X } from 'lucide-react';
-import type { Palette, WorkflowSpec } from '../../../shared/api/types';
-import type { GraphNode, GraphEdge, GraphNodePreset, TraceFocusRequest } from '../types';
+import type { Palette, SamplingOpportunity, SamplingPreviewResponse, WorkflowSpec } from '../../../shared/api/types';
+import type { CanvasMode, GraphNode, GraphEdge, GraphNodePreset, SamplingCanvasState, TraceFocusRequest } from '../types';
 import { executableInfo } from '../model/workflowGraph';
 import { edgeConnection } from '../model/edgeRules';
 import { edgeLanes } from '../model/edgeGeometry';
@@ -27,13 +27,40 @@ type Props = {
   inspectorVisible?: boolean;
   onInspect?: () => void;
   traceFocus?: TraceFocusRequest | null;
+  mode: CanvasMode;
+  samplingPreview: SamplingPreviewResponse | null;
+  selectedSamplingOpportunity?: string | null;
+  onSelectSamplingOpportunity: (id: string) => void;
+  onModeChange: (mode: CanvasMode) => void;
+  onDebug: () => void;
+  debugOpen: boolean;
 };
 
-function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLibraryOpenChange, onModelResources, traceFocus, inspectorVisible = true, onInspect }: Props) {
+function samplingState(opportunity?: SamplingOpportunity): SamplingCanvasState | undefined {
+  if (!opportunity) return undefined;
+  if (opportunity.support === 'unavailable') return 'unavailable';
+  if (opportunity.support === 'compatibility') return 'compatibility';
+  return opportunity.configured && opportunity.enabled ? 'configured' : 'available';
+}
+
+function preferredOpportunity(items: SamplingOpportunity[], selected?: string | null) {
+  return items.find(item => item.id === selected)
+    || items.find(item => item.configured && item.enabled)
+    || items.find(item => item.support === 'native')
+    || items.find(item => item.support === 'compatibility')
+    || items[0];
+}
+
+function GraphWorkbench({
+  workflow, palette, onChange, active, libraryOpen, onLibraryOpenChange, onModelResources, traceFocus,
+  inspectorVisible = true, onInspect, mode, samplingPreview, selectedSamplingOpportunity, onSelectSamplingOpportunity,
+  onModeChange, onDebug, debugOpen,
+}: Props) {
   const graph = useGraphEditor(workflow, onChange, palette);
   const flow = useReactFlow<GraphNode, GraphEdge>();
   const root = useRef<HTMLDivElement>(null);
   const lastTraceFocus = useRef<number | null>(null);
+  const lastSamplingFocus = useRef<string | null>(null);
   const [traceInfo, setTraceInfo] = useState('');
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('agent');
   const [connection, setConnection] = useState<{ value: Connection; anchor: XYPosition } | null>(null);
@@ -41,6 +68,18 @@ function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLi
   const reconnectRef = useRef<GraphEdge | null>(null);
   const executable = useMemo(() => executableInfo(workflow), [workflow]);
   const selectedEdge = graph.selectedEdge;
+  const opportunitiesByNode = useMemo(() => {
+    const map = new Map<string, SamplingOpportunity[]>();
+    for (const opportunity of samplingPreview?.opportunities || []) {
+      const rows = map.get(opportunity.node_id) || [];
+      rows.push(opportunity);
+      map.set(opportunity.node_id, rows);
+    }
+    return map;
+  }, [samplingPreview]);
+  const opportunitiesByEdge = useMemo(() =>
+    new Map((samplingPreview?.opportunities || []).filter(item => item.edge_id).map(item => [item.edge_id as string, item])),
+  [samplingPreview]);
   const branchCounts = useMemo(() => {
     const counts = new Map<string, number>();
     const sampling = workflow.sampling;
@@ -53,21 +92,31 @@ function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLi
     }
     return counts;
   }, [workflow]);
-  const nodes = useMemo(() => graph.nodes.map((node) => ({
-    ...node,
-    data: {
-      ...node.data,
-      issue: node.id === executable.nodeId ? executable.reason : undefined,
-      related: selectedEdge?.source === node.id || selectedEdge?.target === node.id,
-      branchCount: branchCounts.get(node.id) || 0,
-    },
-  })), [graph.nodes, executable, selectedEdge, branchCounts]);
+  const nodes = useMemo(() => graph.nodes.map((node) => {
+    const opportunity = preferredOpportunity(opportunitiesByNode.get(node.id) || [], selectedSamplingOpportunity);
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        issue: node.id === executable.nodeId ? executable.reason : undefined,
+        related: selectedEdge?.source === node.id || selectedEdge?.target === node.id,
+        branchCount: branchCounts.get(node.id) || 0,
+        canvasMode: mode,
+        samplingState: mode === 'sampling' ? samplingState(opportunity) : undefined,
+        samplingLabel: mode === 'sampling' ? opportunity?.message : undefined,
+      },
+    };
+  }), [graph.nodes, executable, selectedEdge, branchCounts, mode, opportunitiesByNode, selectedSamplingOpportunity]);
   const lanes = useMemo(() => edgeLanes(graph.edges), [graph.edges]);
-  const edges = useMemo(() => graph.edges.map((edge) => ({
-    ...edge, reconnectable: Boolean(edge.selected),
-    data: { ...edge.data, kind: edge.data?.kind || 'message', lane: lanes.get(edge.id),
-      issue: graph.rules.error(edgeConnection(edge), edge.data?.kind || 'message', edge.id) },
-  })), [graph.edges, graph.rules, lanes]);
+  const edges = useMemo(() => graph.edges.map((edge) => {
+    const opportunity = opportunitiesByEdge.get(edge.id);
+    return {
+      ...edge, reconnectable: mode === 'workflow' && Boolean(edge.selected),
+      data: { ...edge.data, kind: edge.data?.kind || 'message', lane: lanes.get(edge.id),
+        issue: graph.rules.error(edgeConnection(edge), edge.data?.kind || 'message', edge.id),
+        canvasMode: mode, samplingState: mode === 'sampling' ? samplingState(opportunity) : undefined },
+    };
+  }), [graph.edges, graph.rules, lanes, mode, opportunitiesByEdge]);
 
   const closePanels = useCallback(() => {
     graph.select(null);
@@ -144,6 +193,20 @@ function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLi
     revealNode(agent.id);
   }, [active, traceFocus, graph.nodes, graph.edges, graph.select, revealNode]);
 
+  useEffect(() => {
+    if (mode === 'workflow') lastSamplingFocus.current = null;
+  }, [mode]);
+
+  useEffect(() => {
+    if (!active || mode !== 'sampling' || !selectedSamplingOpportunity) return;
+    const opportunity = samplingPreview?.opportunities.find(item => item.id === selectedSamplingOpportunity);
+    if (!opportunity?.node_id || !flow.getNode(opportunity.node_id)
+      || lastSamplingFocus.current === selectedSamplingOpportunity) return;
+    lastSamplingFocus.current = selectedSamplingOpportunity;
+    graph.select({ kind: 'node', id: opportunity.node_id });
+    revealNode(opportunity.node_id);
+  }, [active, mode, selectedSamplingOpportunity, samplingPreview, graph.select, revealNode, flow]);
+
   const add = (preset: GraphNodePreset, position?: XYPosition) => {
     const area = visibleArea();
     if (!area) return;
@@ -218,13 +281,14 @@ function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLi
     }
   };
 
-  return <GraphInteractionContext.Provider value={interaction}><div className="mas-workbench" ref={root} tabIndex={-1} onKeyDown={(event) => {
+  return <GraphInteractionContext.Provider value={interaction}><div className={`mas-workbench${mode === 'sampling' ? ' is-sampling-mode' : ''}`} ref={root} tabIndex={-1} onKeyDown={(event) => {
     if (event.key === 'Escape') { event.stopPropagation(); closePanels(); }
     else if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')) {
       event.stopPropagation();
     }
   }}>
-    <GraphCanvas nodes={nodes} edges={edges} active={active}
+    <GraphCanvas nodes={nodes} edges={edges} active={active} mode={mode}
+      onModeChange={onModeChange} onDebug={onDebug} debugOpen={debugOpen}
       onNodesChange={graph.onNodesChange} onEdgesChange={graph.onEdgesChange} onConnect={onConnect}
       isValidConnection={isValidConnection} onConnectStart={() => setConnection(null)} onConnectEnd={onConnectEnd}
       onMoveStart={() => setConnection(null)}
@@ -234,8 +298,23 @@ function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLi
         if (!state.isValid && state.toNode) graph.setNotice('未改接到合法对象，原连线已保留。');
         reconnectRef.current = null; setReconnecting(null);
       }}
-      onNodeClick={(_, node) => { onInspect?.(); graph.select({ kind: 'node', id: node.id }); setConnection(null); revealNode(node.id); }}
-      onEdgeClick={(_, edge) => onSelectEdge(edge.id)}
+      onNodeClick={(_, node) => {
+        if (mode === 'sampling') {
+          const opportunity = preferredOpportunity(opportunitiesByNode.get(node.id) || [], selectedSamplingOpportunity);
+          if (opportunity) onSelectSamplingOpportunity(opportunity.id);
+          graph.select({ kind: 'node', id: node.id }); revealNode(node.id);
+          return;
+        }
+        onInspect?.(); graph.select({ kind: 'node', id: node.id }); setConnection(null); revealNode(node.id);
+      }}
+      onEdgeClick={(_, edge) => {
+        if (mode === 'sampling') {
+          const opportunity = opportunitiesByEdge.get(edge.id);
+          if (opportunity) onSelectSamplingOpportunity(opportunity.id);
+          return;
+        }
+        onSelectEdge(edge.id);
+      }}
       onPaneClick={closePanels}
       onAdd={add} onOpenLibrary={openLibrary} onError={graph.setNotice} />
     {traceInfo && <div className="mas-trace-location" role="status"><span>{traceInfo}</span>
@@ -250,12 +329,12 @@ function GraphWorkbench({ workflow, palette, onChange, active, libraryOpen, onLi
       }}>定位</Button>}
       {graph.notice && <Button size="sm" variant="ghost" aria-label="关闭提示" onClick={() => graph.setNotice('')}><X size={14} /></Button>}
     </div>}
-    {libraryOpen && <GraphPalette palette={palette} nodes={graph.nodes} tab={libraryTab} onTabChange={setLibraryTab} onAdd={add}
+    {mode === 'workflow' && libraryOpen && <GraphPalette palette={palette} nodes={graph.nodes} tab={libraryTab} onTabChange={setLibraryTab} onAdd={add}
       onClose={() => onLibraryOpenChange(false)} onTemplate={(template) => {
         graph.applyTemplate(template); setConnection(null);
         requestAnimationFrame(() => void flow.fitView({ padding: 0.25, maxZoom: 1 }));
       }} />}
-    {inspectorVisible && (graph.selected ? <NodeInspector selected={graph.selected} nodes={graph.nodes} palette={palette} entryId={workflow.entry_agent || 'hub'}
+    {mode === 'workflow' && inspectorVisible && (graph.selected ? <NodeInspector selected={graph.selected} nodes={graph.nodes} palette={palette} entryId={workflow.entry_agent || 'hub'}
         onModelResources={onModelResources}
         onPatch={graph.updateSelected} onEntry={graph.setEntry} onDelete={graph.deleteSelected} onClose={closePanels} />
       : selectedEdge ? <EdgeInspector key={selectedEdge.id} edge={selectedEdge} nodes={graph.nodes}
