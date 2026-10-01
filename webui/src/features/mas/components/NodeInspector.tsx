@@ -207,6 +207,9 @@ export const NodeInspector = memo(function NodeInspector({
           <JsonObjectField label="Router meta" value={selected.data.meta || {}} onChange={(meta) => onPatch({ meta })} />
         </div>
       </> : <>
+        {selected.data.profile?.backend === 'user_space' && <div className="mas-property-section">
+          <p className="field-hint">用户区节点。代码在 <code>user_space/projects/{String(selected.data.profile.user_project || '')}</code>，只能由悬浮辅助 AI 修改。</p>
+        </div>}
         <div className="mas-property-section">
           <FormField label="Agent 类型">
             <Select value={selected.data.kind || 'blank'} onChange={(event) =>

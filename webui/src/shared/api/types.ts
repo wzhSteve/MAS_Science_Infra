@@ -279,6 +279,15 @@ export interface Palette {
   sampling_modes?: string[];
   gate_types?: string[];
   templates?: Array<{ id: string; label: string; workflow?: WorkflowSpec }>;
+  user_projects?: Array<{
+    id: string;
+    title: string;
+    mode: 'io_module' | 'native_mas' | string;
+    status?: string;
+    agent_ids?: string[];
+    tool_ids?: string[];
+    workflow?: WorkflowSpec;
+  }>;
 }
 
 export interface GpuInfo {

@@ -425,7 +425,7 @@ Agent_Science_Infra / run.sh — 功能测试说明
 
 子命令
   help          打印本说明
-  smoke         无 GPU 冒烟：doctor → 层依赖 → mock 采集 → diagnose → HTML
+  smoke         无 GPU 冒烟：doctor → 层依赖 → user_zone → mock 采集 → diagnose → HTML
   tests         跑 tir_agent unittest（stage1–11）
   all           smoke + tests
   feature-test  功能分组测试：按功能域单测（--list 看全部域；详见下方章节）
@@ -523,7 +523,7 @@ ui / ui-test / branch-ui-test / traj-test
     ./run.sh ui --stop
 
   浏览器: http://127.0.0.1:8787/    API: /docs
-  顶栏勾选 GPU → Collect / Diagnose / Train；RL 页可改每题采样与 n_runners。
+  顶栏勾选 GPU → 保存实验 → 测试 / 开始训练。采样站点放在 planner / verifier / router 上。
 
   测控制面（不跑完 GRPO 一步；会 start 再立刻 stop 训练子进程）:
 
@@ -544,10 +544,10 @@ ui / ui-test / branch-ui-test / traj-test
     ./run.sh traj-test
     手册: docs/ROLLOUT_SAMPLING_UI_TEST.md
 
-  ARPO 训练验收（10 轮采样/reward/loss 断言，训练结束后恢复 YAML）:
+  ARPO 训练验收（默认 3 轮，训练结束后恢复 YAML）:
 
     ./run.sh arpo-train-test
-    ./run.sh arpo-train-test --steps 10 --timeout 900
+    ./run.sh arpo-train-test --steps 3 --timeout 1800
     ./run.sh arpo-train-test --negative    # 追加 n_branch=0 负例
     手册: docs/ARPO_TRAIN_TEST.md (Phase 4) / docs/MAS_AGENT_FRAMEWORK_TEST.md
 
@@ -555,8 +555,8 @@ ui / ui-test / branch-ui-test / traj-test
 feature-test — 按功能域测试（推荐日常用）
 ────────────────────────────────────────
 
-  把 146 个单测 + 前端 vitest + 冒烟拆成 16 个功能域，可单测一个功能，
-  也可 --all 全量。每个域独立输出 PASS/FAIL + 耗时，结尾汇总矩阵。
+  把单测、前端 vitest、冒烟拆成功能域，可单测一个功能，也可 --all 全量。
+  域列表和用例数以 --list 为准。
 
   查看全部功能域:
 
@@ -571,8 +571,11 @@ feature-test — 按功能域测试（推荐日常用）
     ./run.sh feature-test schema03          # schema 0.3 sugar/tool-agent
     ./run.sh feature-test daemon            # Daemon expansion enqueue
     ./run.sh feature-test realtime         # 实时 Harness（JSONL/SSE）
-    ./run.sh feature-test frontend          # 前端 vitest（轨迹 + router 节点）
-    ./run.sh feature-test smoke             # 无 GPU 冒烟（等价 ./run.sh smoke）
+    ./run.sh feature-test functional        # 功能合同（含 Studio 产品面）
+    ./run.sh feature-test user-space        # 用户区隔离与辅助网关
+    ./run.sh feature-test studio            # 单题调试 / eval / 训练门禁
+    ./run.sh feature-test frontend          # 前端 vitest
+    ./run.sh feature-test smoke             # 无 GPU 冒烟（含 check_user_zone）
 
   测多个功能:
 
@@ -584,7 +587,8 @@ feature-test — 按功能域测试（推荐日常用）
 
   全部功能域一览（--list 输出）:
     mas-core rl harness branch rollout-tree agent-framework schema03
-    daemon realtime cli control-ui gpu-compiler verifier e2e frontend smoke
+    daemon realtime cli control-ui gpu-compiler verifier e2e
+    functional user-space studio sampling-runtime frontend smoke
 
   手册: docs/MAS_AGENT_FRAMEWORK_TEST.md (§2 测试矩阵)
 
@@ -594,7 +598,7 @@ EOF
 cmd_smoke() {
   ensure_out
   ensure_cli
-  local total=6
+  local total=7
 
   step 1 "$total" "doctor — 环境 / GPU / AGL / MASSpec 探测"
   echo "说明: 检查本机能否跑 infra；不采集、不训练。"
@@ -604,19 +608,23 @@ cmd_smoke() {
   echo "说明: AST 扫描 workflow/*.py，禁止 import agentlightning/verl/ray。"
   run_cmd env PYTHONPATH="${TIR}" "$(resolve_python)" "${TIR}/scripts/check_workflow_deps.py"
 
-  step 3 "$total" "collect --mock — 无 LLM 采集 Trajectory + TrainSignal"
+  step 3 "$total" "check_user_zone — 用户区不得污染 mas/"
+  echo "说明: user_space 网关边界。"
+  run_cmd env PYTHONPATH="${ROOT}:${TIR}" "$(resolve_python)" "${TIR}/scripts/check_user_zone.py"
+
+  step 4 "$total" "collect --mock — 无 LLM 采集 Trajectory + TrainSignal"
   echo "说明: 验证 MAS 数据层可独立于 VERL；产物 → ${TRAJ}"
   run_cmd science_infra collect --mock --n 2 --out "${TRAJ}"
 
-  step 4 "$total" "diagnose — Harness 插件读轨迹"
+  step 5 "$total" "diagnose — Harness 插件读轨迹"
   echo "说明: 对 mock JSON 跑注册诊断器，打印 Hypothesis 列表。"
   run_cmd science_infra diagnose "${TRAJ}"
 
-  step 5 "$total" "status — 写出状态 HTML"
+  step 6 "$total" "status — 写出状态 HTML"
   echo "说明: mean_reward / 曲线 / 事件 / Harness → ${STATUS_HTML}"
   run_cmd science_infra status "${TRAJ}" --html "${STATUS_HTML}"
 
-  step 6 "$total" "dashboard — 写出 dashboard HTML"
+  step 7 "$total" "dashboard — 写出 dashboard HTML"
   echo "说明: dashboard 子命令别名 → ${DASH_HTML}"
   run_cmd science_infra dashboard "${TRAJ}" --html "${DASH_HTML}"
 

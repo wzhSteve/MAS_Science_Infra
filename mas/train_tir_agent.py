@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 
 os.environ.setdefault("VLLM_USE_V1", "1")
 
-from rl.hooks.overlay import VALID_ALGOS, apply_sample_policy, apply_train_signal
+from rl.hooks.overlay import VALID_ALGOS, apply_sample_policy, apply_train_signal, ensure_trainer_horizon
 from workflow.agent_tracing import agent_span_pattern
 
 DEFAULT_MODEL_PATH = "/root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B"
@@ -374,6 +374,12 @@ def main() -> None:
             config["trainer"]["n_gpus_per_node"] = n_vis
             print(f"CUDA_VISIBLE_DEVICES={vis} → trainer.n_gpus_per_node={n_vis}")
 
+    config = ensure_trainer_horizon(config)
+    print(
+        "trainer horizon: "
+        f"total_epochs={config.get('trainer', {}).get('total_epochs')} "
+        f"total_training_steps={config.get('trainer', {}).get('total_training_steps')}"
+    )
     print(f"Starting training with '{args.config}' / algo={algo} ...")
     active_agents = [
         value.strip()

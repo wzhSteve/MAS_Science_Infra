@@ -1,0 +1,12 @@
+version: 1
+projects:
+- id: epc-aw-main
+  title: EPC-AW-main
+  mode: native_mas
+  status: ready
+  experiment_id: alpha
+- id: hive
+  title: HIVE PEV wrap
+  mode: native_mas
+  status: ready
+  experiment_id: ''

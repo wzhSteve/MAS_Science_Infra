@@ -1,12 +1,14 @@
 # MAS 执行 ARPO 训练：端到端测试手册
 
-日期：2026-09-16
+日期：2026-10-01
 
 采样语义见 [ROLLOUT_SAMPLING.md](./ROLLOUT_SAMPLING.md)、[SAMPLING_ARPO_APPO.md](./SAMPLING_ARPO_APPO.md)；层边界见 [LAYER_LAYOUT.md](./LAYER_LAYOUT.md)。本页只讲 **怎么测通** MAS → ARPO 训练热路径。
 
 从 Control UI 逐项验收 branch sites / RAE / Collect vs Train 假绿对照，见 [BRANCH_ROLLOUT_UI_TEST.md](./BRANCH_ROLLOUT_UI_TEST.md)（`./run.sh branch-ui-test`）。
 
-实验 bundle：[`experiments/arpo_e2e/`](../experiments/arpo_e2e/)（`sampling.mode=arpo`，`group_n=4`，`total_training_steps=3`）。
+实验 bundle：[`experiments/arpo_e2e/`](../experiments/arpo_e2e/)（`sampling.mode=arpo`，`group_n=4`，站点在 planner `after_agent_turn` 与 verifier `after_verifier`，`total_training_steps=3`）。
+
+推荐命令：`./run.sh arpo-train-test --steps 3 --timeout 1800`。
 
 ---
 

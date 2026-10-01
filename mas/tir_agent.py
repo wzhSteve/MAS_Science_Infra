@@ -493,6 +493,8 @@ class TirAgent:
                 consecutive_high += 1
             else:
                 consecutive_high = 0
+        new_messages = messages + [response]
+        window_snapshots = list(state.get("window_snapshots") or [])
         window_events = list(state.get("window_events") or [])
         if window_events and "h_tool" not in (window_events[-1].get("metrics") or {}):
             last_event = dict(window_events[-1])
@@ -503,15 +505,42 @@ class TirAgent:
                 "consecutive_high": consecutive_high,
             }
             window_events[-1] = last_event
+        # Product sampling sites sit on planner/verifier/router, not tools.
+        # Emit after_agent_turn after every hub LLM response so ARPO can match.
+        event_id = uuid4().hex
+        ser = serialize_messages(new_messages)
+        if recorder:
+            recorder.window(event_id, messages=ser)
+        window_snapshots.append({
+            "event_id": event_id,
+            "agent_id": self.agent_id,
+            "turn": num_turns + 1,
+            "kind": "agent_turn",
+            "messages": ser,
+        })
+        window_events.append({
+            "event_id": event_id,
+            "agent_id": self.agent_id,
+            "kind": "after_agent_turn",
+            "tool_id": None,
+            "turn": num_turns + 1,
+            "snapshot_ref": event_id,
+            "metrics": {
+                "h_root": h_root,
+                "h_tool": h_tool if h_tool else h_root,
+                "consecutive_high": consecutive_high,
+            },
+        })
         return {
             **state,
-            "messages": messages + [response],
+            "messages": new_messages,
             "num_turns": num_turns + 1,
             "asked_finalize": asked_finalize,
             "h_root": h_root,
             "h_tool": h_tool,
             "last_entropy": h,
             "window_events": window_events,
+            "window_snapshots": window_snapshots,
             "consecutive_high": consecutive_high,
         }
 
@@ -615,7 +644,7 @@ class TirAgent:
             _metrics: Dict[str, Any] = {"n_tools": len(tool_messages)}
             if recorder:
                 _metrics.update(fork_node_ids=node_ids, source_attempt_id=recorder.trace.attempt_id)
-            if _tool_name and str(_tool_name) in self._blank_adapters:
+            if _tool_name and str(_tool_name) in getattr(self, "_blank_adapters", {}):
                 _metrics["agent_kind"] = "blank"
             if _rid is not None:
                 _r = self.routers.get(_rid) or {}

@@ -175,13 +175,17 @@ def test_actual_graph_records_model_tool_and_model_without_network(tmp_path):
     agent.max_tokens, agent.max_turns, agent.max_model_len = 128, 8, None
     agent.entropy_tokens, agent.entropy_threshold = 8, 0.15
     agent._router_by_tool, agent.routers = {}, {}
+    agent._blank_adapters = {}
     agent.tool_agent_invoker = SimpleNamespace(invoke=lambda name, args: "2")
     result = agent.graph().invoke({"messages": [HumanMessage(content="1+1")], "question": "1+1"})
     assert result["messages"][-1].content == "<answer>2</answer>"
     trace = agent.execution_recorder.trace
     assert [n.agent_kind for n in trace.nodes] == ["agent", "tool", "agent"]
-    assert list(trace.windows.values())[0]["fork_node_ids"] == [trace.nodes[1].node_id]
-    assert result["window_events"][0]["metrics"]["source_attempt_id"] == "at1"
+    kinds = [e.get("kind") for e in result["window_events"]]
+    assert "after_agent_turn" in kinds
+    after_tool = next(e for e in result["window_events"] if e.get("kind") == "after_tool")
+    assert after_tool["metrics"]["source_attempt_id"] == "at1"
+    assert after_tool["metrics"]["fork_node_ids"] == [trace.nodes[1].node_id]
 
 
 def test_real_episode_window_plan_and_child_share_only_recorded_prefix(tmp_path, monkeypatch):
@@ -204,11 +208,12 @@ def test_real_episode_window_plan_and_child_share_only_recorded_prefix(tmp_path,
 
     def from_spec(cls, spec, **kwargs):
         agent = cls.__new__(cls)
-        agent.agent_id, agent.model_name = kwargs["agent_id"], "test"
+        agent.agent_id, agent.model_name = kwargs.get("agent_id") or "planner", "test"
         agent.llm = agent.llm_finalize = model
         agent.max_tokens, agent.max_turns, agent.max_model_len = 128, 8, None
         agent.entropy_tokens, agent.entropy_threshold = 8, 0.15
         agent._router_by_tool, agent.routers = {}, {}
+        agent._blank_adapters = {}
         agent.tool_agent_invoker = SimpleNamespace(invoke=lambda name, args: "2")
         return agent
 
@@ -221,7 +226,7 @@ def test_real_episode_window_plan_and_child_share_only_recorded_prefix(tmp_path,
     recorder = ExecutionRecorder.from_task(task)
     archive = Archive(root_dir=str(tmp_path / "snapshots"))
     session = ActiveSetSession(ActiveSetConfig(group_budget=2, sites=[
-        BranchSite(id="python", anchor={"kind": "after_tool", "agent_id": "hub", "tool_id": "execute_python"},
+        BranchSite(id="python", anchor={"kind": "after_tool", "agent_id": "planner", "tool_id": "execute_python"},
                    gate={"type": "always"}, fork={"beam_size": 2})
     ]), on_decision=recorder.sampling)
     generated = session.run(task, lambda t: run_episode(t, llm, archive, spec=spec, execution_recorder=recorder))

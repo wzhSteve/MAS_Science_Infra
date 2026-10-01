@@ -1,36 +1,7 @@
 #!/usr/bin/env python3
 """功能分组测试入口（feature-test）。
 
-把全量 137 个单测 + smoke + 前端 vitest + UI API 验收按「功能域」分组，
-用户可针对单一功能快速回归，也可一键全量。
-
-功能域（--list 查看）:
-  mas-core      MAS 基础层: spec/compiler/依赖红线/奖励/采集/memory sockets
-  rl            RL overlay: TrainSignal/Archive/resume
-  harness       Harness 诊断: log/loss/认知收敛/reward hacking
-  branch        分支采样: gates/RAE/active set/plan_forks/branch policy
-  rollout-tree  RolloutTree 契约 + k-hop/verdict credit assignment
-  agent-framework  agent 化: AgentRegistry 双后端/RouterSpec 运行时/两层 memory/PEV
-  schema03      schema 0.3: sugar 扩展/ToolAgentInvoker/kind 推断
-  daemon        Daemon 扩张: expansion enqueue/rollout tree 存储
-  realtime      实时 Harness: stdout JSONL/SSE/Diagnoser.consume
-  cli           CLI 闭环: status html/subprocess
-  control-ui    Control API: spec 校验/端点/rl.yaml 读写
-  gpu-compiler  GPU 编译: compiler/compiled collect/api
-  verifier      Verifier: registry/hop
-  e2e           端到端: C1-C8 全链路
-  functional    功能合同: workflow/tool/harness/RL/运行态 UI
-  frontend      前端 vitest: trajectoryGraph (含 router 节点)
-  smoke         无 GPU 冒烟: doctor→层依赖→mock 采集→diagnose→HTML
-
-用法:
-  python scripts/feature_test.py --list            # 列出所有功能域
-  python scripts/feature_test.py mas-core          # 跑单个功能域
-  python scripts/feature_test.py mas-core rl       # 跑多个
-  python scripts/feature_test.py --all             # 全部（除 smoke 外的单测 + frontend）
-  python scripts/feature_test.py smoke             # 无 GPU 冒烟（走 run.sh smoke 等价路径）
-
-每个功能域输出 PASS/FAIL 与耗时；结尾汇总矩阵。exit 0=全绿。
+域列表和用例数以 --list 为准。exit 0=全绿。
 """
 
 from __future__ import annotations
@@ -88,11 +59,40 @@ FEATURES: dict[str, tuple[list[str], str]] = {
             "test_functional_harness",
             "test_functional_rl",
             "test_functional_runtime_ui",
+            "test_functional_studio",
         ],
-        "功能合同: workflow 通信/tool/harness consume/RL reward 与扩张/SSE 与 Monitor 隔离",
+        "功能合同: workflow/tool/harness/RL/SSE/Studio 产品面",
     ),
-    "frontend": ([], "前端 vitest: trajectoryGraph 轨迹 + router 节点候选（webui npm run test:traj）"),
-    "smoke": ([], "无 GPU 冒烟: doctor→层依赖→mock 采集→diagnose→dashboard（等价 ./run.sh smoke）"),
+    "user-space": (
+        ["test_user_space", "test_hive_wrap", "test_epc_aw_wrap", "test_assistant_chat"],
+        "用户区隔离: 路径监狱/HIVE/EPC-AW 封装/辅助对话",
+    ),
+    "studio": (
+        [
+            "test_functional_studio",
+            "test_eval_sources",
+            "test_task_files",
+            "test_training_preflight",
+            "test_training_lifecycle",
+            "test_experiment_config",
+        ],
+        "Studio 控制面: 算法/palette/单题调试/eval/训练门禁/实验 bundle",
+    ),
+    "sampling-runtime": (
+        [
+            "test_arpo_sampling_adapter",
+            "test_sampling_core",
+            "test_sampling_policy_contract",
+            "test_rl_config_contract",
+            "test_training_agent_tracing",
+            "test_execution_tree",
+            "test_rollout_tree_results",
+            "test_rollout_tree_archive",
+        ],
+        "pytest: SamplingCore/adapter/execution-tree/rollout-tree 归档",
+    ),
+    "frontend": ([], "前端 vitest（webui npm run test:traj）"),
+    "smoke": ([], "无 GPU 冒烟: doctor→层依赖→user_zone→mock 采集→diagnose→dashboard"),
 }
 
 # Python 单测域（--all 默认包含）
@@ -112,7 +112,47 @@ UNIT_FEATURES = [
     "verifier",
     "e2e",
     "functional",
+    "user-space",
+    "studio",
+    "sampling-runtime",
 ]
+
+
+def run_pytest_suite(modules: list[str]) -> tuple[bool, int, int, float]:
+    """Run pytest-only modules that unittest discover does not load."""
+    paths = [str(TESTS / f"{m}.py") for m in modules]
+    t0 = time.time()
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", *paths],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    dt = time.time() - t0
+    out = (r.stdout or "") + (r.stderr or "")
+    n_pass = n_fail = n_skip = 0
+    for line in out.splitlines():
+        if "passed" in line or "failed" in line or "skipped" in line:
+            import re
+
+            m_pass = re.search(r"(\d+) passed", line)
+            m_fail = re.search(r"(\d+) failed", line)
+            m_err = re.search(r"(\d+) error", line)
+            m_skip = re.search(r"(\d+) skipped", line)
+            if m_pass:
+                n_pass = int(m_pass.group(1))
+            if m_fail:
+                n_fail += int(m_fail.group(1))
+            if m_err:
+                n_fail += int(m_err.group(1))
+            if m_skip:
+                n_skip = int(m_skip.group(1))
+    n_total = n_pass + n_fail + n_skip
+    if r.returncode != 0:
+        print(out[-2000:])
+    else:
+        print("  " + "\n  ".join(l for l in out.splitlines() if "passed" in l or "failed" in l)[-3:])
+    return (r.returncode == 0, max(n_total, n_pass), n_fail, dt)
 
 
 def run_python_suite(modules: list[str]) -> tuple[bool, int, int, float]:
@@ -177,6 +217,7 @@ def run_smoke() -> tuple[bool, int, int, float]:
     cmds = [
         [py, "-m", "science_infra.ui.cli", "doctor"],
         [py, str(TIR / "scripts" / "check_workflow_deps.py")],
+        [py, str(TIR / "scripts" / "check_user_zone.py")],
         [py, "-m", "science_infra.ui.cli", "collect", "--mock", "--n", "2", "--out", str(traj)],
         [py, "-m", "science_infra.ui.cli", "diagnose", str(traj)],
         [py, "-m", "science_infra.ui.cli", "dashboard", str(traj), "--html", str(out_dir / "dashboard.html")],
@@ -236,6 +277,8 @@ def main() -> int:
             okflag, n, nf, dt = run_frontend()
         elif feat == "smoke":
             okflag, n, nf, dt = run_smoke()
+        elif feat == "sampling-runtime":
+            okflag, n, nf, dt = run_pytest_suite(mods)
         else:
             okflag, n, nf, dt = run_python_suite(mods)
         mark = "PASS" if okflag else "FAIL"

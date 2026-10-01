@@ -199,7 +199,7 @@ class ActiveSetSession:
             return []
         if getattr(raw, "error", None):
             return []
-        ek = str(event_kind or cfg.event_kind or "after_tool")
+        ek = str(event_kind or cfg.event_kind or "after_agent_turn")
         window_events = list(getattr(raw, "window_events", None) or [])
         windows = {
             window.get("event_id"): window

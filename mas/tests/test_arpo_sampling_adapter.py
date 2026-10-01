@@ -68,7 +68,7 @@ def test_centralized_template_sites_follow_agents_and_router():
     assert kinds["planner"] == WindowKind.AGENT_COMPLETE
     assert kinds["route_exec"] == WindowKind.AGENT_COMPLETE
     assert kinds["verifier"] == WindowKind.VERIFICATION_COMPLETE
-    assert opportunities[0].allowed_gates == ["entropy_delta", "arpo", "always"]
+    assert opportunities[0].allowed_gates == ["entropy_delta", "arpo", "always", "verifier_fail", "verifier_pass"]
 
     preview = sampling_preview(raw)
     by_owner = {item["node_id"]: item for item in preview["opportunities"]}

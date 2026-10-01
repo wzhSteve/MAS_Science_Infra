@@ -633,6 +633,7 @@ def mas_palette() -> Dict[str, Any]:
             {"id": t, "backend": "llm", "llm_required": True, "description": ""}
             for t in tools
         ]
+    user_projects = _mas_palette_user_projects()
     return {
         "skills": skills,
         "roles": roles,
@@ -653,6 +654,7 @@ def mas_palette() -> Dict[str, Any]:
             "failure_trigger",
         ],
         "templates": _mas_palette_templates(),
+        "user_projects": user_projects,
     }
 
 
@@ -662,6 +664,15 @@ def _mas_palette_templates() -> List[Dict[str, Any]]:
     from workflow.templates import list_palette_templates
 
     return list_palette_templates()
+
+
+def _mas_palette_user_projects() -> List[Dict[str, Any]]:
+    try:
+        from science_infra.control.user_projects import palette_user_projects
+
+        return palette_user_projects()
+    except Exception:
+        return []
 
 
 def sample_parquet_tasks(

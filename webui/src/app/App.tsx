@@ -19,6 +19,7 @@ import { isTrainingSection } from '../features/settings/model/sections';
 import type { ModelResource } from '../features/resources/api';
 import type { MetaResponse } from '../shared/api/types';
 import { FeedbackProvider } from '../shared/feedback/FeedbackProvider';
+import { AssistantHost } from '../features/assistant/AssistantHost';
 
 const WorkspacePanels = lazy(() => import('./layout/WorkspacePanels').then(module => ({ default: module.WorkspacePanels })));
 const Resources = lazy(() => import('../pages/Resources').then(module => ({ default: module.Resources })));
@@ -154,8 +155,24 @@ function Application() {
   </>;
 }
 
+function RoutedApp() {
+  const { route } = useHashNavigation();
+  const expId = route.kind === 'workspace' ? route.experimentId : null;
+  return <AssistantHost expId={expId}>
+    <Application />
+  </AssistantHost>;
+}
+
+function AppShell() {
+  return <FeedbackProvider>
+    <NavigationGuardProvider>
+      <RoutedApp />
+    </NavigationGuardProvider>
+  </FeedbackProvider>;
+}
+
 export default function App() {
   return <Tooltip.Provider delayDuration={250}>
-    <FeedbackProvider><NavigationGuardProvider><Application /></NavigationGuardProvider></FeedbackProvider>
+    <AppShell />
   </Tooltip.Provider>;
 }

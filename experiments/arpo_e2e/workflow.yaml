@@ -1,4 +1,4 @@
-schema_version: "0.3"
+schema_version: '0.3'
 topology: centralized
 entry_agent: planner
 hub:
@@ -7,11 +7,16 @@ hub:
   verify: null
   max_feedback_hops: 1
   system_prompt: ''
-tools: [wikipedia_search, google_search, web_search, python_coder, think]
+tools:
+- wikipedia_search
+- google_search
+- web_search
+- python_coder
+- think
 llm:
   kind: api
-  model: Qwen3-4B
-  base_url: http://localhost:8000/v1
+  model: qwen3.5-27b
+  base_url: https://www.dmxapi.cn/v1/
 memory:
   agent: messages
   system: none
@@ -22,31 +27,58 @@ agents:
   kind: planner
   role: planner
   skills: []
-  tools: [wikipedia_search, google_search, web_search, python_coder, think]
+  tools:
+  - wikipedia_search
+  - google_search
+  - web_search
+  - python_coder
+  - think
   trainable: true
   memory_scope: none
   system_prompt: ''
   model: inherit
   profile: {}
   meta: {}
-- {id: wikipedia_search, kind: tool, trainable: true}
-- {id: google_search, kind: tool, trainable: true}
-- {id: web_search, kind: tool, trainable: true}
-- {id: python_coder, kind: tool, trainable: true}
-- {id: think, kind: tool, trainable: true}
+- id: wikipedia_search
+  kind: tool
+  trainable: true
+- id: google_search
+  kind: tool
+  trainable: true
+- id: web_search
+  kind: tool
+  trainable: true
+- id: python_coder
+  kind: tool
+  trainable: true
+- id: think
+  kind: tool
+  trainable: true
 - id: verifier
   kind: verifier
   trainable: false
-  system_prompt: 'Judge whether the sub-goal is complete from the tool-agent output; output JSON only.'
+  system_prompt: Judge whether the sub-goal is complete from the tool-agent output;
+    output JSON only.
 routers:
 - id: route_exec
-  candidates: [wikipedia_search, google_search, web_search, python_coder, think]
+  candidates:
+  - wikipedia_search
+  - google_search
+  - web_search
+  - python_coder
+  - think
   strategy: from_plan
   output_contract: json
 edges:
-- {from: planner, to: route_exec, kind: route}
-- {from: route_exec, to: verifier, kind: message}
-- {from: verifier, to: planner, kind: feedback}
+- from: planner
+  to: route_exec
+  kind: route
+- from: route_exec
+  to: verifier
+  kind: message
+- from: verifier
+  to: planner
+  kind: feedback
 sampling:
   mode: arpo
   group_n: 4
@@ -56,18 +88,66 @@ sampling:
   expand_in_runner: true
   barriers: []
   sites:
-  - id: site_after_tool_planner_python_coder
+  - id: site_after_turn_planner
     enabled: true
     anchor:
-      kind: after_tool
+      kind: after_agent_turn
       agent_id: planner
-      tool_id: python_coder
+      tool_id: null
       edge_id: null
     when: first
     nth: 1
-    gate: {type: always, params: {}}
+    gate:
+      type: entropy_delta
+      params: {}
     fork:
-      beam_size: 3
+      beam_size: 2
+      share_observation: true
+      resume_mode: messages
+      probe_max_tokens: 128
+    reward:
+      scheme: scalar_grpo
+      p_plus: 0.8
+      k_min: 2
+      epsilon_f: 0.001
+    priority: 10
+  - id: site_after_verifier_verifier
+    enabled: true
+    anchor:
+      kind: after_verifier
+      agent_id: verifier
+      tool_id: null
+      edge_id: null
+    when: first
+    nth: 1
+    gate:
+      type: verifier_fail
+      params: {}
+    fork:
+      beam_size: 2
+      share_observation: true
+      resume_mode: messages
+      probe_max_tokens: 128
+    reward:
+      scheme: scalar_grpo
+      p_plus: 0.8
+      k_min: 2
+      epsilon_f: 0.001
+    priority: 10
+  - id: site_after_turn_route_exec
+    enabled: true
+    anchor:
+      kind: after_agent_turn
+      agent_id: route_exec
+      tool_id: null
+      edge_id: null
+    when: first
+    nth: 1
+    gate:
+      type: entropy_delta
+      params: {}
+    fork:
+      beam_size: 2
       share_observation: true
       resume_mode: messages
       probe_max_tokens: 128

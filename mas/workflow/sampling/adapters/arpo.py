@@ -18,7 +18,7 @@ from workflow.sampling.contracts import (
 class ArpoSamplingAdapter(ConfiguredGateAdapter):
     id = "arpo"
     aliases: tuple[str, ...] = ()
-    allowed_gates = ("entropy_delta", "arpo", "always")
+    allowed_gates = ("entropy_delta", "arpo", "always", "verifier_fail", "verifier_pass")
 
     def opportunities(self, workflow: Any) -> Iterable[SamplingOpportunity]:
         return agent_router_opportunities(

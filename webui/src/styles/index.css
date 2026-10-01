@@ -13,5 +13,6 @@
 @import "./integrations/experiment-workspace.css";
 @import "./integrations/training-parameters.css";
 @import "./integrations/sample-results.css";
+@import "./integrations/assistant.css";
 
 @source "../";

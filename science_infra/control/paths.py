@@ -57,6 +57,13 @@ def server_data_path(value: str) -> str:
     return str(SERVER_DATA_DIR / path)
 
 
+def user_space_root() -> Path:
+    override = os.environ.get("SCIENCE_USER_SPACE_DIR", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return repo_root() / "user_space"
+
+
 def webui_dist() -> Path:
     return repo_root() / "webui" / "dist"
 

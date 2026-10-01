@@ -3,8 +3,9 @@
 Walks the compiled graph with explicit ``AgentMessage`` envelopes:
 planner -> router -> tool-agent(s) -> verifier, one message per edge. Each
 window close appends a MAS-layer blackboard log entry. Multi-router fan-out
-runs the selected tool-agents in parallel. Termination is
-``plan_step.done=true`` AND ``verify.ok=true`` — the LLM never decides STOP.
+runs the selected tool-agents in parallel. Termination prefers
+``ready_to_stop`` / ``payload.answer``; built-in graphs still stop on
+``plan_step.done=true`` AND ``verify.ok=true``.
 
 See docs/MAS_AGENT_LANDING.md §5.
 """
@@ -114,6 +115,29 @@ def _parse_json(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _emit_window(
+    window_events: List[Dict[str, Any]],
+    messages: List[Dict[str, Any]],
+    *,
+    agent_id: str,
+    kind: str,
+    turn: int,
+    metrics: Optional[Dict[str, Any]] = None,
+    **extra: Any,
+) -> None:
+    event: Dict[str, Any] = {
+        "agent_id": agent_id,
+        "kind": kind,
+        "turn": turn,
+        "metrics": dict(metrics or {}),
+        "snapshot_ref": f"{agent_id}:{turn}:{kind}",
+        "event_id": f"{agent_id}:{turn}:{kind}",
+        "messages": list(messages),
+    }
+    event.update(extra)
+    window_events.append(event)
+
+
 def _log_window(archive, agent_id: str, turn: int, in_msg: AgentMessage, out_msg: AgentMessage, ok: bool) -> None:
     archive.append(
         ExecutionEvent(
@@ -211,11 +235,30 @@ def run_centralized_episode(
                 f"{all_cands}. Output JSON with keys: next, args, sub_goal, done."
             )
         try:
-            p_text = win.invoke(planner_prompt, user, agent_id="planner", kind="planner")
+            planner_profile = dict(getattr(planner_node, "profile", None) or {})
+            if str(planner_profile.get("backend") or "") == "user_space":
+                inbound = make_message(
+                    task_id=task_id, turn=turn, src="orchestrator", dst="planner",
+                    kind="plan_step",
+                    payload={"next": "", "args": {}, "sub_goal": "", "done": False, "question": question, "input": user},
+                )
+                from .user_gateway.loader import maybe_invoke_user_node
+
+                umsg = maybe_invoke_user_node(planner_node, inbound, expected_kind="plan_step")
+                if umsg is None:
+                    p_text = win.invoke(planner_prompt, user, agent_id="planner", kind="planner")
+                    p_json = _parse_json(p_text) or {}
+                elif umsg.kind == "error":
+                    error = f"planner window failed: {umsg.payload.get('error')}"
+                    break
+                else:
+                    p_json = dict(umsg.payload or {})
+            else:
+                p_text = win.invoke(planner_prompt, user, agent_id="planner", kind="planner")
+                p_json = _parse_json(p_text) or {}
         except Exception as e:  # noqa: BLE001
             error = f"planner window failed: {e}"
             break
-        p_json = _parse_json(p_text) or {}
         nxt = p_json.get("next")
         if nxt is None:
             nxt = ""
@@ -234,6 +277,9 @@ def run_centralized_episode(
             "sub_goal": str(p_json.get("sub_goal") or ""),
             "done": bool(p_json.get("done")),
         }
+        for extra in ("trace", "answer", "ready_to_stop"):
+            if extra in p_json:
+                p_payload[extra] = p_json[extra]
         try:
             plan_msg = make_message(
                 task_id=task_id, turn=turn, src="planner", dst=router_id or router_ids_run[0],
@@ -246,8 +292,8 @@ def run_centralized_episode(
                 kind="error", payload={"agent_id": "planner", "error": str(ve)},
             )
             _log_window(archive, "planner", turn, err_msg, err_msg, False)
-            window_events.append({"agent_id": "planner", "kind": "after_agent_turn", "turn": turn, "metrics": {"ok": False}})
             all_messages.append(err_msg.model_dump())
+            _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": False})
             continue
 
         if p_payload["done"] and not p_payload.get("next"):
@@ -259,14 +305,14 @@ def run_centralized_episode(
             )
             _log_window(archive, "planner", turn, plan_msg, fa_msg, True)
             all_messages.extend([plan_msg.model_dump(), fa_msg.model_dump()])
-            window_events.append({"agent_id": "planner", "kind": "after_agent_turn", "turn": turn, "metrics": {}})
+            _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={})
             done = True
             break
 
         ok, reason = validate_payload("plan_step", plan_msg.payload)
         _log_window(archive, "planner", turn, plan_msg, plan_msg, ok)
-        window_events.append({"agent_id": "planner", "kind": "after_agent_turn", "turn": turn, "metrics": {"ok": ok}})
         all_messages.append(plan_msg.model_dump())
+        _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": ok})
         if not ok:
             last_feedback = f"planner produced invalid plan_step: {reason}"
             continue
@@ -317,10 +363,11 @@ def run_centralized_episode(
                 rs, plan_msg, rs.candidates, strict=strict,
                 scorer_runner=score_runner, candidate_runner=cand_runner,
             )
-            window_events.append({
-                "agent_id": rid, "kind": "after_agent_turn", "turn": turn,
-                "metrics": {**route_res.metrics, "selected": list(route_res.selected), "strategy": route_res.strategy},
-            })
+            _emit_window(
+                window_events, all_messages,
+                agent_id=rid, kind="after_agent_turn", turn=turn,
+                metrics={**route_res.metrics, "selected": list(route_res.selected), "strategy": route_res.strategy},
+            )
             if not route_res.ok:
                 fail_reason = route_res.reason
                 if strict:
@@ -363,6 +410,24 @@ def run_centralized_episode(
                     payload={"output": f"invalid input: {why}", "ok": False, "evidence_type": "EMPTY"},
                     trace_ref=prev_msg.msg_id,
                 )
+            if str(profile.get("backend") or "") == "user_space":
+                inbound = make_message(
+                    task_id=task_id, turn=turn, src=prev_msg.src, dst=aid,
+                    kind="tool_invoke", payload=wrapped, trace_ref=prev_msg.msg_id,
+                )
+                try:
+                    from .user_gateway.loader import maybe_invoke_user_node
+
+                    out = maybe_invoke_user_node(node, inbound, expected_kind="tool_result")
+                    if out is not None:
+                        return out
+                except Exception as e:  # noqa: BLE001
+                    return make_message(
+                        task_id=task_id, turn=turn, src=aid, dst=dst,
+                        kind="tool_result",
+                        payload={"output": f"user agent error: {e}", "ok": False, "evidence_type": "ERROR"},
+                        trace_ref=prev_msg.msg_id,
+                    )
             prompt = (getattr(node, "system_prompt", None) or f"You are {aid}.") if node else f"You are {aid}."
             try:
                 text = win.invoke(prompt, json.dumps(wrapped, ensure_ascii=False), agent_id=aid, kind="blank")
@@ -395,7 +460,39 @@ def run_centralized_episode(
             dst = verifier_id or "verifier"
             node = compiled.agents.get(aid)
             profile = getattr(node, "profile", None) if node is not None else {}
-            tier = effective_tier(profile.get("tier") if isinstance(profile, dict) else None)
+            if not isinstance(profile, dict):
+                profile = {}
+            tier = effective_tier(profile.get("tier"))
+            if str(profile.get("backend") or "") == "user_space" and node is not None:
+                inbound = make_message(
+                    task_id=task_id, turn=turn, src=prev_msg.src, dst=aid,
+                    kind="tool_invoke", payload=targs if isinstance(targs, dict) else {},
+                    trace_ref=prev_msg.msg_id,
+                )
+                try:
+                    from .user_gateway.loader import maybe_invoke_user_node
+
+                    umsg = maybe_invoke_user_node(node, inbound, expected_kind="tool_result")
+                    if umsg is not None:
+                        payload = dict(umsg.payload or {})
+                        payload.setdefault("output", "")
+                        payload.setdefault("ok", True)
+                        payload.setdefault(
+                            "evidence_type",
+                            "DIRECT" if str(payload.get("output") or "").strip() else "EMPTY",
+                        )
+                        payload["tier"] = tier
+                        return make_message(
+                            task_id=task_id, turn=turn, src=aid, dst=dst,
+                            kind="tool_result", payload=payload, trace_ref=prev_msg.msg_id,
+                        )
+                except Exception as e:  # noqa: BLE001
+                    return make_message(
+                        task_id=task_id, turn=turn, src=aid, dst=dst,
+                        kind="tool_result",
+                        payload={"output": f"user tool error: {e}", "ok": False, "evidence_type": "ERROR", "tier": tier},
+                        trace_ref=prev_msg.msg_id,
+                    )
             ok_args, why = validate_tool_args(aid, targs if isinstance(targs, dict) else {})
             if not ok_args:
                 return make_message(
@@ -422,9 +519,20 @@ def run_centralized_episode(
                     trace_ref=prev_msg.msg_id,
                 )
             evidence = "EMPTY" if not str(out).strip() else "DIRECT"
+            payload = {"output": str(out), "ok": True, "evidence_type": evidence, "tier": tier}
+            last = getattr(ta, "last_payload", None)
+            if isinstance(last, dict):
+                for key in ("trace", "command", "analysis", "explanation", "ok", "evidence_type", "output"):
+                    if key in last:
+                        payload[key] = last[key]
+                if last.get("output") is not None:
+                    payload["output"] = str(last.get("output"))
+                payload["ok"] = bool(last.get("ok", payload["ok"]))
+                if not str(payload.get("output") or "").strip():
+                    payload["evidence_type"] = last.get("evidence_type") or "EMPTY"
             return make_message(
                 task_id=task_id, turn=turn, src=aid, dst=dst,
-                kind="tool_result", payload={"output": str(out), "ok": True, "evidence_type": evidence, "tier": tier},
+                kind="tool_result", payload=payload,
                 trace_ref=prev_msg.msg_id,
             )
 
@@ -464,10 +572,12 @@ def run_centralized_episode(
                 tool_msgs.append(tmsg)
                 in_msg = next((m for m in chain if m.kind == "tool_invoke" and m.dst == tmsg.src), tmsg)
                 _log_window(archive, tmsg.src, turn, in_msg, tmsg, bool(tmsg.payload.get("ok")))
-                window_events.append({
-                    "agent_id": tmsg.src, "kind": "after_agent_turn",
-                    "tool_id": tmsg.src, "turn": turn, "metrics": {"ok": bool(tmsg.payload.get("ok"))},
-                })
+                _emit_window(
+                    window_events, all_messages,
+                    agent_id=tmsg.src, kind="after_agent_turn", turn=turn,
+                    metrics={"ok": bool(tmsg.payload.get("ok"))},
+                    tool_id=tmsg.src,
+                )
                 if tmsg.src in ("wikipedia_search", "google_search", "web_search"):
                     n_search += 1
                 if tmsg.src == "python_coder":
@@ -492,8 +602,8 @@ def run_centralized_episode(
                 kind="verify", payload=v_payload, trace_ref=last_tool.msg_id,
             )
             _log_window(archive, "verifier", turn, last_tool, v_msg, v_ok)
-            window_events.append({"agent_id": "verifier", "kind": "after_agent_turn", "turn": turn, "metrics": {"ok": v_ok}})
             all_messages.append(v_msg.model_dump())
+            _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics={"ok": v_ok})
         else:
             tool_summary = "\n".join(f"- {m.src}: {m.payload.get('output')}" for m in tool_msgs)
             v_user = (
@@ -502,17 +612,40 @@ def run_centralized_episode(
                 "step_conclusion (COMPLETE|INCOMPLETE), slot_updates."
             )
             try:
-                v_text = win.invoke(verifier_prompt, v_user, agent_id=verifier_id, kind="verifier")
+                v_profile = dict(getattr(verifier_node, "profile", None) or {}) if verifier_node else {}
+                if str(v_profile.get("backend") or "") == "user_space" and verifier_node is not None:
+                    inbound = make_message(
+                        task_id=task_id, turn=turn, src=last_tool.src, dst=verifier_id,
+                        kind="verify",
+                        payload={"ok": False, "reason": v_user, "step_conclusion": "INCOMPLETE", "slot_updates": []},
+                        trace_ref=last_tool.msg_id,
+                    )
+                    from .user_gateway.loader import maybe_invoke_user_node
+
+                    umsg = maybe_invoke_user_node(verifier_node, inbound, expected_kind="verify")
+                    if umsg is None:
+                        v_text = win.invoke(verifier_prompt, v_user, agent_id=verifier_id, kind="verifier")
+                        v_json = _parse_json(v_text) or {}
+                    elif umsg.kind == "error":
+                        error = f"verifier window failed: {umsg.payload.get('error')}"
+                        break
+                    else:
+                        v_json = dict(umsg.payload or {})
+                else:
+                    v_text = win.invoke(verifier_prompt, v_user, agent_id=verifier_id, kind="verifier")
+                    v_json = _parse_json(v_text) or {}
             except Exception as e:  # noqa: BLE001
                 error = f"verifier window failed: {e}"
                 break
-            v_json = _parse_json(v_text) or {}
             v_payload = {
                 "ok": bool(v_json.get("ok")),
                 "reason": str(v_json.get("reason") or ""),
                 "step_conclusion": str(v_json.get("step_conclusion") or "INCOMPLETE"),
                 "slot_updates": list(v_json.get("slot_updates") or []),
             }
+            for extra in ("trace", "answer", "ready_to_stop", "direct_output"):
+                if extra in v_json:
+                    v_payload[extra] = v_json[extra]
             if "evidence_type" not in v_payload:
                 v_payload["evidence_type"] = last_tool.payload.get("evidence_type") or "DIRECT"
             try:
@@ -530,8 +663,8 @@ def run_centralized_episode(
                 )
                 last_feedback = f"verifier produced invalid verify: {ve}"
             _log_window(archive, verifier_id, turn, last_tool, v_msg, v_ok)
-            window_events.append({"agent_id": verifier_id, "kind": "after_agent_turn", "turn": turn, "metrics": {"ok": v_ok}})
             all_messages.append(v_msg.model_dump())
+            _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics={"ok": v_ok})
 
         # 5. termination / feedback / fact commit
         if v_msg.kind == "verify" and commit_to_fact(v_msg.payload, last_tool.payload if last_tool else {}):
@@ -542,10 +675,23 @@ def run_centralized_episode(
                     payload={"phase": "fact_commit", "turn": turn, "ok": True},
                 )
             )
-        if v_msg.payload.get("ok"):
-            if p_payload.get("done"):
-                final_answer = final_answer or p_payload.get("sub_goal") or ""
-                done = True
+        answer = str(
+            v_payload.get("answer")
+            or v_payload.get("direct_output")
+            or p_json.get("answer")
+            or p_payload.get("answer")
+            or ""
+        ).strip()
+        ready = bool(v_payload.get("ready_to_stop") or p_payload.get("ready_to_stop"))
+        if ready:
+            final_answer = answer
+            done = True
+        elif answer and (v_payload.get("ok") or ready):
+            final_answer = answer
+            done = True
+        elif v_msg.payload.get("ok") and p_payload.get("done"):
+            final_answer = answer or str(p_payload.get("sub_goal") or "")
+            done = True
         else:
             last_feedback = str(v_msg.payload.get("reason") or last_feedback or "verify_failed")
             fb = make_message(

@@ -52,6 +52,8 @@ export interface GraphNodePreset {
   backend?: string;
   llmRequired?: boolean;
   description?: string;
+  userProject?: string;
+  profile?: Record<string, unknown>;
 }
 export type GraphNode = Node<GraphNodeData, GraphNodeKind>;
 export type GraphEdge = Edge<{

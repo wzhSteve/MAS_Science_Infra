@@ -45,6 +45,31 @@ class BlankAgent:
 
 
 @dataclass
+class UserBoundAgent:
+    """kind=blank/tool node whose window lives in user_space."""
+
+    spec: AgentNodeSpec
+    project_id: str
+
+    @property
+    def id(self) -> str:
+        return self.spec.id
+
+    @property
+    def backend(self) -> str:
+        return "user_space"
+
+
+def _user_project_id(node: AgentNodeSpec) -> str:
+    profile = dict(node.profile or {})
+    return str(profile.get("user_project") or "")
+
+
+def _is_user_backend(node: AgentNodeSpec) -> bool:
+    return str((node.profile or {}).get("backend") or "") == "user_space"
+
+
+@dataclass
 class ResolvedToolAgent:
     """A kind=tool node bound to a concrete backend invocation."""
 
@@ -71,6 +96,7 @@ class AgentRegistry:
         self.routers: Dict[str, RouterSpec] = {}
         self.tool_agents: Dict[str, ResolvedToolAgent] = {}
         self.blank_agents: Dict[str, BlankAgent] = {}
+        self.user_agents: Dict[str, UserBoundAgent] = {}
 
     @classmethod
     def from_spec(cls, spec: MASSpec, *, allow_llm_backends: bool = True) -> "AgentRegistry":
@@ -89,8 +115,25 @@ class AgentRegistry:
         from tools.tool_agents import TOOL_AGENTS, get_tool_agent
 
         for aid, node in reg.agents.items():
+            if _is_user_backend(node):
+                pid = _user_project_id(node)
+                if pid:
+                    try:
+                        from workflow.user_gateway.tools import bind_project_tools
+
+                        bind_project_tools(pid)
+                    except Exception:
+                        pass
+                    reg.user_agents[aid] = UserBoundAgent(spec=node, project_id=pid)
             if node.kind == "tool":
                 ta = get_tool_agent(aid) or TOOL_AGENTS.get(aid)
+                if ta is None and _is_user_backend(node):
+                    try:
+                        from workflow.user_gateway.tools import get_user_tool_agent
+
+                        ta = get_user_tool_agent(aid)
+                    except Exception:
+                        ta = None
                 if ta is None:
                     continue
                 reg.tool_agents[aid] = ResolvedToolAgent(spec=node, agent=ta)
@@ -120,4 +163,5 @@ class AgentRegistry:
                 for aid, ta in self.tool_agents.items()
             },
             "blank_agents": sorted(self.blank_agents),
+            "user_agents": sorted(self.user_agents),
         }

@@ -147,7 +147,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     parallel_local=ready_batch,
                     run_probes=True,
                     sites=sites,
-                    event_kind=str(task_run.get("branch_event_kind") or "after_tool"),
+                    event_kind=str(task_run.get("branch_event_kind") or "after_agent_turn"),
                     agent_id=str(task_run.get("branch_agent_id") or "") or None,
                     tool_id=str(task_run.get("branch_tool_id") or "") or None,
                     verifier_ok=task_run.get("verifier_ok"),

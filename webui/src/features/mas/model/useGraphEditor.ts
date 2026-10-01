@@ -178,9 +178,11 @@ export function useGraphEditor(
       while (current.nodes.some((n) => n.id === id)) id = `${preset.id}_${suffix++}`;
     }
     const agentKind: AgentKind = preset.agentKind || 'blank';
-    const toolProfile = agentKind === 'tool'
-      ? { backend: preset.backend || 'llm', llm_required: preset.llmRequired ?? true }
-      : {};
+    const toolProfile = preset.profile
+      ? { ...preset.profile }
+      : agentKind === 'tool'
+        ? { backend: preset.backend || 'llm', llm_required: preset.llmRequired ?? true }
+        : {};
     if (kind === 'tool' || agentKind === 'tool') {
       const selectedPool = current.nodes.find((node) => node.selected && node.type === 'pool');
       const selectedRouter = current.nodes.find((node) => node.selected && node.type === 'router');

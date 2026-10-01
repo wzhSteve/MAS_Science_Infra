@@ -144,4 +144,25 @@ def apply_train_signal(config: Dict[str, Any], signal: "TrainSignal") -> Dict[st
     tir = dict(cfg["algorithm"].get("tir") or {})
     tir["gamma"] = float(signal.advantage.gamma)
     cfg["algorithm"]["tir"] = tir
+    return ensure_trainer_horizon(cfg)
+
+
+def ensure_trainer_horizon(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Make VERL actually run ``total_training_steps``.
+
+    AgentLightningTrainer iterates ``range(total_epochs)`` over the dataloader
+    and only uses ``total_training_steps`` as an early-stop. One epoch of the
+    5-row GSM8K sample with ``train_batch_size=5`` is a single step, so
+    ``steps=3, epochs=1`` exits after 1/3 with returncode 0.
+    """
+    cfg = deepcopy(config)
+    trainer = dict(cfg.get("trainer") or {})
+    steps = trainer.get("total_training_steps")
+    if steps is None:
+        return cfg
+    steps_i = int(steps)
+    epochs = int(trainer.get("total_epochs") or 1)
+    if steps_i > 0 and epochs < steps_i:
+        trainer["total_epochs"] = steps_i
+        cfg["trainer"] = trainer
     return cfg

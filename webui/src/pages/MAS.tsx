@@ -20,6 +20,7 @@ import {
   useAgentModelOptions,
   type AgentDefaultModel,
 } from '../features/resources/components/AgentModelSelect';
+import { useAssistantCanvas } from '../features/assistant/context';
 
 export type MASPanelProps = {
   expId: string; bundle: Bundle | null; onReload: () => void; meta: MetaResponse | null;
@@ -37,6 +38,7 @@ function RetainedView({ active, children, className }: { active: boolean; childr
 
 export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
   const draft = useMasDraft(props);
+  const { bind: bindAssistant } = useAssistantCanvas();
   const active = props.active ?? true;
   const section = props.requestedSettings;
   const [expanded, setExpanded] = useState(false);
@@ -96,6 +98,14 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
     });
   }, [props.bundle?.rl.actor_rollout_ref?.model?.path, props.bundle?.rl.model_path]);
   const { workflow } = draft;
+  useEffect(() => {
+    bindAssistant({
+      expId: props.expId,
+      workflow,
+      applyWorkflow: draft.onWorkflowChange,
+      reloadPalette: () => { void draft.loadPalette(); },
+    });
+  }, [bindAssistant, draft.loadPalette, draft.onWorkflowChange, props.expId, workflow]);
   const samplingPreview = useSamplingPreview(workflow, editing);
   const executable = useMemo(() => workflow ? executableInfo(workflow) : { ok: false, reason: '加载中…' }, [workflow]);
   const selectCanvasMode = useCallback((mode: CanvasMode) => {

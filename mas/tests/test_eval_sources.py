@@ -72,6 +72,54 @@ class TestEvalParquetPaths(unittest.TestCase):
         self.assertIn("verifier -> planner verify", text)
         self.assertIn("next=python_coder", text)
 
+    def test_trace_expands_command_analysis_outline(self):
+        lines = format_eval_trace("[2/5]", [
+            {
+                "turn": 1, "src": "planner", "dst": "route_exec", "kind": "plan_step",
+                "payload": {
+                    "next": "u_epc-aw-main__executor",
+                    "args": {"tool_name": "Python_Coder_Tool"},
+                    "sub_goal": "compute jewels of Aaron then Siobhan",
+                    "done": False,
+                    "trace": {
+                        "outline": {"1": "compute jewels of Aaron then Siobhan"},
+                        "tool": "Python_Coder_Tool",
+                        "bts": {"n": 1, "selected": 0},
+                        "analysis": "need the first quantity",
+                    },
+                },
+            },
+            {
+                "turn": 1, "src": "u_epc-aw-main__executor", "dst": "verifier", "kind": "tool_result",
+                "payload": {
+                    "output": "23",
+                    "ok": True,
+                    "evidence_type": "DIRECT",
+                    "trace": {"command": "print((40/2+5)-2)", "output": "23", "analysis": "arithmetic"},
+                },
+            },
+            {
+                "turn": 1, "src": "verifier", "dst": "planner", "kind": "verify",
+                "payload": {
+                    "ok": False,
+                    "step_conclusion": "INCOMPLETE",
+                    "reason": "CONTINUE",
+                    "ready_to_stop": False,
+                    "trace": {
+                        "analysis": "still missing Siobhan",
+                        "new_info": "Aaron has 23",
+                        "outline_updated": {"1": "compute Siobhan"},
+                    },
+                },
+            },
+        ])
+        text = "\n".join(lines)
+        self.assertIn("command = print((40/2+5)-2)", text)
+        self.assertIn("analysis =", text)
+        self.assertIn("outline.1 =", text)
+        self.assertIn("bts n=1 selected=0", text)
+        self.assertIn("outline' =", text)
+
     def test_eval_log_is_readable_like_training_stdout(self):
         row = PROCS.start_inline(kind="eval", experiment_id="demo", meta={"split": "val"})
         run_id = row["run_id"]

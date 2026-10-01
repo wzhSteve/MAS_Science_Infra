@@ -12,6 +12,7 @@ import { executableInfo } from '../model/workflowGraph';
 import { edgeConnection } from '../model/edgeRules';
 import { edgeLanes } from '../model/edgeGeometry';
 import { useGraphEditor } from '../model/useGraphEditor';
+import { useAssistantCanvas } from '../../assistant/context';
 import { Button } from '../../../shared/ui/button';
 import { GraphPalette, type LibraryTab } from './GraphPalette';
 import { GraphCanvas } from './GraphCanvas';
@@ -68,7 +69,12 @@ function GraphWorkbench({
 }: Props) {
   const modelNames = useMemo(() => new Map(modelOptions.map(option => [option.id, option.name])), [modelOptions]);
   const graph = useGraphEditor(workflow, onChange, palette, modelNames);
+  const assistant = useAssistantCanvas();
   const flow = useReactFlow<GraphNode, GraphEdge>();
+  useEffect(() => {
+    const nodeId = graph.selection?.kind === 'node' ? graph.selection.id : null;
+    assistant.bind({ selectedNodeId: nodeId });
+  }, [assistant.bind, graph.selection]);
   const root = useRef<HTMLDivElement>(null);
   const lastTraceFocus = useRef<number | null>(null);
   const lastSamplingFocus = useRef<string | null>(null);

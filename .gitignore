@@ -30,6 +30,9 @@ agent-lightning/docs
 /agent-lightning/examples/CD_TAA/solver_cache/
 model.safetensors
 
+# User-uploaded / AI-adapted code (keep README + registry.yaml)
+/user_space/projects/
+
 # Local model weights / vendored repos (too large for GitHub)
 /LLM/
 /RL_Rep/

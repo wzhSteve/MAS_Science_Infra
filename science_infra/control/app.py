@@ -33,6 +33,7 @@ from science_infra.control.dataset_resources import router as dataset_resource_r
 from science_infra.control.training_logs import router as training_logs_router, training_run
 from science_infra.control.rollout_trees import router as rollout_trees_router
 from science_infra.control.rollout_runs import router as rollout_runs_router
+from science_infra.control.assistant import router as assistant_router
 from science_infra.control.model_resources import ResourceError
 from science_infra.control.readiness import model_readiness
 from science_infra.control.training import training_preflight
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(training_logs_router)
     app.include_router(rollout_trees_router)
     app.include_router(rollout_runs_router)
+    app.include_router(assistant_router)
 
     @app.exception_handler(ResourceError)
     async def resource_error(_request: Request, error: ResourceError) -> Response:

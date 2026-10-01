@@ -156,7 +156,7 @@ class TestEndToEndFrameToHypothesis(unittest.TestCase):
                 if h is not None:
                     hyps.append(h)
         self.assertTrue(any("volatility" in h.message for h in hyps))
-        self.assertTrue(any("reward hacking suspect" in h.message for h in hyps))
+        self.assertTrue(any("reward anomaly" in h.message for h in hyps))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import { Button } from '../../../shared/ui/button';
 import { Input } from '../../../shared/ui/input';
 
 export const NODE_TRANSFER = 'application/science-node';
-export type LibraryTab = 'agent' | 'tool' | 'router' | 'template';
+export type LibraryTab = 'agent' | 'tool' | 'router' | 'template' | 'user';
 
 export const GraphPalette = memo(function GraphPalette({ palette, nodes, poolMembers = [], tab, onTabChange, onAdd, onTemplate, onClose }: {
   palette: Palette;
@@ -56,6 +56,7 @@ export const GraphPalette = memo(function GraphPalette({ palette, nodes, poolMem
       : [{ nodeType: 'router' as const, id: 'router', description: '把上游计划拆给下游 Agent set' }])
     .filter((item) => matches(item.id) || matches(item.description || ''));
   const templates = (palette.templates || []).filter((t) => matches(t.label) || matches(t.id));
+  const userProjects = (palette.user_projects || []).filter((p) => matches(p.title) || matches(p.id));
   const drag = (event: DragEvent, preset: GraphNodePreset) => {
     event.dataTransfer.setData(NODE_TRANSFER, JSON.stringify(preset));
     event.dataTransfer.effectAllowed = 'copy';
@@ -70,11 +71,40 @@ export const GraphPalette = memo(function GraphPalette({ palette, nodes, poolMem
       <Input autoFocus placeholder="搜索节点或模板" aria-label="搜索节点或模板" value={query} onChange={(e) => setQuery(e.target.value)} />
     </div>
     <div className="mas-segmented" aria-label="节点分类">
-      {([['agent', 'Agent'], ['tool', 'Tool'], ['router', 'Router'], ['template', '模板']] as const).map(([value, label]) =>
+      {([['agent', 'Agent'], ['tool', 'Tool'], ['router', 'Router'], ['template', '模板'], ['user', '用户']] as const).map(([value, label]) =>
         <button key={value} type="button" aria-pressed={tab === value} onClick={() => onTabChange(value)}>{label}</button>)}
     </div>
     <div className="mas-panel-body mas-library-items">
-      {tab === 'template' ? templates.map((template) =>
+      {tab === 'user' ? userProjects.map((project) => {
+        const ready = project.status === 'ready' && project.workflow;
+        return <button type="button" className="mas-library-item" key={project.id} disabled={!ready}
+          onClick={() => {
+            if (!project.workflow) return;
+            if (project.mode === 'native_mas') {
+              if (nodes.length) setReplacement(project.workflow);
+              else onTemplate(project.workflow);
+              return;
+            }
+            const agent = project.workflow.agents?.find((node) => node.id === project.agent_ids?.[0]) || project.workflow.agents?.[0];
+            if (!agent) return;
+            onAdd({
+              nodeType: 'agent',
+              id: agent.id,
+              agentKind: (agent.kind as AgentKind) || 'blank',
+              role: 'agent',
+              backend: 'user_space',
+              userProject: project.id,
+              description: project.title,
+              profile: agent.profile,
+            });
+          }}>
+          <span className="mas-library-icon"><Bot size={17} /></span>
+          <span><strong>{project.title}</strong>
+            <small>{project.mode === 'native_mas' ? '整图导入 · Mode 2' : 'I/O 模块 · Mode 1'}{ready ? '' : ' · 未就绪'}</small></span>
+          {ready && <Plus size={14} className="mas-library-plus" aria-hidden="true" />}
+        </button>;
+      })
+        : tab === 'template' ? templates.map((template) =>
         <button type="button" className="mas-library-item" key={template.id} disabled={!template.workflow}
           onClick={() => {
             if (!template.workflow) return;
@@ -97,9 +127,10 @@ export const GraphPalette = memo(function GraphPalette({ palette, nodes, poolMem
             {!exists && <Plus size={14} className="mas-library-plus" aria-hidden="true" />}
           </button>;
         })}
-      {(tab === 'template' ? !templates.length : !items.length) && <p className="mas-panel-empty">没有匹配的{tab === 'template' ? '模板' : '节点'}</p>}
+      {(tab === 'user' ? !userProjects.length : tab === 'template' ? !templates.length : !items.length)
+        && <p className="mas-panel-empty">没有匹配的{tab === 'user' ? '用户项目' : tab === 'template' ? '模板' : '节点'}</p>}
     </div>
-    <p className="mas-panel-footnote">{tab === 'template' ? '模板包含节点、连线和工作流配置。' : '点击或拖拽连续添加，点击右上角关闭工具箱。'}</p>
+    <p className="mas-panel-footnote">{tab === 'user' ? '用户项目由悬浮辅助 AI 适配，代码只在 user_space/。' : tab === 'template' ? '模板包含节点、连线和工作流配置。' : '点击或拖拽连续添加，点击右上角关闭工具箱。'}</p>
     <AlertDialog.Root open={Boolean(replacement)} onOpenChange={(open) => { if (!open) setReplacement(null); }}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="dialog-overlay" />

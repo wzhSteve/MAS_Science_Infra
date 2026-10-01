@@ -231,9 +231,21 @@ TOOL_AGENTS: Dict[str, ToolAgent] = _default_registry()
 
 
 def get_tool_agent(agent_id: str) -> Optional[ToolAgent]:
-    """Look up a tool-agent by id. ``execute_python`` maps to ``python_coder``."""
+    """Look up a tool-agent by id. ``execute_python`` maps to ``python_coder``.
+
+    User-space tools are resolved through an overlay and never written into
+    ``TOOL_AGENTS``.
+    """
     if agent_id == "execute_python":
         agent_id = "python_coder"
+    try:
+        from workflow.user_gateway.tools import get_user_tool_agent
+
+        user = get_user_tool_agent(agent_id)
+        if user is not None:
+            return user  # duck-typed: invoke(args) -> str
+    except Exception:
+        pass
     return TOOL_AGENTS.get(agent_id)
 
 

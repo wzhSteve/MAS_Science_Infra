@@ -470,7 +470,7 @@ def run_episode(
             window_events = [
                 {
                     "agent_id": str(s.get("agent_id") or "hub"),
-                    "kind": "after_tool",
+                    "kind": str(s.get("kind") or "after_agent_turn"),
                     "turn": int(s.get("turn") or 0),
                     "snapshot_ref": f"{s.get('agent_id') or 'hub'}:{i}",
                     "metrics": {},

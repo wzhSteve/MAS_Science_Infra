@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import threading
@@ -499,7 +500,17 @@ def eval_sources(experiment_id: str = Query("demo")) -> Dict[str, Any]:
     return eval_parquet_paths(bundle)
 
 
+def _eval_log_limit() -> int:
+    raw = os.environ.get("SCIENCE_EVAL_LOG_LIMIT") or "3000"
+    try:
+        return max(200, int(raw))
+    except ValueError:
+        return 3000
+
+
 def _clip(text: Any, limit: int = 180) -> str:
+    if isinstance(text, dict) and "error" in text:
+        return json.dumps(text, ensure_ascii=False, default=str)[: max(limit, _eval_log_limit())]
     return " ".join(str(text or "").split())[:limit]
 
 
@@ -519,6 +530,7 @@ def _payload_brief(kind: str, payload: Any) -> str:
     if kind == "verify":
         return (
             f"ok={payload.get('ok')} conclusion={payload.get('step_conclusion')} "
+            f"ready_to_stop={payload.get('ready_to_stop')} "
             f"reason={_clip(payload.get('reason'), 180)}"
         )
     if kind == "feedback":
@@ -526,6 +538,69 @@ def _payload_brief(kind: str, payload: Any) -> str:
     if kind in ("final_answer", "error"):
         return _clip(payload.get("text") or payload.get("answer") or payload.get("error") or payload, 320)
     return _clip(payload, 320)
+
+
+def _expand_payload_trace(prefix: str, payload: Any) -> List[str]:
+    if not isinstance(payload, dict):
+        return []
+    trace = payload.get("trace")
+    if not isinstance(trace, dict):
+        return []
+    limit = _eval_log_limit()
+    lines: List[str] = []
+    outline = trace.get("outline")
+    if isinstance(outline, dict):
+        for key, val in outline.items():
+            lines.append(f"{prefix}   outline.{key} = {_clip(val, limit)}")
+    elif outline:
+        lines.append(f"{prefix}   outline = {_clip(outline, limit)}")
+    tool = trace.get("tool") or trace.get("tool_name")
+    if tool:
+        lines.append(f"{prefix}   tool = {_clip(tool, limit)}")
+    ctx = trace.get("context")
+    sub_goal = trace.get("sub_goal")
+    if ctx or sub_goal:
+        lines.append(f"{prefix}   context / sub_goal = {_clip(ctx or sub_goal, limit)}")
+    bts = trace.get("bts")
+    if isinstance(bts, dict):
+        parts = [f"n={bts.get('n', '')}", f"selected={bts.get('selected', '')}"]
+        if bts.get("planner_selected") is not None:
+            parts.append(f"planner_selected={bts.get('planner_selected')}")
+        lines.append(f"{prefix}   bts {' '.join(parts)}")
+    elif bts is not None:
+        lines.append(f"{prefix}   bts = {_clip(bts, limit)}")
+    for key, label in (
+        ("command", "command"),
+        ("output", "output"),
+        ("analysis", "analysis"),
+        ("explanation", "explanation"),
+        ("new_info", "new_info"),
+        ("conclusion", "conclusion"),
+        ("outline_updated", "outline'"),
+        ("llm_error", "llm_error"),
+    ):
+        val = trace.get(key)
+        if val is None or val == "":
+            continue
+        if key == "llm_error":
+            text = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False, default=str)
+            lines.append(f"{prefix}   {label} = {text}")
+            continue
+        if key == "outline_updated" and isinstance(val, dict):
+            items = [f"{k}={_clip(v, limit)}" for k, v in val.items()]
+            lines.append(f"{prefix}   {label} = {'; '.join(items)}")
+            continue
+        lines.append(f"{prefix}   {label} = {_clip(val, limit)}")
+    known = {
+        "outline", "tool", "tool_name", "context", "sub_goal", "bts",
+        "command", "output", "analysis", "explanation", "new_info",
+        "conclusion", "outline_updated", "llm_error",
+    }
+    for key, val in trace.items():
+        if key in known or val is None or val == "":
+            continue
+        lines.append(f"{prefix}   {key} = {_clip(val, limit)}")
+    return lines
 
 
 def format_eval_trace(prefix: str, messages: List[Dict[str, Any]]) -> List[str]:
@@ -540,6 +615,7 @@ def format_eval_trace(prefix: str, messages: List[Dict[str, Any]]) -> List[str]:
                 f"{prefix} t{msg.get('turn', 0)} {msg.get('src')} -> {msg.get('dst')} {kind} "
                 f"{_payload_brief(kind, msg.get('payload'))}"
             )
+            lines.extend(_expand_payload_trace(prefix, msg.get("payload")))
             continue
         role = str(msg.get("role") or msg.get("type") or "")
         calls = msg.get("tool_calls") if isinstance(msg.get("tool_calls"), list) else []
@@ -612,9 +688,9 @@ def _run_eval_job(
             PROCS.append_log(
                 experiment_id,
                 run_id,
-                f"[{index}/{total}] {verdict} 答案={_clip(summary.get('final_answer')) or '无'}"
-                + (f" 标准={_clip(gold)}" if gold else "")
-                + (f" 错误={_clip(error)}" if error else ""),
+                f"[{index}/{total}] {verdict} 答案={_clip(summary.get('final_answer'), _eval_log_limit()) or '无'}"
+                + (f" 标准={_clip(gold, _eval_log_limit())}" if gold else "")
+                + (f" 错误={_clip(error, _eval_log_limit())}" if error else ""),
             )
         message = f"完成 · {total} 条 · 有标准答案 {scored} · 答对 {correct}"
         PROCS.append_log(experiment_id, run_id, message)
