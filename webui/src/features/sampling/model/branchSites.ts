@@ -50,10 +50,11 @@ export function deriveBranchCandidates(workflow: WorkflowSpec): BranchCandidate[
 
   for (const agent of agentsOf(workflow)) {
     if (agent.kind === 'tool') continue;
+    const display = typeof agent.label === 'string' && agent.label.trim() ? agent.label.trim() : agent.id;
     if (agent.kind === 'verifier' || agent.id === 'verifier' || agent.role === 'verifier') {
       add({
         kind: 'verifier',
-        label: `After ${agent.id} verification`,
+        label: `After ${display} verification`,
         nodeId: agent.id,
         anchor: { kind: 'after_verifier', agent_id: agent.id },
         recommendedGate: 'verifier_fail',
@@ -61,7 +62,7 @@ export function deriveBranchCandidates(workflow: WorkflowSpec): BranchCandidate[
     } else {
       add({
         kind: 'agent',
-        label: `After ${agent.id} turn`,
+        label: `After ${display} turn`,
         nodeId: agent.id,
         anchor: { kind: 'after_agent_turn', agent_id: agent.id },
         recommendedGate: 'entropy_delta',

@@ -5,18 +5,105 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import time
+from contextvars import ContextVar, Token
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from workflow.protocol import AgentMessage, make_message, validate_payload
 
 from .paths import assert_in_user_space, project_dir, validate_project_id
 from .protocol import UserWindowRunner
 from .registry import load_manifest
-from .sandbox import assert_user_module_imports, run_isolated
+from .sandbox import EvalCancelled, assert_user_module_imports, run_isolated
 
 _LOADED: Dict[str, ModuleType] = {}
+_WINDOW_LOGGER: ContextVar[Optional[Callable[[str], None]]] = ContextVar("science_window_logger", default=None)
+
+
+def push_window_logger(logger: Optional[Callable[[str], None]]) -> Token:
+    return _WINDOW_LOGGER.set(logger)
+
+
+def pop_window_logger(token: Token) -> None:
+    _WINDOW_LOGGER.reset(token)
+
+
+def note_window_progress(text: str) -> None:
+    logger = _WINDOW_LOGGER.get()
+    if logger is None:
+        return
+    line = " ".join(str(text or "").split())
+    if line:
+        logger(f"  {line}")
+
+
+def _window_role(kind: str, label: str) -> str:
+    blob = f"{kind} {label}".lower()
+    if "plan" in blob:
+        return "规划"
+    if "verif" in blob or "diagnos" in blob:
+        return "校验"
+    if "tool" in blob or "execut" in blob:
+        return "执行"
+    return label or kind or "步骤"
+
+
+def _short(text: Any, limit: int = 96) -> str:
+    flat = " ".join(str(text or "").split())
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1] + "…"
+
+
+def _trace_of(payload: Any) -> Dict[str, Any]:
+    if isinstance(payload, dict) and isinstance(payload.get("trace"), dict):
+        return payload["trace"]
+    return {}
+
+
+def _error_text(value: Any) -> str:
+    if isinstance(value, dict):
+        return _short(value.get("message") or value.get("error") or value)
+    return _short(value)
+
+
+def window_detail_lines(message: Any) -> List[str]:
+    """Short lines for one finished window. Empty when there is nothing useful to show."""
+    payload = getattr(message, "payload", None)
+    if not isinstance(payload, dict):
+        payload = payload if isinstance(payload, dict) else {}
+    kind = str(getattr(message, "kind", "") or "")
+    trace = _trace_of(payload)
+    lines: List[str] = []
+    tool = trace.get("tool") or trace.get("tool_name") or payload.get("tool_name")
+    if not tool and isinstance(payload.get("args"), dict):
+        tool = payload["args"].get("tool_name")
+    goal = trace.get("sub_goal") or payload.get("sub_goal")
+    if tool:
+        lines.append(f"  工具  {_short(tool)}")
+    if goal:
+        lines.append(f"  目标  {_short(goal)}")
+    if trace.get("command"):
+        lines.append(f"  命令  {_short(trace.get('command'))}")
+    if kind == "tool_result":
+        mark = "成功" if payload.get("ok") else "失败"
+        output = trace.get("output") if trace.get("output") not in (None, "") else payload.get("output")
+        lines.append(f"  结果  {mark}  {_short(output)}")
+    elif kind == "verify":
+        conclusion = trace.get("conclusion") or payload.get("step_conclusion") or ""
+        ready = payload.get("ready_to_stop")
+        state = "可以停止" if ready else ("继续" if str(conclusion).upper() == "CONTINUE" else _short(conclusion) or "未完成")
+        lines.append(f"  结论  {state}")
+        reason = payload.get("reason") or trace.get("analysis")
+        if reason:
+            lines.append(f"  说明  {_short(reason)}")
+    elif kind == "error":
+        lines.append(f"  错误  {_short(payload.get('error'))}")
+    if trace.get("llm_error"):
+        lines.append(f"  模型  {_error_text(trace.get('llm_error'))}")
+    return lines
 
 
 def _inject_science_user() -> None:
@@ -145,13 +232,26 @@ def invoke_user_window(
     reload: bool = False,
 ) -> AgentMessage:
     runner = resolve_runner(project_id, reload=reload)
+    logger = _WINDOW_LOGGER.get()
+    label = agent_id or str(getattr(inbound, "dst", "") or project_id)
+    kind = str(getattr(inbound, "kind", "") or "")
+    role = _window_role(kind, label)
+    turn = int(getattr(inbound, "turn", 0) or 0)
+    started = time.perf_counter()
+    if logger is not None:
+        logger(f"· 第{turn}轮  {role}")
 
     def _call() -> Any:
         return runner.run_window(inbound)
 
     try:
         raw = run_isolated(_call, timeout_s=_window_timeout(timeout_s))
+    except EvalCancelled:
+        raise
     except Exception as exc:  # noqa: BLE001
+        if logger is not None:
+            logger(f"  失败  {_short(exc)}")
+            logger(f"  用时  {time.perf_counter() - started:.1f}s")
         return make_message(
             task_id=inbound.task_id,
             turn=inbound.turn,
@@ -161,14 +261,14 @@ def invoke_user_window(
             payload={"agent_id": agent_id or project_id, "error": str(exc)},
             trace_ref=inbound.msg_id,
         )
-    kind = expected_kind or inbound.kind
+    out_kind = expected_kind or inbound.kind
     if inbound.kind in ("tool_invoke",) and not expected_kind:
-        kind = "tool_result"
-    msg = _coerce_message(raw, inbound=inbound, default_kind=kind, default_src=agent_id or inbound.dst)
+        out_kind = "tool_result"
+    msg = _coerce_message(raw, inbound=inbound, default_kind=out_kind, default_src=agent_id or inbound.dst)
     if expected_kind:
         ok, reason = validate_payload(expected_kind, msg.payload)
         if not ok:
-            return make_message(
+            msg = make_message(
                 task_id=inbound.task_id,
                 turn=inbound.turn,
                 src=agent_id or inbound.dst,
@@ -177,6 +277,10 @@ def invoke_user_window(
                 payload={"agent_id": agent_id or project_id, "error": f"invalid {expected_kind}: {reason}"},
                 trace_ref=inbound.msg_id,
             )
+    if logger is not None:
+        for line in window_detail_lines(msg):
+            logger(line)
+        logger(f"  用时  {time.perf_counter() - started:.1f}s")
     return msg
 
 

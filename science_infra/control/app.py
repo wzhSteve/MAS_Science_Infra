@@ -72,6 +72,15 @@ class SampleDataBody(BaseModel):
     source: str = "gsm8k"
 
 
+class UserProjectRuntimeBody(BaseModel):
+    n: Optional[int] = None
+    max_steps: Optional[int] = None
+    max_time: Optional[int] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    enabled_tools: Optional[List[str]] = None
+
+
 class DiagnoseBody(BaseModel):
     metrics_path: Optional[str] = None
 
@@ -272,6 +281,28 @@ def create_app() -> FastAPI:
     @app.get("/api/mas/palette")
     def palette() -> Dict[str, Any]:
         return services.mas_palette()
+
+    @app.get("/api/mas/user-projects/{project_id}/runtime")
+    def get_user_project_runtime(project_id: str) -> Dict[str, Any]:
+        from science_infra.control.user_projects import get_project_runtime
+
+        try:
+            return get_project_runtime(project_id)
+        except FileNotFoundError as error:
+            raise HTTPException(404, "用户项目不存在") from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.put("/api/mas/user-projects/{project_id}/runtime")
+    def put_user_project_runtime(project_id: str, body: UserProjectRuntimeBody) -> Dict[str, Any]:
+        from science_infra.control.user_projects import put_project_runtime
+
+        try:
+            return put_project_runtime(project_id, body.model_dump(exclude_none=True))
+        except FileNotFoundError as error:
+            raise HTTPException(404, "用户项目不存在") from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
 
     @app.post("/api/mas/sampling/preview")
     def preview_sampling(body: SectionBody) -> Dict[str, Any]:

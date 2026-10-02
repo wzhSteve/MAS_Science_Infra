@@ -279,14 +279,22 @@ def compile_spec(spec: MASSpec) -> CompiledWorkflow:
             if r.id not in fan_out[upstream]:
                 fan_out[upstream].append(r.id)
 
-    # Implicit router: planner's tool-agents ∪ blank agents become the agent set.
-    # Applies to every centralized-equivalent topology so the runtime never
-    # falls back to TirAgent tool_calls.
+    # Implicit router: planner's tool-agents become the agent set when the
+    # planner has no explicit route and no direct message into a user window.
+    # A user wrap (EPC-AW executor) already connected by a message edge is
+    # dispatched directly and must not grow a synthetic router.
     if not routers_out and "planner" not in route_out:
+        downstream_id = message_out.get("planner")
+        downstream = agents.get(downstream_id) if downstream_id else None
+        downstream_profile = dict(getattr(downstream, "profile", None) or {}) if downstream else {}
+        direct_user_window = downstream is not None and (
+            getattr(downstream, "kind", None) == "blank"
+            or str(downstream_profile.get("backend") or "") == "user_space"
+        )
         planner_set = [t for t in tools_for.get("planner", []) if t in tool_ids or t in blank_ids]
         if not planner_set:
             planner_set = [t for t in tool_ids if t != "planner"]
-        if planner_set:
+        if planner_set and not direct_user_window:
             impl_id = "_implicit_route"
             routers_out[impl_id] = RouterSpec(
                 id=impl_id,

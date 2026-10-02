@@ -7,6 +7,7 @@ export interface AgentSpec extends Config {
   id: string;
   kind?: AgentKind;
   role?: string;
+  label?: string;
   skills?: string[];
   tools?: string[];
   memory_scope?: string;
@@ -287,6 +288,8 @@ export interface Palette {
     agent_ids?: string[];
     tool_ids?: string[];
     workflow?: WorkflowSpec;
+    family?: string;
+    wraps?: string;
   }>;
 }
 

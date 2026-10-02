@@ -12,6 +12,15 @@ export interface SampleDataResponse {
   tasks?: Array<{ id: string; question: string; source: string }>;
 }
 
+export interface EpcAwRuntimeConfig {
+  n?: number;
+  max_steps?: number;
+  max_time?: number;
+  max_tokens?: number;
+  temperature?: number;
+  enabled_tools?: string[];
+}
+
 export const masApi = {
   rollout: (id: string, body: RolloutRunRequest) =>
     request<RolloutRunSummary>(`/api/mas/rollout-runs?${experimentQuery(id)}`, { method: 'POST', body: JSON.stringify(body) }),
@@ -41,6 +50,18 @@ export const masApi = {
     request<EvalSources>(`/api/mas/eval-sources?${experimentQuery(id)}`, { signal }),
   evalRun: (id: string, body: { path: string; limit: number }) =>
     request<EvalRunStart>(`/api/mas/eval-runs?${experimentQuery(id)}`, { method: 'POST', body: JSON.stringify(body) }),
+  evalStop: (id: string, runId: string) =>
+    request<{ run_id: string; state: string; message?: string }>(
+      `/api/mas/eval-runs/${encodeURIComponent(runId)}/stop?${experimentQuery(id)}`,
+      { method: 'POST' },
+    ),
+  userProjectRuntime: (projectId: string, signal?: AbortSignal) =>
+    request<EpcAwRuntimeConfig>(`/api/mas/user-projects/${encodeURIComponent(projectId)}/runtime`, { signal }),
+  putUserProjectRuntime: (projectId: string, body: EpcAwRuntimeConfig) =>
+    request<EpcAwRuntimeConfig>(`/api/mas/user-projects/${encodeURIComponent(projectId)}/runtime`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
 };
 
 export interface EvalSources {

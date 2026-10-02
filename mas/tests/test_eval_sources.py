@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -66,10 +67,10 @@ class TestEvalParquetPaths(unittest.TestCase):
             },
         ])
         text = "\n".join(lines)
-        self.assertIn("planner -> route_exec plan_step", text)
-        self.assertIn("route_exec -> python_coder tool_invoke", text)
-        self.assertIn("python_coder -> verifier tool_result", text)
-        self.assertIn("verifier -> planner verify", text)
+        self.assertIn("planner → route_exec  plan_step", text)
+        self.assertIn("route_exec → python_coder  tool_invoke", text)
+        self.assertIn("python_coder → verifier  tool_result", text)
+        self.assertIn("verifier → planner  verify", text)
         self.assertIn("next=python_coder", text)
 
     def test_trace_expands_command_analysis_outline(self):
@@ -112,7 +113,7 @@ class TestEvalParquetPaths(unittest.TestCase):
                     },
                 },
             },
-        ])
+        ], detail=True)
         text = "\n".join(lines)
         self.assertIn("command = print((40/2+5)-2)", text)
         self.assertIn("analysis =", text)
@@ -140,6 +141,103 @@ class TestEvalParquetPaths(unittest.TestCase):
                 for child in run_dir.iterdir():
                     child.unlink()
                 run_dir.rmdir()
+
+    def test_stop_eval_sets_cancel_and_stopping(self):
+        import threading
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        import science_infra.control.rollout_runs as rr
+
+        row = PROCS.start_inline(kind="eval", experiment_id="demo", meta={"split": "val"})
+        run_id = row["run_id"]
+        try:
+            with rr._eval_guard:
+                rr._eval_running["demo"] = run_id
+                rr._eval_cancel[run_id] = threading.Event()
+            app = FastAPI()
+            app.include_router(rr.router)
+            client = TestClient(app)
+            from unittest.mock import patch
+
+            with patch("science_infra.control.services.stop_local_llm", return_value={"running": False, "killed": []}) as stop_llm:
+                resp = client.post(f"/api/mas/eval-runs/{run_id}/stop?experiment_id=demo")
+            self.assertEqual(resp.status_code, 200, resp.text)
+            body = resp.json()
+            self.assertEqual(body["state"], "stopping")
+            self.assertTrue(rr._eval_cancel[run_id].is_set())
+            stop_llm.assert_called_once_with("demo")
+            self.assertIn(run_id, rr._eval_release_llm)
+            status = PROCS.status(run_id, "demo") or {}
+            self.assertEqual(status.get("state"), "stopping")
+            self.assertTrue(status.get("running"))
+            raw = json.loads((PROCS.run_dir("demo", run_id) / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(raw.get("state"), "stopping")
+            log = (PROCS.run_dir("demo", run_id) / "stdout.log").read_text(encoding="utf-8")
+            self.assertIn("停止测试", log)
+            self.assertIn("本地 vLLM", log)
+        finally:
+            with rr._eval_guard:
+                if rr._eval_running.get("demo") == run_id:
+                    rr._eval_running.pop("demo", None)
+                rr._eval_cancel.pop(run_id, None)
+                rr._eval_release_llm.discard(run_id)
+            PROCS._pending.pop(run_id, None)
+            run_dir = PROCS.run_dir("demo", run_id)
+            if run_dir.exists():
+                for child in run_dir.iterdir():
+                    child.unlink()
+                run_dir.rmdir()
+
+    def test_eval_stops_vllm_only_when_started(self):
+        from unittest.mock import patch
+
+        import science_infra.control.rollout_runs as rr
+
+        calls = {"stop": 0}
+
+        def _stop(_exp: str):
+            calls["stop"] += 1
+            return {"running": False}
+
+        def _run(started: bool, reused: bool) -> None:
+            calls["stop"] = 0
+            row = PROCS.start_inline(kind="eval", experiment_id="demo", meta={"split": "val"})
+            run_id = row["run_id"]
+            try:
+                with patch("science_infra.control.services.ensure_local_llm_ready", return_value={
+                    "started": started,
+                    "reused": reused,
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "models": ["m"],
+                }), patch("science_infra.control.services.stop_local_llm", side_effect=_stop), patch.object(
+                    rr, "_execute_question", return_value=({"final_answer": "1", "status": "ok"}, [])
+                ):
+                    rr._run_eval_job(
+                        "demo",
+                        run_id,
+                        workflow={"agents": []},
+                        tasks=[{"id": "t1", "question": "1+1", "answer": "2", "source": "gsm8k"}],
+                        llm=None,
+                        model_summary={"name": "m"},
+                        model_public={"model": "m", "base_url": "http://127.0.0.1:8000/v1"},
+                        split="val",
+                        parquet="/tmp/val.parquet",
+                        local_llm=True,
+                    )
+            finally:
+                PROCS._pending.pop(run_id, None)
+                run_dir = PROCS.run_dir("demo", run_id)
+                if run_dir.exists():
+                    for child in run_dir.iterdir():
+                        child.unlink()
+                    run_dir.rmdir()
+
+        _run(started=True, reused=False)
+        self.assertEqual(calls["stop"], 1)
+        _run(started=False, reused=True)
+        self.assertEqual(calls["stop"], 0)
 
 
 if __name__ == "__main__":

@@ -120,6 +120,8 @@ export const NodeInspector = memo(function NodeInspector({
   const Icon = isPool ? Boxes : isTool ? Wrench : isRouter ? Route : Bot;
   const members = selected.data.members || [];
   const toolChoices = (palette.tool_agents || []).filter((tool) => !members.includes(tool.id));
+  const wraps = typeof selected.data.meta?.wraps === 'string' ? selected.data.meta.wraps : '';
+  const userWrap = selected.data.profile?.backend === 'user_space' || selected.data.backend === 'user_space' || wraps.startsWith('EPC-AW.');
   const tools = Array.from(new Set([...(palette.tools || []), ...(selected.data.tools || [])]));
   const agents = nodes.filter((node) => node.type === 'agent' && node.data.kind !== 'tool');
   const routerCandidates = selected.data.candidates || selected.data.members || [];
@@ -206,10 +208,20 @@ export const NodeInspector = memo(function NodeInspector({
           <p className="field-hint">Router 的下游固定是 tool-agent pool。点击 pool 增加或删除成员。当前成员：{(routerCandidates.length ? routerCandidates.join('、') : '无')}。</p>
           <JsonObjectField label="Router meta" value={selected.data.meta || {}} onChange={(meta) => onPatch({ meta })} />
         </div>
-      </> : <>
-        {selected.data.profile?.backend === 'user_space' && <div className="mas-property-section">
-          <p className="field-hint">用户区节点。代码在 <code>user_space/projects/{String(selected.data.profile.user_project || '')}</code>，只能由悬浮辅助 AI 修改。</p>
-        </div>}
+      </> : userWrap ? <div className="mas-property-section">
+        <p className="field-hint">
+          用户封装节点{wraps ? ` · ${wraps}` : ''}。
+          代码在 <code>user_space/projects/{String(selected.data.profile?.user_project || '')}</code>，只能由悬浮辅助 AI 修改。
+          工具在 executor 窗口内部执行，不在画布上绑定。采样点仍可挂在此节点上。
+        </p>
+        <dl className="mas-settings-details">
+          <dt>显示名</dt><dd>{selected.data.label || selected.id}</dd>
+          <dt>角色</dt><dd>{selected.data.role || selected.data.kind || 'agent'}</dd>
+          <dt>窗口</dt><dd className="mono">{selected.id}</dd>
+          <dt>训练</dt><dd>{selected.data.trainable === false ? '已冻结' : '参与训练'}</dd>
+          <dt>模型</dt><dd>继承实验配置</dd>
+        </dl>
+      </div> : <>
         <div className="mas-property-section">
           <FormField label="Agent 类型">
             <Select value={selected.data.kind || 'blank'} onChange={(event) =>

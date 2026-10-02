@@ -28,7 +28,9 @@ def resolve_task_path(raw: str | Path) -> Path:
 
 
 def _default_source(path: Path) -> str:
-    if path.suffix.lower() == ".json" and path.parent.name == "data":
+    # hotpotqa/data/data.json keeps the dataset folder name.
+    # data/hotpotqa.json is named by the file.
+    if path.suffix.lower() == ".json" and path.name == "data.json" and path.parent.name == "data":
         return path.parent.parent.name or path.stem
     if path.suffix.lower() == ".json":
         return path.stem

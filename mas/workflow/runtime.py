@@ -659,7 +659,13 @@ def run_compiled_episode(
     """
     compiled = compile_spec(spec)
     topo = str(spec.topology or "")
-    if topo in ("centralized", "hub_react", "single", "") and compiled.routers:
+    downstream = compiled.agents.get(compiled.message_out.get("planner") or "")
+    downstream_profile = dict(getattr(downstream, "profile", None) or {}) if downstream else {}
+    direct_user_window = downstream is not None and (
+        getattr(downstream, "kind", None) == "blank"
+        or str(downstream_profile.get("backend") or "") == "user_space"
+    )
+    if topo in ("centralized", "hub_react", "single", "") and (compiled.routers or direct_user_window):
         from .centralized_runtime import run_centralized_episode  # lazy to avoid cycle
 
         return run_centralized_episode(

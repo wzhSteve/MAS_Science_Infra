@@ -1,5 +1,5 @@
 profile: fast
-algo: grpo
+algo: arpo
 n_runners: 1
 rollout_per_gpu: 2
 devices:
@@ -9,7 +9,7 @@ model_path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
 algorithm:
   adv_estimator: grpo
   use_kl_in_reward: false
-  tir_algo: grpo
+  tir_algo: arpo
 data:
   train_files: /root/autodl-tmp/MAS_Science_Infra/data/train.parquet
   val_files: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet
@@ -32,7 +32,7 @@ actor_rollout_ref:
     optim:
       lr: 1.0e-06
     use_kl_loss: false
-    kl_loss_coef: 0.0
+    kl_loss_coef: 0
     entropy_coeff: 0
     clip_ratio_low: 0.2
     clip_ratio_high: 0.3

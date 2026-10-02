@@ -59,6 +59,7 @@ class AgentNodeSpec(BaseModel):
     id: str
     kind: Literal["planner", "tool", "verifier", "blank"] = "blank"
     role: str = "agent"
+    label: Optional[str] = None  # canvas display name; runtime routing still uses id
     skills: List[str] = Field(default_factory=list)
     tools: List[str] = Field(default_factory=list)  # routable tool-agent ids (planner)
     memory_scope: str = "none"
@@ -177,6 +178,8 @@ def _normalize_schema03(raw: Dict[str, Any]) -> None:
        (planner/verifier -> same name; tool-ish roles -> tool; else blank).
     3. ``hub`` / ``orchestrator`` agents are dropped and merged into planner.
        ``executor`` agents are dropped; their tools join the router pool.
+       User wraps (``profile.backend=user_space`` or ``meta.wraps`` starting with
+       ``EPC-AW.``) stay on the canvas as their own windows.
     4. ``execute_python`` (legacy pure-tool id) maps to ``python_coder``.
     5. ``kind: tool`` agents are forced ``trainable: false``.
     """
@@ -224,12 +227,22 @@ def _normalize_schema03(raw: Dict[str, Any]) -> None:
             elif role not in ("executor", "hub", "orchestrator"):
                 a["kind"] = "blank"
 
+    def _is_user_wrap(agent: Dict[str, Any]) -> bool:
+        profile = agent.get("profile") if isinstance(agent.get("profile"), dict) else {}
+        meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
+        wraps = str(meta.get("wraps") or "")
+        return str(profile.get("backend") or "") == "user_space" or wraps.startswith("EPC-AW.")
+
     def _is_hub(agent: Dict[str, Any]) -> bool:
+        if _is_user_wrap(agent):
+            return False
         kind = str(agent.get("kind") or "").lower()
         role = str(agent.get("role") or "").lower()
         return str(agent.get("id") or "") == "hub" or kind == "hub" or role in ("hub", "orchestrator")
 
     def _is_executor(agent: Dict[str, Any]) -> bool:
+        if _is_user_wrap(agent):
+            return False
         kind = str(agent.get("kind") or "").lower()
         role = str(agent.get("role") or "").lower()
         return str(agent.get("id") or "") == "executor" or kind == "executor" or role == "executor"

@@ -12,84 +12,13 @@ tools:
 - python_coder
 - think
 llm:
-  kind: local
+  kind: api
   model: Qwen3-4B
-  base_url: http://127.0.0.1:8000/v1
+  base_url: http://localhost:8000/v1
 memory:
   agent: messages
   system: none
 archive:
   window: post_first_tool
-agents:
-- id: planner
-  kind: planner
-  role: planner
-  skills: []
-  tools:
-  - wikipedia_search
-  - google_search
-  - web_search
-  - python_coder
-  - think
-  trainable: true
-  memory_scope: none
-- id: wikipedia_search
-  kind: tool
-  trainable: true
-- id: google_search
-  kind: tool
-  trainable: true
-- id: web_search
-  kind: tool
-  trainable: true
-- id: python_coder
-  kind: tool
-  trainable: true
-- id: think
-  kind: tool
-  trainable: true
-- id: verifier
-  kind: verifier
-  trainable: true
-  system_prompt: Judge whether the sub-goal is complete from the tool-agent output;
-    output JSON only.
-routers:
-- id: route_exec
-  candidates:
-  - wikipedia_search
-  - google_search
-  - web_search
-  - python_coder
-  - think
-  strategy: from_plan
-  output_contract: json
-edges:
-- from: planner
-  to: route_exec
-  kind: route
-- from: route_exec
-  to: verifier
-  kind: message
-- from: verifier
-  to: planner
-  kind: feedback
-sampling:
-  sites:
-  - id: site_after_turn_planner
-    enabled: true
-    anchor:
-      kind: after_agent_turn
-      agent_id: planner
-      tool_id: null
-      edge_id: null
-    when: first
-    gate:
-      type: entropy_delta
-      params: {}
-    fork:
-      beam_size: 2
-      share_observation: true
-      resume_mode: messages
-    reward:
-      scheme: scalar_grpo
-    priority: 10
+agents: []
+edges: []

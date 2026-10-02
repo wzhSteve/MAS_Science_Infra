@@ -27,6 +27,7 @@ export type GraphNodeData = Record<string, unknown> & {
   max_feedback_hops?: number;
   candidates?: string[];
   members?: string[];
+  memberLabels?: Record<string, string>;
   memberTiers?: Record<string, 'lite' | 'pro'>;
   routerId?: string;
   strategy?: RouterStrategy;

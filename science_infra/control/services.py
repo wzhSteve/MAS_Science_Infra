@@ -307,7 +307,14 @@ def start_local_llm(exp_id: str, *, stop_if_running: bool = True) -> Dict[str, A
         "0.0.0.0",
         "--max-model-len",
         "8192",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser",
+        "hermes",
     ]
+    # Align EPC-AW wrap completion budget with the local vLLM window.
+    os.environ.setdefault("SCIENCE_EPC_AW_MAX_MODEL_LEN", "8192")
+    os.environ.setdefault("SCIENCE_EPC_AW_MAX_COMPLETION", "2048")
+    os.environ.setdefault("MAS_MAX_COMPLETION_TOKENS", "2048")
     vllm = shutil.which("vllm")
     if vllm:
         argv = [
@@ -361,6 +368,79 @@ def start_local_llm(exp_id: str, *, stop_if_running: bool = True) -> Dict[str, A
     )
     BUS.publish(exp_id, "llm_status", {"state": "starting", "run_id": mp.run_id, "base_url": base_url})
     return {"run_id": mp.run_id, "base_url": base_url, "argv": argv, "reused": False}
+
+
+def _llm_log_tail(exp_id: str, run_id: str, *, limit: int = 12) -> str:
+    proc = PROCS.get(run_id)
+    path = proc.log_path if proc is not None else PROCS.run_dir(exp_id, run_id) / "stdout.log"
+    if not path.is_file():
+        return ""
+    lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+    return " | ".join(lines[-limit:])[:800]
+
+
+def _served_model_ready(models: List[str], served_name: str) -> bool:
+    if not served_name:
+        return bool(models)
+    return served_name in models or any(served_name in name for name in models)
+
+
+def ensure_local_llm_ready(exp_id: str, *, timeout: float = 180.0) -> Dict[str, Any]:
+    """Start local vLLM when needed and block until /v1/models lists the served model."""
+    bundle = load_bundle(exp_id)
+    resource = resolve_binding(exp_id, "inference")
+    llm = resource.data["config"] if resource else bundle["llm"]
+    if llm.get("kind") != "local":
+        return {"started": False, "reused": False, "reason": "not_local"}
+    model_path = str(llm.get("model_path") or llm.get("model") or "").strip()
+    port = int(llm.get("port") or 8000)
+    served_name = str(llm.get("model") or (Path(model_path).name if model_path else ""))
+    base_url = f"http://127.0.0.1:{port}/v1"
+    existing = _openai_models(base_url) or []
+    if _served_model_ready(existing, served_name):
+        return {
+            "started": False,
+            "reused": True,
+            "base_url": base_url,
+            "models": existing,
+            "run_id": "reused",
+        }
+    if model_path and not Path(model_path).expanduser().exists():
+        raise RuntimeError(f"本地模型目录不存在：{model_path}")
+    started = start_local_llm(exp_id)
+    if started.get("reused"):
+        models = list(started.get("models") or existing)
+        return {
+            "started": False,
+            "reused": True,
+            "base_url": str(started.get("base_url") or base_url),
+            "models": models,
+            "run_id": started.get("run_id") or "reused",
+        }
+    run_id = str(started.get("run_id") or "")
+    deadline = time.time() + max(5.0, float(timeout))
+    while time.time() < deadline:
+        models = _openai_models(base_url) or []
+        if _served_model_ready(models, served_name):
+            BUS.publish(
+                exp_id,
+                "llm_status",
+                {"state": "ready", "run_id": run_id, "base_url": base_url, "models": models},
+            )
+            return {
+                "started": True,
+                "reused": False,
+                "base_url": base_url,
+                "models": models,
+                "run_id": run_id,
+            }
+        proc = PROCS.get(run_id) if run_id else None
+        if proc is not None and proc.popen is not None and proc.popen.poll() is not None:
+            detail = _llm_log_tail(exp_id, run_id)
+            raise RuntimeError(f"vLLM 进程已退出（code {proc.popen.returncode}）。{detail}")
+        time.sleep(1.0)
+    detail = _llm_log_tail(exp_id, run_id) if run_id else ""
+    raise RuntimeError(f"等待 vLLM 就绪超时（{int(timeout)}s）。{detail}")
 
 
 def stop_local_llm(exp_id: str) -> Dict[str, Any]:

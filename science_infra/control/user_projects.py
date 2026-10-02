@@ -7,9 +7,25 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import yaml
 from fastapi import UploadFile
 
 from science_infra.control.paths import mas_root
+
+DEFAULT_EPC_AW_RUNTIME: Dict[str, Any] = {
+    "n": 1,
+    "max_steps": 20,
+    "max_time": 3000,
+    "max_tokens": 4000,
+    "temperature": 0.0,
+    "enabled_tools": [
+        "Base_Generator_Tool",
+        "Python_Coder_Tool",
+        "Wikipedia_Search_Tool",
+        "Bing_Search_Tool",
+        "Web_Fetch_Tool",
+    ],
+}
 
 
 def _gw():
@@ -38,6 +54,8 @@ def get_user_project(project_id: str) -> Dict[str, Any]:
 
 def palette_user_projects() -> List[Dict[str, Any]]:
     _paths, registry, _s, validate, _a = _gw()
+    from workflow.user_gateway.detect import detect_mas_family
+
     items = []
     for row in registry.list_projects():
         pid = str(row.get("id") or "")
@@ -48,6 +66,11 @@ def palette_user_projects() -> List[Dict[str, Any]]:
             wf = validate.load_project_workflow(pid)
         except Exception:
             wf = {}
+        wraps = str(row.get("wraps") or "")
+        try:
+            family = detect_mas_family(pid, str(row.get("title") or ""))
+        except Exception:
+            family = "epc_aw" if wraps.startswith("EPC-AW") else ""
         items.append(
             {
                 "id": pid,
@@ -57,9 +80,82 @@ def palette_user_projects() -> List[Dict[str, Any]]:
                 "agent_ids": list(row.get("agent_ids") or []),
                 "tool_ids": list(row.get("tool_ids") or []),
                 "workflow": wf or None,
+                "family": family,
+                "wraps": wraps,
             }
         )
     return items
+
+
+def _runtime_path(project_id: str) -> Path:
+    paths, _r, _s, _v, _a = _gw()
+    return paths.project_dir(project_id) / "contracts" / "runtime.yaml"
+
+
+def _clamp_runtime(data: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = dict(DEFAULT_EPC_AW_RUNTIME)
+    cfg["enabled_tools"] = list(DEFAULT_EPC_AW_RUNTIME["enabled_tools"])
+    if not isinstance(data, dict):
+        return cfg
+    try:
+        cfg["n"] = max(1, min(16, int(data.get("n", cfg["n"]))))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("n 必须是 1–16 的整数") from exc
+    try:
+        cfg["max_steps"] = max(1, min(40, int(data.get("max_steps", cfg["max_steps"]))))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_steps 必须是 1–40 的整数") from exc
+    try:
+        cfg["max_time"] = max(30, min(10000, int(data.get("max_time", cfg["max_time"]))))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_time 必须是 30–10000 的整数") from exc
+    try:
+        cfg["max_tokens"] = max(256, min(16384, int(data.get("max_tokens", cfg["max_tokens"]))))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_tokens 必须是 256–16384 的整数") from exc
+    try:
+        cfg["temperature"] = float(data.get("temperature", cfg["temperature"]))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("temperature 必须是数字") from exc
+    if cfg["temperature"] < 0 or cfg["temperature"] > 2:
+        raise ValueError("temperature 必须在 0–2")
+    tools = data.get("enabled_tools", cfg["enabled_tools"])
+    if not isinstance(tools, list) or not tools:
+        raise ValueError("enabled_tools 至少勾选一项")
+    allowed = set(DEFAULT_EPC_AW_RUNTIME["enabled_tools"])
+    cleaned = [str(item) for item in tools if str(item) in allowed]
+    if not cleaned:
+        raise ValueError("enabled_tools 无效")
+    cfg["enabled_tools"] = cleaned
+    return cfg
+
+
+def get_project_runtime(project_id: str) -> Dict[str, Any]:
+    paths, registry, _s, _v, _a = _gw()
+    registry.get_project(project_id)  # raises if missing
+    path = _runtime_path(project_id)
+    raw: Dict[str, Any] = {}
+    if path.is_file():
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                raw = loaded
+        except Exception:
+            raw = {}
+    return _clamp_runtime(raw)
+
+
+def put_project_runtime(project_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    paths, registry, _s, _v, _a = _gw()
+    registry.get_project(project_id)
+    cfg = _clamp_runtime(data or {})
+    path = _runtime_path(project_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return cfg
 
 
 def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:

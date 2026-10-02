@@ -1,0 +1,1377 @@
+[
+    {
+        "idx": 0,
+        "question": "Who was president of the United States in the year that Citibank was founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "james madison"
+        ],
+        "gen_text_store": "",
+        "pid": "0",
+        "query": "Who was president of the United States in the year that Citibank was founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 1,
+        "question": "What rocket was the first spacecraft that ever approached Uranus launched on?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Titan IIIE"
+        ],
+        "gen_text_store": "",
+        "pid": "1",
+        "query": "What rocket was the first spacecraft that ever approached Uranus launched on?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 2,
+        "question": "In what year was the company that was founded as Sound of Music added to the S&P 500?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1999"
+        ],
+        "gen_text_store": "",
+        "pid": "2",
+        "query": "In what year was the company that was founded as Sound of Music added to the S&P 500?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 3,
+        "question": "Who was the first African American mayor of the most populous city in the United States?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "David Dinkins"
+        ],
+        "gen_text_store": "",
+        "pid": "3",
+        "query": "Who was the first African American mayor of the most populous city in the United States?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 4,
+        "question": "When did the last king from Britain's House of Hanover die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "20 June 1837"
+        ],
+        "gen_text_store": "",
+        "pid": "4",
+        "query": "When did the last king from Britain's House of Hanover die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 5,
+        "question": "When did the president who set the precedent of a two term limit enter office?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "April 30, 1789"
+        ],
+        "gen_text_store": "",
+        "pid": "5",
+        "query": "When did the president who set the precedent of a two term limit enter office?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 6,
+        "question": "When did the president who set the precedent of a two term limit leave office?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "March 4, 1797"
+        ],
+        "gen_text_store": "",
+        "pid": "6",
+        "query": "When did the president who set the precedent of a two term limit leave office?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 7,
+        "question": "How many people died in the second most powerful earthquake ever recorded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "131"
+        ],
+        "gen_text_store": "",
+        "pid": "7",
+        "query": "How many people died in the second most powerful earthquake ever recorded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 8,
+        "question": "Can people who have celiac eat camel meat?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Yes"
+        ],
+        "gen_text_store": "",
+        "pid": "8",
+        "query": "Can people who have celiac eat camel meat?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 9,
+        "question": "What was the final book written by the author of On the Origin of Species?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "The Formation of Vegetable Mould Through the Action of Worms"
+        ],
+        "gen_text_store": "",
+        "pid": "9",
+        "query": "What was the final book written by the author of On the Origin of Species?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 10,
+        "question": "When was the company that built the first steam locomotive to carry passengers on a public rail line founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1823"
+        ],
+        "gen_text_store": "",
+        "pid": "10",
+        "query": "When was the company that built the first steam locomotive to carry passengers on a public rail line founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 11,
+        "question": "Which Theranos whistleblower is not related to a senior American government official?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Erika Cheung"
+        ],
+        "gen_text_store": "",
+        "pid": "11",
+        "query": "Which Theranos whistleblower is not related to a senior American government official?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 12,
+        "question": "What is the fastest air-breathing manned aircraft mostly made out of?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Titanium"
+        ],
+        "gen_text_store": "",
+        "pid": "12",
+        "query": "What is the fastest air-breathing manned aircraft mostly made out of?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 13,
+        "question": "Who built the fastest air-breathing manned aircraft?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Lockheed Corporation"
+        ],
+        "gen_text_store": "",
+        "pid": "13",
+        "query": "Who built the fastest air-breathing manned aircraft?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 14,
+        "question": "When was the author of The Population Bomb born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "May 29, 1932"
+        ],
+        "gen_text_store": "",
+        "pid": "14",
+        "query": "When was the author of The Population Bomb born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 15,
+        "question": "When did the author of Annabel Lee enlist in the army?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1827"
+        ],
+        "gen_text_store": "",
+        "pid": "15",
+        "query": "When did the author of Annabel Lee enlist in the army?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 16,
+        "question": "What was the religion of the inventor of the Polio vaccine?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Jewish"
+        ],
+        "gen_text_store": "",
+        "pid": "16",
+        "query": "What was the religion of the inventor of the Polio vaccine?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 17,
+        "question": "Who was the second wife of the founder of CNN?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Jane Shirley Smith"
+        ],
+        "gen_text_store": "",
+        "pid": "17",
+        "query": "Who was the second wife of the founder of CNN?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 18,
+        "question": "When did the first prime minister of the Russian Empire come into office?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "November 6, 1905"
+        ],
+        "gen_text_store": "",
+        "pid": "18",
+        "query": "When did the first prime minister of the Russian Empire come into office?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 19,
+        "question": "What is the primary male hormone derived from?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "cholesterol"
+        ],
+        "gen_text_store": "",
+        "pid": "19",
+        "query": "What is the primary male hormone derived from?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 20,
+        "question": "The Filipino statesman who established the government-in-exile during the outbreak of World War II was also the mayor of what city?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Quezon City"
+        ],
+        "gen_text_store": "",
+        "pid": "20",
+        "query": "The Filipino statesman who established the government-in-exile during the outbreak of World War II was also the mayor of what city?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 21,
+        "question": "Where was the person who shared the Nobel Prize in Physics in 1954 with Max Born born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Oranienburg, Germany"
+        ],
+        "gen_text_store": "",
+        "pid": "21",
+        "query": "Where was the person who shared the Nobel Prize in Physics in 1954 with Max Born born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 22,
+        "question": "When was the person who shared the Nobel Prize in Physics in 1954 with Max Born born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "January 8, 1891"
+        ],
+        "gen_text_store": "",
+        "pid": "22",
+        "query": "When was the person who shared the Nobel Prize in Physics in 1954 with Max Born born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 23,
+        "question": "What was the founding date of the university in which Plotonium was discovered?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "March 23, 1868"
+        ],
+        "gen_text_store": "",
+        "pid": "23",
+        "query": "What was the founding date of the university in which Plotonium was discovered?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 24,
+        "question": "The material out of which the Great Sphinx of Giza is made of is mainly composed of what mineral?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "calcite"
+        ],
+        "gen_text_store": "",
+        "pid": "24",
+        "query": "The material out of which the Great Sphinx of Giza is made of is mainly composed of what mineral?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 25,
+        "question": "The husband of Lady Godiva was Earl of which Anglic kingdom?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Mercia"
+        ],
+        "gen_text_store": "",
+        "pid": "25",
+        "query": "The husband of Lady Godiva was Earl of which Anglic kingdom?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 26,
+        "question": "The machine used to extract honey from honeycombs uses which physical force?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Centrifugal Force"
+        ],
+        "gen_text_store": "",
+        "pid": "26",
+        "query": "The machine used to extract honey from honeycombs uses which physical force?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 27,
+        "question": "What is the third letter of the top level domain of the military?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "l"
+        ],
+        "gen_text_store": "",
+        "pid": "27",
+        "query": "What is the third letter of the top level domain of the military?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 28,
+        "question": "In what year was the government department where the internet originated at founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1947"
+        ],
+        "gen_text_store": "",
+        "pid": "28",
+        "query": "In what year was the government department where the internet originated at founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 29,
+        "question": "The main actor of Indiana Jones is a licensed what?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "pilot"
+        ],
+        "gen_text_store": "",
+        "pid": "29",
+        "query": "The main actor of Indiana Jones is a licensed what?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 30,
+        "question": "When was the person after which the Hubble Space Telescope is named after born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "November 20, 1889"
+        ],
+        "gen_text_store": "",
+        "pid": "30",
+        "query": "When was the person after which the Hubble Space Telescope is named after born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 31,
+        "question": "When did the person who gave the Checkers speech die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "April 22, 1994"
+        ],
+        "gen_text_store": "",
+        "pid": "31",
+        "query": "When did the person who gave the Checkers speech die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 32,
+        "question": "When was the philosopher that formulated the hard problem of consciousness born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "April 20, 1966"
+        ],
+        "gen_text_store": "",
+        "pid": "32",
+        "query": "When was the philosopher that formulated the hard problem of consciousness born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 33,
+        "question": "What is the capital of the second largest state in the US by area?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Austin"
+        ],
+        "gen_text_store": "",
+        "pid": "33",
+        "query": "What is the capital of the second largest state in the US by area?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 34,
+        "question": "What is the maximum airspeed (in km/h) of the third fastest bird?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "320 km/h"
+        ],
+        "gen_text_store": "",
+        "pid": "34",
+        "query": "What is the maximum airspeed (in km/h) of the third fastest bird?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 35,
+        "question": "Who founded the city where the founder of geometry lived?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Alexander the Great"
+        ],
+        "gen_text_store": "",
+        "pid": "35",
+        "query": "Who founded the city where the founder of geometry lived?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 36,
+        "question": "What is the capital of the country where yoga originated?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "New Delhi"
+        ],
+        "gen_text_store": "",
+        "pid": "36",
+        "query": "What is the capital of the country where yoga originated?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 37,
+        "question": "The fourth largest city in Germany was originally called what?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Colonia Claudia Ara Agrippinensium"
+        ],
+        "gen_text_store": "",
+        "pid": "37",
+        "query": "The fourth largest city in Germany was originally called what?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 38,
+        "question": "When did Nirvana's second most selling studio album come out?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "September 13, 1993"
+        ],
+        "gen_text_store": "",
+        "pid": "38",
+        "query": "When did Nirvana's second most selling studio album come out?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 39,
+        "question": "What was the job of the father of the founder of psychoanalysis?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "wool merchant"
+        ],
+        "gen_text_store": "",
+        "pid": "39",
+        "query": "What was the job of the father of the founder of psychoanalysis?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 40,
+        "question": "How much protein in four boiled egg yolks?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "10.8"
+        ],
+        "gen_text_store": "",
+        "pid": "40",
+        "query": "How much protein in four boiled egg yolks?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 41,
+        "question": "What is the political party of the American president who entered into the Paris agreement?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Democratic Party"
+        ],
+        "gen_text_store": "",
+        "pid": "41",
+        "query": "What is the political party of the American president who entered into the Paris agreement?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 42,
+        "question": "The most populous city in Punjab is how large (area wise)?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "310 square kilometers"
+        ],
+        "gen_text_store": "",
+        "pid": "42",
+        "query": "The most populous city in Punjab is how large (area wise)?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 43,
+        "question": "What was the death toll of the second largest volcanic eruption in the 20th century?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "847"
+        ],
+        "gen_text_store": "",
+        "pid": "43",
+        "query": "What was the death toll of the second largest volcanic eruption in the 20th century?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 44,
+        "question": "What was the death toll of the most intense Atlantic hurricane?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "52"
+        ],
+        "gen_text_store": "",
+        "pid": "44",
+        "query": "What was the death toll of the most intense Atlantic hurricane?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 45,
+        "question": "Who was the head of NASA during Apollo 11?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Thomas O. Paine"
+        ],
+        "gen_text_store": "",
+        "pid": "45",
+        "query": "Who was the head of NASA during Apollo 11?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 46,
+        "question": "Who is the father of the father of George Washington?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Lawrence Washington"
+        ],
+        "gen_text_store": "",
+        "pid": "46",
+        "query": "Who is the father of the father of George Washington?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 47,
+        "question": "Who is the mother of the father of George Washington?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Mildred Warner"
+        ],
+        "gen_text_store": "",
+        "pid": "47",
+        "query": "Who is the mother of the father of George Washington?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 48,
+        "question": "Who is the father of the father of Barack Obama?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Hussein Onyango Obama"
+        ],
+        "gen_text_store": "",
+        "pid": "48",
+        "query": "Who is the father of the father of Barack Obama?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 49,
+        "question": "Who is the mother of the father of Barack Obama?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Habiba Akumu Nyanjango"
+        ],
+        "gen_text_store": "",
+        "pid": "49",
+        "query": "Who is the mother of the father of Barack Obama?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 50,
+        "question": "Who was mayor of New York City when Fiorello H. La Guardia was born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "William Russell Grace"
+        ],
+        "gen_text_store": "",
+        "pid": "50",
+        "query": "Who was mayor of New York City when Fiorello H. La Guardia was born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 51,
+        "question": "Who was president of the U.S. when superconductivity was discovered?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "William Howard Taft"
+        ],
+        "gen_text_store": "",
+        "pid": "51",
+        "query": "Who was president of the U.S. when superconductivity was discovered?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 52,
+        "question": "When was the person Russ Hanneman is based on born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "July 31, 1958"
+        ],
+        "gen_text_store": "",
+        "pid": "52",
+        "query": "When was the person Russ Hanneman is based on born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 53,
+        "question": "When was the first location of the world's largest coffeehouse chain opened?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "March 30, 1971"
+        ],
+        "gen_text_store": "",
+        "pid": "53",
+        "query": "When was the first location of the world's largest coffeehouse chain opened?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 54,
+        "question": "Who directed the highest grossing film?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "James Cameroon"
+        ],
+        "gen_text_store": "",
+        "pid": "54",
+        "query": "Who directed the highest grossing film?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 55,
+        "question": "When was the longest bridge in the world opened?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "30 June 2011"
+        ],
+        "gen_text_store": "",
+        "pid": "55",
+        "query": "When was the longest bridge in the world opened?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 56,
+        "question": "Which company was responsible for the largest pharmaceutical settlement?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "GlaxoSmithKline"
+        ],
+        "gen_text_store": "",
+        "pid": "56",
+        "query": "Which company was responsible for the largest pharmaceutical settlement?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 57,
+        "question": "In what year was the tallest self-supporting tower completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "2012"
+        ],
+        "gen_text_store": "",
+        "pid": "57",
+        "query": "In what year was the tallest self-supporting tower completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 58,
+        "question": "In what year was the tallest fixed steel structure completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1988"
+        ],
+        "gen_text_store": "",
+        "pid": "58",
+        "query": "In what year was the tallest fixed steel structure completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 59,
+        "question": "In what year was the tallest lattice tower completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "2012"
+        ],
+        "gen_text_store": "",
+        "pid": "59",
+        "query": "In what year was the tallest lattice tower completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 60,
+        "question": "In what year was the current tallest wooden lattice tower completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1935"
+        ],
+        "gen_text_store": "",
+        "pid": "60",
+        "query": "In what year was the current tallest wooden lattice tower completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 61,
+        "question": "In what country is the second tallest statue in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "China"
+        ],
+        "gen_text_store": "",
+        "pid": "61",
+        "query": "In what country is the second tallest statue in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 62,
+        "question": "When was the tallest ferris wheel in the world completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "2021"
+        ],
+        "gen_text_store": "",
+        "pid": "62",
+        "query": "When was the tallest ferris wheel in the world completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 63,
+        "question": "In what year was the tallest lighthouse completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1902"
+        ],
+        "gen_text_store": "",
+        "pid": "63",
+        "query": "In what year was the tallest lighthouse completed?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 64,
+        "question": "In what country is the world largest desalination plant?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Saudi Arabia"
+        ],
+        "gen_text_store": "",
+        "pid": "64",
+        "query": "In what country is the world largest desalination plant?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 65,
+        "question": "The most populous national capital city was established in what year?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1045 BC"
+        ],
+        "gen_text_store": "",
+        "pid": "65",
+        "query": "The most populous national capital city was established in what year?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 66,
+        "question": "The third largest river (by discharge) in the world is in what countries?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "India and Bangladesh"
+        ],
+        "gen_text_store": "",
+        "pid": "66",
+        "query": "The third largest river (by discharge) in the world is in what countries?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 67,
+        "question": "What is the highest elevation (in meters) of the second largest island in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "4,884 m"
+        ],
+        "gen_text_store": "",
+        "pid": "67",
+        "query": "What is the highest elevation (in meters) of the second largest island in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 68,
+        "question": "What is the length of the second deepest river in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "6,300 km"
+        ],
+        "gen_text_store": "",
+        "pid": "68",
+        "query": "What is the length of the second deepest river in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 69,
+        "question": "In what country is the third largest stadium in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "United States"
+        ],
+        "gen_text_store": "",
+        "pid": "69",
+        "query": "In what country is the third largest stadium in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 70,
+        "question": "Who is the largest aircraft carrier in the world is named after?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Gerald R. Ford"
+        ],
+        "gen_text_store": "",
+        "pid": "70",
+        "query": "Who is the largest aircraft carrier in the world is named after?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 71,
+        "question": "In what year did the oldest cat ever recorded with the Cat of the Year award?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1999"
+        ],
+        "gen_text_store": "",
+        "pid": "71",
+        "query": "In what year did the oldest cat ever recorded with the Cat of the Year award?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 72,
+        "question": "In what year was the country that is the third largest exporter of coffee founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1810"
+        ],
+        "gen_text_store": "",
+        "pid": "72",
+        "query": "In what year was the country that is the third largest exporter of coffee founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 73,
+        "question": "Who was the commander for the space mission that had the first spacewalk?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Pavel Belyayev"
+        ],
+        "gen_text_store": "",
+        "pid": "73",
+        "query": "Who was the commander for the space mission that had the first spacewalk?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 74,
+        "question": "Who is the predecessor of the longest-reigning British monarch?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "George VI\n"
+        ],
+        "gen_text_store": "",
+        "pid": "74",
+        "query": "Who is the predecessor of the longest-reigning British monarch?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 75,
+        "question": "In 2016, who was the host of the longest running talk show?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Jimmy Fallon"
+        ],
+        "gen_text_store": "",
+        "pid": "75",
+        "query": "In 2016, who was the host of the longest running talk show?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 76,
+        "question": "In 2016, who was the host of the longest running American game show?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Drew Carey"
+        ],
+        "gen_text_store": "",
+        "pid": "76",
+        "query": "In 2016, who was the host of the longest running American game show?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 77,
+        "question": "Who wrote the novel on which the longest running show in Broadway history is based on?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Gaston Leroux"
+        ],
+        "gen_text_store": "",
+        "pid": "77",
+        "query": "Who wrote the novel on which the longest running show in Broadway history is based on?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 78,
+        "question": "In what country was the only cruise line that flies the American flag incorporated in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Bermuda"
+        ],
+        "gen_text_store": "",
+        "pid": "78",
+        "query": "In what country was the only cruise line that flies the American flag incorporated in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 79,
+        "question": "In what year did work begin on the second longest road tunnel in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1992"
+        ],
+        "gen_text_store": "",
+        "pid": "79",
+        "query": "In what year did work begin on the second longest road tunnel in the world?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 80,
+        "question": "What is the official color of the third oldest surviving university?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Cambridge Blue"
+        ],
+        "gen_text_store": "",
+        "pid": "80",
+        "query": "What is the official color of the third oldest surviving university?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 81,
+        "question": "Who succeeded the longest reigning Roman emperor?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Tiberius"
+        ],
+        "gen_text_store": "",
+        "pid": "81",
+        "query": "Who succeeded the longest reigning Roman emperor?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 82,
+        "question": "Who preceded the Roman emperor that declared war on the sea?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Tiberius"
+        ],
+        "gen_text_store": "",
+        "pid": "82",
+        "query": "Who preceded the Roman emperor that declared war on the sea?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 83,
+        "question": "Who produced the longest running video game franchise?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "MECC"
+        ],
+        "gen_text_store": "",
+        "pid": "83",
+        "query": "Who produced the longest running video game franchise?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 84,
+        "question": "Who was the father of the father of psychoanalysis?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Jacob Freud"
+        ],
+        "gen_text_store": "",
+        "pid": "84",
+        "query": "Who was the father of the father of psychoanalysis?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 85,
+        "question": "Who was the father of the father of empiricism?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Sir Nicholas Bacon"
+        ],
+        "gen_text_store": "",
+        "pid": "85",
+        "query": "Who was the father of the father of empiricism?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 86,
+        "question": "Who is the father of the father of observational astronomy?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Vincenzo Galilei"
+        ],
+        "gen_text_store": "",
+        "pid": "86",
+        "query": "Who is the father of the father of observational astronomy?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 87,
+        "question": "Who is the father of the father of modern Hebrew?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Yehuda Leib"
+        ],
+        "gen_text_store": "",
+        "pid": "87",
+        "query": "Who is the father of the father of modern Hebrew?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 88,
+        "question": "Who is the father of the father of modern experimental psychology?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Maximilian Wundt"
+        ],
+        "gen_text_store": "",
+        "pid": "88",
+        "query": "Who is the father of the father of modern experimental psychology?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 89,
+        "question": "Who is the father of the originator of cybernetics?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Leo Wiener"
+        ],
+        "gen_text_store": "",
+        "pid": "89",
+        "query": "Who is the father of the originator of cybernetics?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 90,
+        "question": "Who is the father of the father of the hydrogen bomb?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Max Teller"
+        ],
+        "gen_text_store": "",
+        "pid": "90",
+        "query": "Who is the father of the father of the hydrogen bomb?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 91,
+        "question": "Who was the father of the father of computer science?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Julius Mathison Turing"
+        ],
+        "gen_text_store": "",
+        "pid": "91",
+        "query": "Who was the father of the father of computer science?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 92,
+        "question": "Who was the father of the father of behaviorism?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Pickens Butler Watson"
+        ],
+        "gen_text_store": "",
+        "pid": "92",
+        "query": "Who was the father of the father of behaviorism?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 93,
+        "question": "Who was the father of the founder of modern human anatomy?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Anders van Wesel"
+        ],
+        "gen_text_store": "",
+        "pid": "93",
+        "query": "Who was the father of the founder of modern human anatomy?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 94,
+        "question": "What was the father of the last surviving Canadian father of Confederation?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Charles Tupper Sr."
+        ],
+        "gen_text_store": "",
+        "pid": "94",
+        "query": "What was the father of the last surviving Canadian father of Confederation?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 95,
+        "question": "When was the person who said “Now, I am become Death, the destroyer of worlds.” born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "April 22, 1904"
+        ],
+        "gen_text_store": "",
+        "pid": "95",
+        "query": "When was the person who said “Now, I am become Death, the destroyer of worlds.” born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 96,
+        "question": "Who was the father of the father of information theory?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Claude Sr."
+        ],
+        "gen_text_store": "",
+        "pid": "96",
+        "query": "Who was the father of the father of information theory?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 97,
+        "question": "When was the person who delivered the \"Quit India\" speech born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "October 2, 1869"
+        ],
+        "gen_text_store": "",
+        "pid": "97",
+        "query": "When was the person who delivered the \"Quit India\" speech born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 98,
+        "question": "When did the president who warned about the military industrial complex die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "March 28, 1969"
+        ],
+        "gen_text_store": "",
+        "pid": "98",
+        "query": "When did the president who warned about the military industrial complex die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 99,
+        "question": "When did the president who said Tear Down This Wall die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "June 5, 2004"
+        ],
+        "gen_text_store": "",
+        "pid": "99",
+        "query": "When did the president who said Tear Down This Wall die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 100,
+        "question": "What is the lowest elevation of the longest railway tunnel?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "312 m"
+        ],
+        "gen_text_store": "",
+        "pid": "100",
+        "query": "What is the lowest elevation of the longest railway tunnel?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 101,
+        "question": "When did the person who said \"Cogito, ergo sum.\" die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "February 11, 1650"
+        ],
+        "gen_text_store": "",
+        "pid": "101",
+        "query": "When did the person who said \"Cogito, ergo sum.\" die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 102,
+        "question": "When did the person who delivered the Gettysburg Address die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "April 15, 1865"
+        ],
+        "gen_text_store": "",
+        "pid": "102",
+        "query": "When did the person who delivered the Gettysburg Address die?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 103,
+        "question": "Who was governor of Florida during Hurricane Irma?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Rick Scott"
+        ],
+        "gen_text_store": "",
+        "pid": "103",
+        "query": "Who was governor of Florida during Hurricane Irma?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 104,
+        "question": "For which club did the winner of the 2007 Ballon d'Or play for in 2012?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Real Madrid"
+        ],
+        "gen_text_store": "",
+        "pid": "104",
+        "query": "For which club did the winner of the 2007 Ballon d'Or play for in 2012?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 105,
+        "question": "What's the capital city of the country that was the champion of the 2010 World Cup?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Madrid"
+        ],
+        "gen_text_store": "",
+        "pid": "105",
+        "query": "What's the capital city of the country that was the champion of the 2010 World Cup?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 106,
+        "question": "When was the anime studio that made Sword Art Online founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "May 9, 2005"
+        ],
+        "gen_text_store": "",
+        "pid": "106",
+        "query": "When was the anime studio that made Sword Art Online founded?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 107,
+        "question": "Who was the first king of the longest Chinese dynasty?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "King Wu of Zhou"
+        ],
+        "gen_text_store": "",
+        "pid": "107",
+        "query": "Who was the first king of the longest Chinese dynasty?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 108,
+        "question": "Who was the last emperor of the dynasty that succeeded the Song dynasty?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Toghon Temür"
+        ],
+        "gen_text_store": "",
+        "pid": "108",
+        "query": "Who was the last emperor of the dynasty that succeeded the Song dynasty?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 109,
+        "question": "What's the motto of the oldest California State university?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Powering Silicon Valley"
+        ],
+        "gen_text_store": "",
+        "pid": "109",
+        "query": "What's the motto of the oldest California State university?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 110,
+        "question": "What's the capital of the state that the College of William & Mary is in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Richmond"
+        ],
+        "gen_text_store": "",
+        "pid": "110",
+        "query": "What's the capital of the state that the College of William & Mary is in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 111,
+        "question": "What's the capital of the state that Washington University in St. Louis is in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Jefferson City"
+        ],
+        "gen_text_store": "",
+        "pid": "111",
+        "query": "What's the capital of the state that Washington University in St. Louis is in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 112,
+        "question": "What's the capital of the state that Harvard University is in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Boston"
+        ],
+        "gen_text_store": "",
+        "pid": "112",
+        "query": "What's the capital of the state that Harvard University is in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 113,
+        "question": "What's the capital of the state that the Space Needle is at?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Olympia"
+        ],
+        "gen_text_store": "",
+        "pid": "113",
+        "query": "What's the capital of the state that the Space Needle is at?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 114,
+        "question": "Which team won in women's volleyball in the most recent Summer Olympics that was held in London?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Brazil"
+        ],
+        "gen_text_store": "",
+        "pid": "114",
+        "query": "Which team won in women's volleyball in the most recent Summer Olympics that was held in London?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 115,
+        "question": "What is the nickname of the easternmost U.S. state?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Pine Tree State"
+        ],
+        "gen_text_store": "",
+        "pid": "115",
+        "query": "What is the nickname of the easternmost U.S. state?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 116,
+        "question": "What is the nickname for the state that is the home to the “Avocado Capital of the World\"?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Golden State"
+        ],
+        "gen_text_store": "",
+        "pid": "116",
+        "query": "What is the nickname for the state that is the home to the “Avocado Capital of the World\"?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 117,
+        "question": "What rocket was used for the mission that landed the first humans on the moon?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Saturn V"
+        ],
+        "gen_text_store": "",
+        "pid": "117",
+        "query": "What rocket was used for the mission that landed the first humans on the moon?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 118,
+        "question": "When did the war that Neil Armstrong served in end?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "July 27, 1953"
+        ],
+        "gen_text_store": "",
+        "pid": "118",
+        "query": "When did the war that Neil Armstrong served in end?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 119,
+        "question": "What is the nickname for the state that Mount Rainier is located in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Evergreen State"
+        ],
+        "gen_text_store": "",
+        "pid": "119",
+        "query": "What is the nickname for the state that Mount Rainier is located in?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 120,
+        "question": "When was the composer of Carol of the Bells born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "December 13, 1877"
+        ],
+        "gen_text_store": "",
+        "pid": "120",
+        "query": "When was the composer of Carol of the Bells born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 121,
+        "question": "Who is the father of the scientist at MIT that won the Queen Elizabeth Prize for Engineering in 2013?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Conway Berners-Lee"
+        ],
+        "gen_text_store": "",
+        "pid": "121",
+        "query": "Who is the father of the scientist at MIT that won the Queen Elizabeth Prize for Engineering in 2013?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 122,
+        "question": "Who was the mother of the emperor of Japan during World War I?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Yanagiwara Naruko"
+        ],
+        "gen_text_store": "",
+        "pid": "122",
+        "query": "Who was the mother of the emperor of Japan during World War I?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 123,
+        "question": "Which element has an atomic number that is double that of hydrogen?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Helium"
+        ],
+        "gen_text_store": "",
+        "pid": "123",
+        "query": "Which element has an atomic number that is double that of hydrogen?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 124,
+        "question": "What was the motto of the Olympics that had Fuwa as the mascots?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "One World, One Dream"
+        ],
+        "gen_text_store": "",
+        "pid": "124",
+        "query": "What was the motto of the Olympics that had Fuwa as the mascots?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    }
+]

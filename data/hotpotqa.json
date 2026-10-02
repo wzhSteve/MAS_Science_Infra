@@ -1,0 +1,1102 @@
+[
+    {
+        "idx": 0,
+        "question": "What nationality was Oliver Reed's character in the film Royal Flash?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Prussian"
+        ],
+        "gen_text_store": "",
+        "pid": "0",
+        "query": "What nationality was Oliver Reed's character in the film Royal Flash?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 1,
+        "question": "Pacific Mozart Ensemble performed which German composer's Der Lindberghflug in 2002?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Kurt Julian Weill"
+        ],
+        "gen_text_store": "",
+        "pid": "1",
+        "query": "Pacific Mozart Ensemble performed which German composer's Der Lindberghflug in 2002?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 2,
+        "question": "Who released the song \"With or Without You\" first, Jai McDowall or U2?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "U2"
+        ],
+        "gen_text_store": "",
+        "pid": "2",
+        "query": "Who released the song \"With or Without You\" first, Jai McDowall or U2?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 3,
+        "question": "What Kentucky county has a population of 60,316 and features the Lake Louisvilla neighborhood?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Oldham County"
+        ],
+        "gen_text_store": "",
+        "pid": "3",
+        "query": "What Kentucky county has a population of 60,316 and features the Lake Louisvilla neighborhood?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 4,
+        "question": "Para Hills West, South Australia lies within a city with what estimated population?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "138,535"
+        ],
+        "gen_text_store": "",
+        "pid": "4",
+        "query": "Para Hills West, South Australia lies within a city with what estimated population?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 5,
+        "question": "In what year was the narrator of \"Blackadder's Christmas Carol\" born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1959"
+        ],
+        "gen_text_store": "",
+        "pid": "5",
+        "query": "In what year was the narrator of \"Blackadder's Christmas Carol\" born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 6,
+        "question": "Thomas Fitch defended John Henry Holliday when he was accused of killing men during the gunfight at the o.k. corral, when was that?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "October 25, 1881"
+        ],
+        "gen_text_store": "",
+        "pid": "6",
+        "query": "Thomas Fitch defended John Henry Holliday when he was accused of killing men during the gunfight at the o.k. corral, when was that?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 7,
+        "question": "The actor that played Gutthi on Comedy nights with Kapil Show also starred in what 2016 Punjabi film directed by Smeep Kang?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Vaisakhi List"
+        ],
+        "gen_text_store": "",
+        "pid": "7",
+        "query": "The actor that played Gutthi on Comedy nights with Kapil Show also starred in what 2016 Punjabi film directed by Smeep Kang?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 8,
+        "question": "Victor Varnada directed Twisted Fortune, which starred which brother of Eddie Murphy?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Charlie Murphy"
+        ],
+        "gen_text_store": "",
+        "pid": "8",
+        "query": "Victor Varnada directed Twisted Fortune, which starred which brother of Eddie Murphy?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 9,
+        "question": "After his curacy at the village that is a suburb of Scunthorpe, who was Industrial Chaplain to the Bishop of Lincoln?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Dudman"
+        ],
+        "gen_text_store": "",
+        "pid": "9",
+        "query": "After his curacy at the village that is a suburb of Scunthorpe, who was Industrial Chaplain to the Bishop of Lincoln?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 10,
+        "question": "What is the first two words of the fifth studio album of Joseph Edgar Foreman?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "The Hungry"
+        ],
+        "gen_text_store": "",
+        "pid": "10",
+        "query": "What is the first two words of the fifth studio album of Joseph Edgar Foreman?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 11,
+        "question": "The Twelfth United States Army Group commander was the first chairman of what?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Joint Chiefs of Staff"
+        ],
+        "gen_text_store": "",
+        "pid": "11",
+        "query": "The Twelfth United States Army Group commander was the first chairman of what?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 12,
+        "question": "Politician Lyman Sherwood was born in what New York county?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Rensselaer County"
+        ],
+        "gen_text_store": "",
+        "pid": "12",
+        "query": "Politician Lyman Sherwood was born in what New York county?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 13,
+        "question": "Robert Earl Holding owned an oil company that was originally founded by who?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Harry F. Sinclair"
+        ],
+        "gen_text_store": "",
+        "pid": "13",
+        "query": "Robert Earl Holding owned an oil company that was originally founded by who?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 14,
+        "question": "The chorus of \"On the Radio\" contains references to the song \"November Rain\" whose band's lead singer is?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Axl Rose"
+        ],
+        "gen_text_store": "",
+        "pid": "14",
+        "query": "The chorus of \"On the Radio\" contains references to the song \"November Rain\" whose band's lead singer is?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 15,
+        "question": "If the Charhki  Dadri crash was less dangerous than the Tenerife airport disaster, which occured firat? When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "On March 27, 1977, two Boeing 747 passenger jets, KLM Flight 4805 and Pan Am Flight 1736, collided on the runway at Los Rodeos Airport (now Tenerife North Airport)"
+        ],
+        "gen_text_store": "",
+        "pid": "15",
+        "query": "If the Charhki  Dadri crash was less dangerous than the Tenerife airport disaster, which occured firat? When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 16,
+        "question": "Were the films Crazy Love and Welcome to Nollywood both released in 2008?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "no"
+        ],
+        "gen_text_store": "",
+        "pid": "16",
+        "query": "Were the films Crazy Love and Welcome to Nollywood both released in 2008?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 17,
+        "question": "In what county was Duffy Jackson born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Nassau County"
+        ],
+        "gen_text_store": "",
+        "pid": "17",
+        "query": "In what county was Duffy Jackson born?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 18,
+        "question": "When was the defending titlist of 2009–10 Biathlon World Cup – Pursuit Men born? When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "27 January 1974"
+        ],
+        "gen_text_store": "",
+        "pid": "18",
+        "query": "When was the defending titlist of 2009–10 Biathlon World Cup – Pursuit Men born? When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 19,
+        "question": "Which mountain is taller, Gasherbrum II or Langtang Ri?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Gasherbrum II"
+        ],
+        "gen_text_store": "",
+        "pid": "19",
+        "query": "Which mountain is taller, Gasherbrum II or Langtang Ri?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 20,
+        "question": "Which Dutch media tycoon transferred all of its media activities to Talpa Holding?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "John de Mol Jr."
+        ],
+        "gen_text_store": "",
+        "pid": "20",
+        "query": "Which Dutch media tycoon transferred all of its media activities to Talpa Holding?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 21,
+        "question": "When did the car depicted on the cover of Pentastar: In the Style of Demons cease production?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1974"
+        ],
+        "gen_text_store": "",
+        "pid": "21",
+        "query": "When did the car depicted on the cover of Pentastar: In the Style of Demons cease production?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 22,
+        "question": "What commentator and author questioned the validity of CORE's non-profit status?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Rachel Anne Maddow"
+        ],
+        "gen_text_store": "",
+        "pid": "22",
+        "query": "What commentator and author questioned the validity of CORE's non-profit status?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 23,
+        "question": "did Robert Wise have more award nominations than Zoltan Korda?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "yes"
+        ],
+        "gen_text_store": "",
+        "pid": "23",
+        "query": "did Robert Wise have more award nominations than Zoltan Korda?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 24,
+        "question": "My Neighbor Totoro was produced by a Japanese animation film studio founded in what year?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1985"
+        ],
+        "gen_text_store": "",
+        "pid": "24",
+        "query": "My Neighbor Totoro was produced by a Japanese animation film studio founded in what year?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 25,
+        "question": "When did the English local newspaper, featuring the sculpture and war memorial in the Forbury gardens, change names?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "2009"
+        ],
+        "gen_text_store": "",
+        "pid": "25",
+        "query": "When did the English local newspaper, featuring the sculpture and war memorial in the Forbury gardens, change names?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 26,
+        "question": "What years did Jose Gonzalo Rodriguez Gacha and other leaders of fthe Medallin Cartel operate in Boliva, Colombia, Central America, Peru, the United States, Canada, and Europe?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1970s and 1980s"
+        ],
+        "gen_text_store": "",
+        "pid": "26",
+        "query": "What years did Jose Gonzalo Rodriguez Gacha and other leaders of fthe Medallin Cartel operate in Boliva, Colombia, Central America, Peru, the United States, Canada, and Europe?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 27,
+        "question": "Which writer died later, Agatha Christie or Clement Greenberg?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Clement Greenberg"
+        ],
+        "gen_text_store": "",
+        "pid": "27",
+        "query": "Which writer died later, Agatha Christie or Clement Greenberg?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 28,
+        "question": "Arthur Noss was a gunner for the commader during which two European theatre battles in WWII?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Battle of Britain and the Battle of Malta"
+        ],
+        "gen_text_store": "",
+        "pid": "28",
+        "query": "Arthur Noss was a gunner for the commader during which two European theatre battles in WWII?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 29,
+        "question": "Between Pinanga and Alopecurus which genus is more common in temperate regions?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Alopecurus"
+        ],
+        "gen_text_store": "",
+        "pid": "29",
+        "query": "Between Pinanga and Alopecurus which genus is more common in temperate regions?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 30,
+        "question": "What is the name of shipping magnate Mærsk Mc-Kinney Møller' father?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "A.P. Møller"
+        ],
+        "gen_text_store": "",
+        "pid": "30",
+        "query": "What is the name of shipping magnate Mærsk Mc-Kinney Møller' father?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 31,
+        "question": "Who brewed the first espresso coffee in space, Patrick Baudry or Samantha Cristoforetti?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Samantha Cristoforetti"
+        ],
+        "gen_text_store": "",
+        "pid": "31",
+        "query": "Who brewed the first espresso coffee in space, Patrick Baudry or Samantha Cristoforetti?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 32,
+        "question": "Who starred alongside South Korean actor and singer Kim Ki-bum in the 2012 romantic comedy series I Love Lee Tae-ri?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Park Ye-jin"
+        ],
+        "gen_text_store": "",
+        "pid": "32",
+        "query": "Who starred alongside South Korean actor and singer Kim Ki-bum in the 2012 romantic comedy series I Love Lee Tae-ri?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 33,
+        "question": "Which port city lies approximately 25 km north of the Lingnan Fine Arts Museum?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Keelung"
+        ],
+        "gen_text_store": "",
+        "pid": "33",
+        "query": "Which port city lies approximately 25 km north of the Lingnan Fine Arts Museum?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 34,
+        "question": "Where is the school that Tyler Kalinoski went to located?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "located in Olathe, Kansas"
+        ],
+        "gen_text_store": "",
+        "pid": "34",
+        "query": "Where is the school that Tyler Kalinoski went to located?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 35,
+        "question": "D1NZ is a series based on what oversteering technique?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Drifting"
+        ],
+        "gen_text_store": "",
+        "pid": "35",
+        "query": "D1NZ is a series based on what oversteering technique?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 36,
+        "question": "The most famous song of the last monarch of Hawaii was what?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Aloha ʻOe"
+        ],
+        "gen_text_store": "",
+        "pid": "36",
+        "query": "The most famous song of the last monarch of Hawaii was what?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 37,
+        "question": "The NG postcode area is situated approximately how many miles from Gamston, Rushcliffe?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "approximately 3 mi"
+        ],
+        "gen_text_store": "",
+        "pid": "37",
+        "query": "The NG postcode area is situated approximately how many miles from Gamston, Rushcliffe?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 38,
+        "question": "Along side Thomas Alan, which singer's first three albums were recorded at The Boarding House?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Steve Martin"
+        ],
+        "gen_text_store": "",
+        "pid": "38",
+        "query": "Along side Thomas Alan, which singer's first three albums were recorded at The Boarding House?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 39,
+        "question": "The Curaçao Centre for Correction and Detention changed its name to Sentro di Detenshon i Korekshon Kòrsou at this event which saw the dissolution of a Caribbean country on what date?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "10 October 2010"
+        ],
+        "gen_text_store": "",
+        "pid": "39",
+        "query": "The Curaçao Centre for Correction and Detention changed its name to Sentro di Detenshon i Korekshon Kòrsou at this event which saw the dissolution of a Caribbean country on what date?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 40,
+        "question": "What conference champions were putted against each other in the first NBA Finals in which the Orlando Magic's played?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Eastern Conference champion Orlando Magic against the Western Conference champion Houston Rockets."
+        ],
+        "gen_text_store": "",
+        "pid": "40",
+        "query": "What conference champions were putted against each other in the first NBA Finals in which the Orlando Magic's played?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 41,
+        "question": "What Australian beer is a British style pale ale whose label features a character conceived in 1926? When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Ballarat Bitter is a 4.9% (abv) Australian beer"
+        ],
+        "gen_text_store": "",
+        "pid": "41",
+        "query": "What Australian beer is a British style pale ale whose label features a character conceived in 1926? When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 42,
+        "question": "Who was born first, Chester Bennington or Mikael Stanne?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Bengt Mikael Stanne"
+        ],
+        "gen_text_store": "",
+        "pid": "42",
+        "query": "Who was born first, Chester Bennington or Mikael Stanne?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 43,
+        "question": "What country of origin does Robert brothers and Jacques Charles have in common?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "French"
+        ],
+        "gen_text_store": "",
+        "pid": "43",
+        "query": "What country of origin does Robert brothers and Jacques Charles have in common?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 44,
+        "question": "What character did Selina Giles play in the 2005 dystopian political thriller named \"V for Vendetta\"?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Evey's mother"
+        ],
+        "gen_text_store": "",
+        "pid": "44",
+        "query": "What character did Selina Giles play in the 2005 dystopian political thriller named \"V for Vendetta\"?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 45,
+        "question": "Dionne Bunsha worked most recently for the magazine published by what company?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "The Hindu Group"
+        ],
+        "gen_text_store": "",
+        "pid": "45",
+        "query": "Dionne Bunsha worked most recently for the magazine published by what company?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 46,
+        "question": "The Atik Valide Mosque and Valens Aqueduct are found in what country?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Turkey"
+        ],
+        "gen_text_store": "",
+        "pid": "46",
+        "query": "The Atik Valide Mosque and Valens Aqueduct are found in what country?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 47,
+        "question": "Are both Helen Dunmore and M. P. Shiel of West Indian descent?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "no"
+        ],
+        "gen_text_store": "",
+        "pid": "47",
+        "query": "Are both Helen Dunmore and M. P. Shiel of West Indian descent?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 48,
+        "question": "What band wrote the song \"Blue Letter\" and was inducted into the Rock and Roll Hall of Fame in 1998?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Fleetwood Mac"
+        ],
+        "gen_text_store": "",
+        "pid": "48",
+        "query": "What band wrote the song \"Blue Letter\" and was inducted into the Rock and Roll Hall of Fame in 1998?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 49,
+        "question": "the municipality of Mirditë is in a country that had how many inhabitants in 2016 ?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "almost 3 million"
+        ],
+        "gen_text_store": "",
+        "pid": "49",
+        "query": "the municipality of Mirditë is in a country that had how many inhabitants in 2016 ?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 50,
+        "question": "Which film was Oscar nominated, LaLee's Kin: The Legacy of Cotton or Gimme Shelter, the 1970 Rolling Stones documentary?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "LaLee's Kin: The Legacy of Cotton"
+        ],
+        "gen_text_store": "",
+        "pid": "50",
+        "query": "Which film was Oscar nominated, LaLee's Kin: The Legacy of Cotton or Gimme Shelter, the 1970 Rolling Stones documentary?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 51,
+        "question": "What is the name of the Isles who were led by Aonghus Mór and covered a total land area of over 8300 km2?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Kingdom of the Isles"
+        ],
+        "gen_text_store": "",
+        "pid": "51",
+        "query": "What is the name of the Isles who were led by Aonghus Mór and covered a total land area of over 8300 km2?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 52,
+        "question": "Which part of Handel's Messiah covers the birth of a child who, according to the gospels of Luke and Matthew, was born in Bethlehem?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Part I"
+        ],
+        "gen_text_store": "",
+        "pid": "52",
+        "query": "Which part of Handel's Messiah covers the birth of a child who, according to the gospels of Luke and Matthew, was born in Bethlehem?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 53,
+        "question": "What Danish drama thriller which takes place in both Denmark and Africa was produced by Sisse Graum Jørgensen?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "In a Better World"
+        ],
+        "gen_text_store": "",
+        "pid": "53",
+        "query": "What Danish drama thriller which takes place in both Denmark and Africa was produced by Sisse Graum Jørgensen?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 54,
+        "question": "Katie sagona is known as what kind of actor because she was a child acting on stage or in motion pictures or television?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "child actor"
+        ],
+        "gen_text_store": "",
+        "pid": "54",
+        "query": "Katie sagona is known as what kind of actor because she was a child acting on stage or in motion pictures or television?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 55,
+        "question": "What was the name of the commander who captured all of the French ships that varied in size?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Joshua Rowley"
+        ],
+        "gen_text_store": "",
+        "pid": "55",
+        "query": "What was the name of the commander who captured all of the French ships that varied in size?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 56,
+        "question": "Ralph Hefferline was a psychology professor at a university that is located in what city?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "New York City"
+        ],
+        "gen_text_store": "",
+        "pid": "56",
+        "query": "Ralph Hefferline was a psychology professor at a university that is located in what city?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 57,
+        "question": "Both Bo Diddley and The Yardbirds played which common genre of music during their careers?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "rock and roll"
+        ],
+        "gen_text_store": "",
+        "pid": "57",
+        "query": "Both Bo Diddley and The Yardbirds played which common genre of music during their careers?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 58,
+        "question": "WHere are both Sanming and Jiutai District located?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "China"
+        ],
+        "gen_text_store": "",
+        "pid": "58",
+        "query": "WHere are both Sanming and Jiutai District located?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 59,
+        "question": "What production company was founded by George Balanchine to create a live stage version of the 1942 film Casablanca?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "The Los Angeles Dance Theater"
+        ],
+        "gen_text_store": "",
+        "pid": "59",
+        "query": "What production company was founded by George Balanchine to create a live stage version of the 1942 film Casablanca?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 60,
+        "question": "Josey Scott and Ian Watkins were both promising musicians. Which of these talented men was incarcerated, impacting his career with a rock band?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Lostprophets disbanded in 2013 after Watkins was charged with sexual offences in late 2012."
+        ],
+        "gen_text_store": "",
+        "pid": "60",
+        "query": "Josey Scott and Ian Watkins were both promising musicians. Which of these talented men was incarcerated, impacting his career with a rock band?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 61,
+        "question": "who was the anthropologist who thought that the plaster casts that were discovered by Paul Freeman were a critical piece of evidence?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Don Jeffrey \"Jeff\" Meldrum (born May 24, 1958) is a Professor of Anatomy and Anthropology"
+        ],
+        "gen_text_store": "",
+        "pid": "61",
+        "query": "who was the anthropologist who thought that the plaster casts that were discovered by Paul Freeman were a critical piece of evidence?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 62,
+        "question": "What are the names of the co-directors of the psychological horror film starring Emily Browning and Elizabeth Banks?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Charles and Thomas Guard"
+        ],
+        "gen_text_store": "",
+        "pid": "62",
+        "query": "What are the names of the co-directors of the psychological horror film starring Emily Browning and Elizabeth Banks?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 63,
+        "question": "Where is the first major improved highway located?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Wheeling, West Virginia"
+        ],
+        "gen_text_store": "",
+        "pid": "63",
+        "query": "Where is the first major improved highway located?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 64,
+        "question": "Which store in Gurney Paragon was founded in Belgium in 1926?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Godiva"
+        ],
+        "gen_text_store": "",
+        "pid": "64",
+        "query": "Which store in Gurney Paragon was founded in Belgium in 1926?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 65,
+        "question": "Which Star of British-Canadian-American satirical comedy, co starting with Ricky Gervais, began his career in sketch comedy series\"Full Frontal\" ?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Eric Banadinović"
+        ],
+        "gen_text_store": "",
+        "pid": "65",
+        "query": "Which Star of British-Canadian-American satirical comedy, co starting with Ricky Gervais, began his career in sketch comedy series\"Full Frontal\" ?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 66,
+        "question": "Löwenbräu and Bürgerbräukeller are both located where?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Germany"
+        ],
+        "gen_text_store": "",
+        "pid": "66",
+        "query": "Löwenbräu and Bürgerbräukeller are both located where?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 67,
+        "question": "Progress MS-09 was used to resupply the satellite that first launched into orbit in what year?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1998"
+        ],
+        "gen_text_store": "",
+        "pid": "67",
+        "query": "Progress MS-09 was used to resupply the satellite that first launched into orbit in what year?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 68,
+        "question": "H-63 is a highway that runs near the county seat of what Michigan county?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Chippewa County"
+        ],
+        "gen_text_store": "",
+        "pid": "68",
+        "query": "H-63 is a highway that runs near the county seat of what Michigan county?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 69,
+        "question": "Who used a Barrack buster to shoot down a British Army Lynx helicopterWhen ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "IRA"
+        ],
+        "gen_text_store": "",
+        "pid": "69",
+        "query": "Who used a Barrack buster to shoot down a British Army Lynx helicopterWhen ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 70,
+        "question": "What liberal arts college has their athletic teams named the Lincoln Memorial Railsplitters?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Lincoln Memorial University"
+        ],
+        "gen_text_store": "",
+        "pid": "70",
+        "query": "What liberal arts college has their athletic teams named the Lincoln Memorial Railsplitters?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 71,
+        "question": "The Lucy Maud Montgomery novel about the character Anne Shirley was first translated into Japanese by what woman?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Hanako Muraoka"
+        ],
+        "gen_text_store": "",
+        "pid": "71",
+        "query": "The Lucy Maud Montgomery novel about the character Anne Shirley was first translated into Japanese by what woman?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 72,
+        "question": "Did Yasuzo Masumura and Pitof hail from the same country and professional career?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "no"
+        ],
+        "gen_text_store": "",
+        "pid": "72",
+        "query": "Did Yasuzo Masumura and Pitof hail from the same country and professional career?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 73,
+        "question": "What did Eric Radomski produce that premiered on Disney XD on May 26, 2013?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Avengers Assemble"
+        ],
+        "gen_text_store": "",
+        "pid": "73",
+        "query": "What did Eric Radomski produce that premiered on Disney XD on May 26, 2013?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 74,
+        "question": "What man is credited eith inventing both the Leyden jar and the Tribometer?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Pieter van Musschenbroek"
+        ],
+        "gen_text_store": "",
+        "pid": "74",
+        "query": "What man is credited eith inventing both the Leyden jar and the Tribometer?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 75,
+        "question": "What type of auto racing, performed on clay or dirt surfaced oval tracks, is run for the Australian Street Stock Championship? When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Dirt track racing"
+        ],
+        "gen_text_store": "",
+        "pid": "75",
+        "query": "What type of auto racing, performed on clay or dirt surfaced oval tracks, is run for the Australian Street Stock Championship? When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 76,
+        "question": "Forest Hill, Texas is a suburb of which fifth-largest city in the state?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Fort Worth"
+        ],
+        "gen_text_store": "",
+        "pid": "76",
+        "query": "Forest Hill, Texas is a suburb of which fifth-largest city in the state?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 77,
+        "question": "What was the slogan  that came about from the idea of Lebensraum which had its most extreme form supported by the Nazi Party until the end of World War II?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Blood and soil"
+        ],
+        "gen_text_store": "",
+        "pid": "77",
+        "query": "What was the slogan  that came about from the idea of Lebensraum which had its most extreme form supported by the Nazi Party until the end of World War II?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 78,
+        "question": "Which Bob Stoops coached team beat the 2016 Auburn Tigers football team?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "2016 Oklahoma Sooners football team"
+        ],
+        "gen_text_store": "",
+        "pid": "78",
+        "query": "Which Bob Stoops coached team beat the 2016 Auburn Tigers football team?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 79,
+        "question": "According to the 2010 census, what was the population of the city after which the vice president, in April 1813, was named?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "5,922"
+        ],
+        "gen_text_store": "",
+        "pid": "79",
+        "query": "According to the 2010 census, what was the population of the city after which the vice president, in April 1813, was named?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 80,
+        "question": "Which was published first, Take It Easy or Personal Preference?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Take It Easy"
+        ],
+        "gen_text_store": "",
+        "pid": "80",
+        "query": "Which was published first, Take It Easy or Personal Preference?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 81,
+        "question": "Wapping has the oldest riverside tavern, dating back from when?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "from around 1520"
+        ],
+        "gen_text_store": "",
+        "pid": "81",
+        "query": "Wapping has the oldest riverside tavern, dating back from when?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 82,
+        "question": "Who was a higher ranked tennis player: Paola Suárez or Michael Venus?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Paola Suárez"
+        ],
+        "gen_text_store": "",
+        "pid": "82",
+        "query": "Who was a higher ranked tennis player: Paola Suárez or Michael Venus?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 83,
+        "question": "Are Joe Orton and Bernard-Marie Koltès both playwrights ?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "yes"
+        ],
+        "gen_text_store": "",
+        "pid": "83",
+        "query": "Are Joe Orton and Bernard-Marie Koltès both playwrights ?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 84,
+        "question": "What American bluegrass singer performed the song Restless with The New Nashville Cats?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Mark O'Connor"
+        ],
+        "gen_text_store": "",
+        "pid": "84",
+        "query": "What American bluegrass singer performed the song Restless with The New Nashville Cats?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 85,
+        "question": "Who lived longer- Bernard-Marie Koltès or Philip José Farmer?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Philip José Farmer"
+        ],
+        "gen_text_store": "",
+        "pid": "85",
+        "query": "Who lived longer- Bernard-Marie Koltès or Philip José Farmer?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 86,
+        "question": "Paul DeBoy is known for an appearance in the Western action-adventure game developed by which company?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Rockstar San Diego"
+        ],
+        "gen_text_store": "",
+        "pid": "86",
+        "query": "Paul DeBoy is known for an appearance in the Western action-adventure game developed by which company?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 87,
+        "question": "Are either The Pogues or Pillar an electronic dance music group?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "no"
+        ],
+        "gen_text_store": "",
+        "pid": "87",
+        "query": "Are either The Pogues or Pillar an electronic dance music group?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 88,
+        "question": "What university did Bill Daly graduate that Gary Bettman also graduated from?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "New York University School of Law"
+        ],
+        "gen_text_store": "",
+        "pid": "88",
+        "query": "What university did Bill Daly graduate that Gary Bettman also graduated from?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 89,
+        "question": "Who was born first, Bruce Conner or Nils Gaup?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Bruce Conner"
+        ],
+        "gen_text_store": "",
+        "pid": "89",
+        "query": "Who was born first, Bruce Conner or Nils Gaup?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 90,
+        "question": "What is one of the most successful retro-clones that is no longer supported by Wizards of the Coast?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Old School Reference and Index Compilation"
+        ],
+        "gen_text_store": "",
+        "pid": "90",
+        "query": "What is one of the most successful retro-clones that is no longer supported by Wizards of the Coast?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 91,
+        "question": "Name one of the Judges of Spring Baking Championship television series who was born on December 17, 1974 ?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Jeffrey Adam \"Duff\" Goldman"
+        ],
+        "gen_text_store": "",
+        "pid": "91",
+        "query": "Name one of the Judges of Spring Baking Championship television series who was born on December 17, 1974 ?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 92,
+        "question": "What was the breakthrough role of the actor starring in Good Boy! and was a native of Atlanta?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Tai Frasier in \"Clueless\""
+        ],
+        "gen_text_store": "",
+        "pid": "92",
+        "query": "What was the breakthrough role of the actor starring in Good Boy! and was a native of Atlanta?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 93,
+        "question": "College Humor is a 1933 American pre-Code musical comedy film that starred what American singer and actor who has a trademark warm bass-baritone voice?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Harry Lillis \"Bing\" Crosby Jr."
+        ],
+        "gen_text_store": "",
+        "pid": "93",
+        "query": "College Humor is a 1933 American pre-Code musical comedy film that starred what American singer and actor who has a trademark warm bass-baritone voice?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 94,
+        "question": "Between Greyia and Calibanus, which genus contains more species?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Greyia"
+        ],
+        "gen_text_store": "",
+        "pid": "94",
+        "query": "Between Greyia and Calibanus, which genus contains more species?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 95,
+        "question": "What company has a headquarters in Whitley, Convernty, United Kingdom?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Jaguar Land Rover"
+        ],
+        "gen_text_store": "",
+        "pid": "95",
+        "query": "What company has a headquarters in Whitley, Convernty, United Kingdom?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 96,
+        "question": "Who starred as an American attorney in Grey Gardens?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Ken Howard"
+        ],
+        "gen_text_store": "",
+        "pid": "96",
+        "query": "Who starred as an American attorney in Grey Gardens?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 97,
+        "question": "Was Princess Charlotte of Cambridge born before or after the repealing of the Royal Marriages Act 1772?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "after"
+        ],
+        "gen_text_store": "",
+        "pid": "97",
+        "query": "Was Princess Charlotte of Cambridge born before or after the repealing of the Royal Marriages Act 1772?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 98,
+        "question": "Hermann Wilhelm Göring was a veteran fighter pilot in a war that ended in what year?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "1918"
+        ],
+        "gen_text_store": "",
+        "pid": "98",
+        "query": "Hermann Wilhelm Göring was a veteran fighter pilot in a war that ended in what year?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    },
+    {
+        "idx": 99,
+        "question": "Ethel Winter worked with which avant-garde theater director?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "answer": [
+            "Jean Erdman"
+        ],
+        "gen_text_store": "",
+        "pid": "99",
+        "query": "Ethel Winter worked with which avant-garde theater director?When ready, output the final answer enclosed in <answer> and </answer> tags. Do not generate any content after the </answer> tag.",
+        "image": null
+    }
+]

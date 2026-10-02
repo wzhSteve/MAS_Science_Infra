@@ -195,15 +195,22 @@ def run_centralized_episode(
     router_ids_run = list(compiled.fan_out.get("planner") or [])
     if not router_ids_run and router_id:
         router_ids_run = [router_id]
-    router_spec = compiled.routers.get(router_id) if router_id else None
+    direct_executor = ""
     if not router_ids_run:
-        return EpisodeRaw(messages=[], error="centralized topology requires a router")
-    for rid in router_ids_run:
-        if rid not in compiled.routers:
-            return EpisodeRaw(messages=[], error=f"router {rid!r} missing from compiled graph")
-    if router_spec is None:
-        router_spec = compiled.routers[router_ids_run[0]]
-        router_id = router_ids_run[0]
+        candidate = str(compiled.message_out.get("planner") or "")
+        node = compiled.agents.get(candidate) if candidate else None
+        profile = dict(getattr(node, "profile", None) or {}) if node else {}
+        kind = getattr(node, "kind", None) if node else None
+        if node is not None and (kind in ("blank", "tool") or str(profile.get("backend") or "") == "user_space"):
+            direct_executor = candidate
+        else:
+            return EpisodeRaw(messages=[], error="centralized topology requires a router")
+    else:
+        for rid in router_ids_run:
+            if rid not in compiled.routers:
+                return EpisodeRaw(messages=[], error=f"router {rid!r} missing from compiled graph")
+        if router_id not in compiled.routers:
+            router_id = router_ids_run[0]
 
     blank_ids = {aid for aid, node in compiled.agents.items() if getattr(node, "kind", None) == "blank"}
 
@@ -219,6 +226,11 @@ def run_centralized_episode(
     done = False
 
     while turn < max_turns and not done:
+        from .user_gateway.sandbox import eval_cancelled
+
+        if eval_cancelled():
+            error = "用户停止"
+            break
         turn += 1
         # 1. planner window -> plan_step
         if last_feedback:
@@ -227,13 +239,19 @@ def run_centralized_episode(
                 "Decide the next step. Output JSON with keys: next, args, sub_goal, done."
             )
         else:
-            all_cands = []
-            for rid in router_ids_run:
-                all_cands.extend(list(compiled.routers[rid].candidates or []))
-            user = (
-                f"{question}\n\nDecide the next step and pick one tool from "
-                f"{all_cands}. Output JSON with keys: next, args, sub_goal, done."
-            )
+            if router_ids_run:
+                all_cands = []
+                for rid in router_ids_run:
+                    all_cands.extend(list(compiled.routers[rid].candidates or []))
+                user = (
+                    f"{question}\n\nDecide the next step and pick one tool from "
+                    f"{all_cands}. Output JSON with keys: next, args, sub_goal, done."
+                )
+            else:
+                user = (
+                    f"{question}\n\nDecide the next step. next must be {direct_executor}. "
+                    "Output JSON with keys: next, args, sub_goal, done."
+                )
         try:
             planner_profile = dict(getattr(planner_node, "profile", None) or {})
             if str(planner_profile.get("backend") or "") == "user_space":
@@ -271,6 +289,8 @@ def run_centralized_episode(
                 only.extend(list(compiled.routers[rid].candidates or []))
             if len(only) == 1:
                 nxt = only[0]
+            elif direct_executor:
+                nxt = direct_executor
         p_payload = {
             "next": nxt,
             "args": args,
@@ -282,7 +302,7 @@ def run_centralized_episode(
                 p_payload[extra] = p_json[extra]
         try:
             plan_msg = make_message(
-                task_id=task_id, turn=turn, src="planner", dst=router_id or router_ids_run[0],
+                task_id=task_id, turn=turn, src="planner", dst=router_id or direct_executor or "orchestrator",
                 kind="plan_step", payload=p_payload,
             )
         except ValueError as ve:
@@ -317,10 +337,26 @@ def run_centralized_episode(
             last_feedback = f"planner produced invalid plan_step: {reason}"
             continue
 
-        # 2. router window(s) -> route_decision (multi-router fan-out when fan_out > 1)
+        # 2. Dispatch the executor window. A declared router still selects
+        # candidates. A user wrap with planner → executor has no router: the
+        # planner's next (or the message edge) is invoked directly.
         hops: List[tuple] = []  # (invoke_msg, agent_id, args)
         strict = len(router_ids_run) == 1
         fail_reason = ""
+        if not router_ids_run:
+            target = str(p_payload.get("next") or "") or direct_executor
+            if target not in compiled.agents:
+                target = direct_executor
+            hop_args = args if isinstance(args, dict) else {}
+            if target and target in compiled.agents:
+                invoke_msg = make_message(
+                    task_id=task_id, turn=turn, src="planner", dst=target,
+                    kind="tool_invoke", payload=hop_args,
+                    trace_ref=plan_msg.msg_id,
+                )
+                hops.append((invoke_msg, target, hop_args))
+            else:
+                fail_reason = "planner next is not an executor window"
         for rid in router_ids_run:
             rs = compiled.routers[rid]
             cand_runner = None
@@ -382,11 +418,12 @@ def run_centralized_episode(
                 )
                 hops.append((invoke_msg, sel, args if isinstance(args, dict) else {}))
         if not hops:
-            last_feedback = fail_reason or "no router selected a candidate"
+            last_feedback = fail_reason or "no executor window selected"
+            src = router_ids_run[0] if router_ids_run else "planner"
             fb = make_message(
-                task_id=task_id, turn=turn, src=router_ids_run[0], dst="planner",
+                task_id=task_id, turn=turn, src=src, dst="planner",
                 kind="feedback",
-                payload={"reason": last_feedback, "attributed_to": router_ids_run[0]},
+                payload={"reason": last_feedback, "attributed_to": src},
                 trace_ref=plan_msg.msg_id,
             )
             all_messages.append(fb.model_dump())
@@ -399,9 +436,10 @@ def run_centralized_episode(
             in_schema = profile.get("input_schema") or DEFAULT_INPUT_SCHEMA
             out_schema = profile.get("output_schema") or DEFAULT_OUTPUT_SCHEMA
             wrapped = targs if isinstance(targs, dict) else {"input": str(targs)}
-            if "input" not in wrapped:
+            user_space = str(profile.get("backend") or "") == "user_space"
+            if "input" not in wrapped and not user_space:
                 wrapped = {"input": str(wrapped.get("output") or wrapped.get("query") or wrapped)}
-            ok_in, why = validate_json_schema(wrapped, in_schema)
+            ok_in, why = (True, "") if user_space else validate_json_schema(wrapped, in_schema)
             dst = verifier_id or "verifier"
             if not ok_in:
                 return make_message(
@@ -487,6 +525,10 @@ def run_centralized_episode(
                             kind="tool_result", payload=payload, trace_ref=prev_msg.msg_id,
                         )
                 except Exception as e:  # noqa: BLE001
+                    from .user_gateway.sandbox import EvalCancelled
+
+                    if isinstance(e, EvalCancelled):
+                        raise
                     return make_message(
                         task_id=task_id, turn=turn, src=aid, dst=dst,
                         kind="tool_result",

@@ -87,6 +87,10 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
         ids = [a["id"] for a in built["workflow"]["agents"]]
         self.assertEqual(ids, ["planner", "u_epc-aw-main__executor", "verifier"])
         self.assertNotIn("u_epc-aw-main__solver", ids)
+        labels = {a["id"]: a.get("label") for a in built["workflow"]["agents"]}
+        self.assertEqual(labels["planner"], "epc_aw_planner")
+        self.assertEqual(labels["verifier"], "epc_aw_verifier")
+        self.assertEqual(labels["u_epc-aw-main__executor"], "epc_aw_executor")
         wraps = [a.get("meta", {}).get("wraps") for a in built["workflow"]["agents"]]
         self.assertEqual(wraps, ["EPC-AW.Planner", "EPC-AW.Executor", "EPC-AW.Diagnoser"])
         report = validate_project("epc-aw-main")
@@ -94,6 +98,68 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
         spec, compiled = compile_project("epc-aw-main")
         self.assertTrue(compiled.ok, compiled.reason)
         self.assertTrue(spec.is_executable()[0])
+        self.assertEqual(list(spec.routers or []), [])
+        self.assertNotIn("_implicit_route", compiled.routers)
+        executor_id = "u_epc-aw-main__executor"
+        self.assertEqual(compiled.message_out.get("planner"), executor_id)
+        site_ids = [s.anchor.agent_id for s in (spec.sampling.sites or [])]
+        self.assertEqual(site_ids, ["planner", executor_id, "verifier"])
+        kinds = [a.kind for a in spec.agents if a.id == executor_id]
+        self.assertEqual(kinds, ["blank"])
+
+    def test_direct_executor_is_a_sampling_window(self) -> None:
+        from workflow.archive import Archive, register_archive
+        from workflow.centralized_runtime import MockWindowLLM, run_centralized_episode
+        from workflow.memory import MemoryStore
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+        from workflow.user_gateway.validate import compile_project
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        spec, compiled = compile_project("epc-aw-main")
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        raw = run_centralized_episode(
+            {"id": "epc-direct", "question": "1+1"},
+            None,
+            register_archive(Archive()),
+            spec,
+            MemoryStore(),
+            compiled,
+            window_llm=MockWindowLLM({}),
+        )
+        self.assertIsNone(raw.error, raw.error)
+        events = list(raw.window_events or [])
+        executor_id = "u_epc-aw-main__executor"
+        self.assertTrue(
+            any(e.get("agent_id") == "planner" and e.get("kind") == "after_agent_turn" for e in events),
+            events,
+        )
+        self.assertTrue(
+            any(e.get("agent_id") == executor_id and e.get("kind") == "after_agent_turn" for e in events),
+            events,
+        )
+        self.assertTrue(
+            any(e.get("agent_id") == "verifier" and e.get("kind") == "after_verifier" for e in events),
+            events,
+        )
+        self.assertFalse(any(e.get("agent_id") == "route_exec" for e in events), events)
+        from workflow.runtime import run_compiled_episode
+
+        routed = run_compiled_episode(
+            {"id": "epc-direct", "question": "1+1"},
+            None,
+            register_archive(Archive()),
+            spec,
+            MemoryStore(),
+            runner=None,  # type: ignore[arg-type]
+            window_llm=MockWindowLLM({}),
+        )
+        self.assertIsNone(routed.error, routed.error)
+        routed_ids = {e.get("agent_id") for e in (routed.window_events or [])}
+        self.assertIn(executor_id, routed_ids)
+        self.assertNotIn("route_exec", routed_ids)
 
     def test_apply_upgrades_generic_stub(self) -> None:
         from science_infra.control.user_projects import apply_project
@@ -145,6 +211,55 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
         with self.assertRaises(RuntimeError):
             ctx.solver.solve("1+1")
 
+    def test_runtime_yaml_written_and_max_steps_applied(self) -> None:
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+        from workflow.user_gateway.paths import project_dir
+        from science_infra.control.user_projects import get_project_runtime, put_project_runtime
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        runtime_path = project_dir("epc-aw-main") / "contracts" / "runtime.yaml"
+        self.assertTrue(runtime_path.is_file())
+        saved = put_project_runtime(
+            "epc-aw-main",
+            {"n": 3, "max_steps": 7, "max_time": 100, "max_tokens": 512, "temperature": 0.2},
+        )
+        self.assertEqual(saved["n"], 3)
+        self.assertEqual(saved["max_steps"], 7)
+        self.assertIn("Bing_Search_Tool", saved["enabled_tools"])
+        self.assertIn("Web_Fetch_Tool", saved["enabled_tools"])
+        self.assertNotIn("Google_Search_Tool", saved["enabled_tools"])
+        loaded = get_project_runtime("epc-aw-main")
+        self.assertEqual(loaded["max_steps"], 7)
+        os.environ.pop("SCIENCE_EPC_AW_N", None)
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        ctx = sys.modules["context"].get_episode_context(reset=True)
+        self.assertEqual(ctx.max_steps, 7)
+        self.assertEqual(sys.modules["context"]._plan_n(), 3)
+
+    def test_failed_tool_is_not_rewritten_to_base_generator(self) -> None:
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        ctx = sys.modules["context"].get_episode_context(reset=True)
+        from types import SimpleNamespace
+
+        def _one(*_args: object, **_kwargs: object) -> object:
+            return SimpleNamespace(context="c", sub_goal="s", tool_name="Python_Coder_Tool"), ""
+
+        ctx.planner.generate_next_step = _one  # type: ignore[method-assign]
+        ctx.failed_tools = ["Python_Coder_Tool"]
+        plan = ctx.plan_window({"kind": "plan_step", "dst": "planner", "payload": {"question": "1+1"}})
+        tool_name = plan["payload"]["args"]["tool_name"]
+        self.assertEqual(tool_name, "Python_Coder_Tool")
+        self.assertNotIn("failed_tool_skip", plan["payload"].get("trace") or {})
+
     def test_illegal_tool_skips_import(self) -> None:
         from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
         from workflow.user_gateway.loader import load_entry_module
@@ -179,6 +294,114 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
         bts = plan["payload"]["trace"].get("bts") or {}
         self.assertGreaterEqual(int(bts.get("n") or 0), 2)
         self.assertIn(str(bts.get("selected")), {"0", "1"})
+
+    def test_diagnosis_receives_dual_plans(self) -> None:
+        from types import SimpleNamespace
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        ctx = sys.modules["context"].get_episode_context(reset=True)
+        planner_plan = SimpleNamespace(context="p", sub_goal="planner-goal", tool_name="Python_Coder_Tool")
+        bts_plan = SimpleNamespace(context="b", sub_goal="bts-goal", tool_name="Base_Generator_Tool")
+        ctx.planner_selected_index = "0"
+        ctx.bts_selected_index = "1"
+        ctx.planner_selected_plan = planner_plan
+        ctx.bts_selected_plan = bts_plan
+        ctx.last_plan = bts_plan
+        ctx.last_tool_output = "mock-out"
+        ctx.last_sub_goal = "target"
+        ctx.step_count = 1
+        ctx.system_memory.set_outline({"1": "target", "2": "later"})
+        calls: list = []
+
+        def _capture(*args, **kwargs):
+            calls.append(args)
+            return "diagnosis", "constraint"
+
+        ctx.diagnoser.epc_aw_diagnosis = _capture
+        verify = ctx.verify_window({"kind": "verify", "dst": "verifier", "payload": {}})
+        self.assertFalse(verify["payload"].get("ready_to_stop"))
+        self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0][0], planner_plan)
+        self.assertIs(calls[0][1], bts_plan)
+
+    def test_outline_prefers_key_one(self) -> None:
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        ctx_mod = sys.modules["context"]
+        memory = type("M", (), {})()
+        memory.get_outline = lambda: {"10": "later step", "1": "first target", "2": "second"}
+        self.assertEqual(ctx_mod._first_outline_target(memory), "first target")
+
+    def test_reset_between_questions(self) -> None:
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        ctx = sys.modules["context"].get_episode_context(reset=True)
+        ctx.plan_window({"kind": "plan_step", "dst": "planner", "payload": {"question": "q1"}})
+        ctx.system_memory.add_obtained_information("leak")
+        self.assertTrue(ctx._analyzed)
+        self.assertGreater(ctx.step_count, 0)
+        ctx.plan_window({"kind": "plan_step", "dst": "planner", "payload": {"question": "q2-different"}})
+        self.assertEqual(ctx.step_count, 1)
+        self.assertNotIn("leak", ctx.system_memory.get_obtained_information())
+
+    def test_threadsafe_timeout_patch_off_main_thread(self) -> None:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+
+        self._drop_upload("epc-aw-main")
+        # Point upload MAS to the reference tree so Executor imports succeed.
+        root = ROOT / "ref_Rep" / "EPC-AW"
+        upload = self.user_root / "projects" / "epc-aw-main" / "upload" / "EPC-AW-main"
+        if upload.exists():
+            import shutil
+
+            shutil.rmtree(upload)
+        upload.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(root, upload)
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        sys.modules.pop("context", None)
+        old_mock = os.environ.get("SCIENCE_EPC_AW_MOCK")
+        os.environ["SCIENCE_EPC_AW_MOCK"] = "0"
+        os.environ["SCIENCE_EPC_AW_REQUIRE_REAL"] = ""
+        try:
+            load_entry_module("epc-aw-main", reload=True)
+            ctx_mod = sys.modules["context"]
+            ctx_mod._ensure_import_paths(root)
+            ctx_mod._install_threadsafe_timeouts()
+            from MAS.epc_aw.models.executor import Executor  # type: ignore
+
+            self.assertTrue(getattr(Executor.execute_tool_command, "_science_threadsafe", False))
+            executor = Executor(llm_engine_name="gpt-4o", root_cache_dir=str(Path(self._tmp.name) / "cache"), verbose=False)
+
+            def run_off_main() -> str:
+                self.assertIsNot(threading.current_thread(), threading.main_thread())
+                return str(executor.execute_tool_command("Python_Coder_Tool", "# no tool.execute() block"))
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(run_off_main).result(timeout=30)
+            self.assertNotIn("signal only works in main thread", result.lower())
+        finally:
+            if old_mock is None:
+                os.environ.pop("SCIENCE_EPC_AW_MOCK", None)
+            else:
+                os.environ["SCIENCE_EPC_AW_MOCK"] = old_mock
 
     def test_engine_maps_qwen_to_server_model(self) -> None:
         from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev

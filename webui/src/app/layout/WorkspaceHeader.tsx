@@ -1,5 +1,5 @@
-import { memo, useContext, useState } from 'react';
-import { ArrowLeft, Circle, Database, FlaskConical, Play, Save } from 'lucide-react';
+import { memo, useCallback, useContext, useEffect, useState } from 'react';
+import { ArrowLeft, Circle, Database, FlaskConical, Play, Save, Square } from 'lucide-react';
 import type { Bundle } from '../../shared/api/types';
 import { Button } from '../../shared/ui/button';
 import { useAction } from '../../shared/hooks/useAction';
@@ -8,6 +8,9 @@ import { useSettingsStatus } from '../../features/settings/components/SettingsSt
 import { isExperimentDraft, saveExperimentDrafts } from '../../features/experiment/model/saveExperiment';
 import { useCommandStatus, useRuntimeCommands, useTraining } from '../providers/RuntimeProvider';
 import { EvalDialog } from '../../features/mas/components/EvalDialog';
+import { masApi } from '../../features/mas/api';
+import { runtimeApi } from '../../features/runtime/api';
+import { usePollingResource } from '../../shared/hooks/usePollingResource';
 import { useConfirm } from '../../shared/feedback/useConfirm';
 import { useNotify } from '../../shared/feedback/useNotify';
 import { errorMessage } from '../../shared/api/http';
@@ -28,6 +31,21 @@ const ExperimentActions = memo(function ExperimentActions({ experimentId, onRelo
   const confirm = useConfirm();
   const notify = useNotify();
   const [evalOpen, setEvalOpen] = useState(false);
+  const [startedEvalId, setStartedEvalId] = useState<string | null>(null);
+  const loadEvalRuns = useCallback(
+    (signal: AbortSignal) => runtimeApi.trainingRuns(experimentId, signal, 0, 'eval'),
+    [experimentId],
+  );
+  const evalRuns = usePollingResource(`eval-header:${experimentId}`, loadEvalRuns, 2000);
+  const activeEval = evalRuns.data?.runs.find(item => item.running) || null;
+  const evalRunId = activeEval?.run_id || startedEvalId;
+  const evalRunning = Boolean(evalRunId);
+  const evalStopping = activeEval?.state === 'stopping' || action.pending === 'stop-eval';
+  useEffect(() => {
+    if (!startedEvalId || !evalRuns.data) return;
+    const row = evalRuns.data.runs.find(item => item.run_id === startedEvalId);
+    if (row && !row.running) setStartedEvalId(null);
+  }, [evalRuns.data, startedEvalId]);
   const busy = entries.some(item => item.busy) || action.pending !== null || runtime.pending !== null;
   useUnsavedChanges('experiment-save', { label: '保存实验', resource: 'runtime', dirty: false, busy: action.pending !== null });
   const openEval = async () => {
@@ -51,6 +69,20 @@ const ExperimentActions = memo(function ExperimentActions({ experimentId, onRelo
     }
     setEvalOpen(true);
   };
+  const stopEval = async () => {
+    if (!evalRunId) return;
+    const accepted = await confirm({
+      title: '停止测试？',
+      description: '将停止当前测试，并关闭本地 vLLM。',
+      confirmLabel: '停止测试',
+      tone: 'danger',
+    });
+    if (!accepted) return;
+    await action.run('stop-eval', async () => {
+      await masApi.evalStop(experimentId, evalRunId);
+      return '已停止测试，本地 vLLM 已关闭';
+    });
+  };
   return <>
     <span className={`experiment-save-status${dirty ? ' is-dirty' : ''}`} role="status">
       <Circle size={6} fill="currentColor" />{action.pending ? '保存中' : dirty ? '未保存' : '已保存'}
@@ -60,13 +92,17 @@ const ExperimentActions = memo(function ExperimentActions({ experimentId, onRelo
       <Button size="sm" disabled={busy || !dirty} loading={action.pending === 'save'} onClick={() => void action.run('save', async () => {
         await saveExperimentDrafts(registry, onReload);
       })}><Save size={14} />保存实验</Button>
-      <Button size="sm" disabled={busy} onClick={() => void openEval()}>测试</Button>
+      <Button size="sm" variant="primary" disabled={evalRunning ? evalStopping : busy} loading={evalStopping}
+        onClick={() => void (evalRunning ? stopEval() : openEval())}>
+        {evalRunning ? <Square size={14} /> : <Play size={14} />}{evalRunning ? '停止测试' : '开始测试'}
+      </Button>
       <Button size="sm" variant="primary" disabled={busy} loading={runtime.pending === 'train'}
         onClick={() => training.data?.running ? commands.viewTraining(training.data.runId || undefined) : void commands.startTrain()}>
         <Play size={14} />{training.data?.running ? '查看训练' : '开始训练'}
       </Button>
     </div>
     <EvalDialog experimentId={experimentId} open={evalOpen} onOpenChange={setEvalOpen} onStarted={(runId) => {
+      setStartedEvalId(runId);
       setEvalOpen(false);
       commands.viewTraining(runId);
     }} />

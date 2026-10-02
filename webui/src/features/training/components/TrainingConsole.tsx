@@ -12,6 +12,7 @@ import { InlineNotice } from '../../../shared/components/InlineNotice';
 import { request } from '../../../shared/api/http';
 import { runUrl, useRunLog } from '../model/useRunLog';
 import { DownloadText } from '../../../shared/components/DownloadText';
+import { masApi } from '../../mas/api';
 
 export const TRAIN_STATE: Record<string, string> = {
   preparing: '准备中', starting: '启动中', running: '运行中', stopping: '停止中',
@@ -111,6 +112,11 @@ const RunOutput = memo(function RunOutput({ experimentId, runId, active, picker,
       <span className="console-heading-spacer" />
       {state?.kind !== 'eval' && <Button size="sm" variant="ghost" onClick={() => onSamples(runId)}>采样结果</Button>}
       {state?.kind !== 'eval' && <Snapshot experimentId={experimentId} runId={runId} />}
+      {state?.running && state.kind === 'eval' && <Button size="sm" variant="danger"
+        disabled={state.state === 'stopping' && state.failure_stage !== 'stop' || action.pending !== null}
+        onClick={() => void action.run('stop', async () => { await masApi.evalStop(experimentId, runId); })}>
+        {state.failure_stage === 'stop' ? '重试停止' : state.state === 'stopping' ? '停止中…' : '停止测试'}
+      </Button>}
       {state?.running && state.kind !== 'eval' && <Button size="sm" variant="danger"
         disabled={state.state === 'stopping' && state.failure_stage !== 'stop' || action.pending !== null}
         onClick={() => void action.run('stop', async () => { await stopTrain(runId); })}>

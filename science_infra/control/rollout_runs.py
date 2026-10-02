@@ -7,9 +7,10 @@ import os
 import re
 import sys
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, Iterator, List, Literal, Optional
 from uuid import uuid4
 
 import yaml
@@ -35,6 +36,8 @@ router = APIRouter(tags=["rollout-runs"])
 RUN_ID = re.compile(r"^[a-f0-9]{16,64}$")
 _eval_guard = threading.Lock()
 _eval_running: Dict[str, str] = {}
+_eval_cancel: Dict[str, threading.Event] = {}
+_eval_release_llm: set[str] = set()
 
 
 class RolloutTask(BaseModel):
@@ -429,6 +432,61 @@ def eval_parquet_paths(bundle: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+_LLM_ENV_KEYS = (
+    "OPENAI_API_BASE_URL",
+    "OPENAI_API_BASE",
+    "OPENAI_BASE_URL",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "MODEL",
+    "MODEL_Name",
+    "MODEL_NAME",
+)
+
+
+@contextmanager
+def _bind_episode_llm(llm: Any) -> Iterator[None]:
+    """Overwrite process env so EPC-AW engines use this experiment endpoint, not Assistant/.env leftovers."""
+    prev = {key: os.environ.get(key) for key in _LLM_ENV_KEYS}
+    prev_extra = {
+        key: os.environ.get(key)
+        for key in (
+            "SCIENCE_EPC_AW_MAX_MODEL_LEN",
+            "SCIENCE_EPC_AW_MAX_COMPLETION",
+            "MAS_MAX_COMPLETION_TOKENS",
+        )
+    }
+    endpoint = str(getattr(llm, "endpoint", "") or "").rstrip("/")
+    model = str(getattr(llm, "model", "") or "").strip()
+    api_key = str(getattr(llm, "api_key", "") or "").strip() or "EMPTY"
+    try:
+        if endpoint:
+            os.environ["OPENAI_API_BASE"] = endpoint
+            os.environ["OPENAI_BASE_URL"] = endpoint
+            os.environ["OPENAI_API_BASE_URL"] = endpoint
+        if model:
+            os.environ["OPENAI_MODEL"] = model
+            os.environ["MODEL"] = model
+            os.environ["MODEL_Name"] = model
+            os.environ["MODEL_NAME"] = model
+        os.environ["OPENAI_API_KEY"] = api_key
+        os.environ.setdefault("SCIENCE_EPC_AW_MAX_MODEL_LEN", "8192")
+        os.environ.setdefault("SCIENCE_EPC_AW_MAX_COMPLETION", "2048")
+        os.environ.setdefault("MAS_MAX_COMPLETION_TOKENS", "2048")
+        yield
+    finally:
+        for key, value in prev.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        for key, value in prev_extra.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def _execute_question(
     experiment_id: str,
     workflow: Dict[str, Any],
@@ -437,6 +495,7 @@ def _execute_question(
     llm: Any,
     model_summary: Optional[Dict[str, Any]],
     model_public: Optional[Dict[str, Any]],
+    on_window: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     run_id = uuid4().hex
     started_at = _now()
@@ -449,7 +508,19 @@ def _execute_question(
     error: Optional[Dict[str, str]] = None
     traj = None
     status = "succeeded"
+    window_token = None
     try:
+        # Soft-reset EPC-AW / HIVE episode context so consecutive eval questions do not share outline/memory.
+        ctx_mod = sys.modules.get("context")
+        if ctx_mod is not None and hasattr(ctx_mod, "get_episode_context"):
+            try:
+                ctx_mod.get_episode_context(reset=True)
+            except Exception:
+                pass
+        if on_window is not None:
+            from workflow.user_gateway.loader import push_window_logger
+
+            window_token = push_window_logger(on_window)
         svc = ExecutionService(
             mock=False,
             spec_path=str(spec_path),
@@ -457,7 +528,8 @@ def _execute_question(
             agent_llms=_agent_llms(workflow),
             archive_root=str(exp_dir(experiment_id) / "artifacts" / "archives"),
         )
-        traj = svc.run(task)
+        with _bind_episode_llm(llm):
+            traj = svc.run(task)
         if traj.meta.get("error"):
             status = "failed"
             details = traj.meta.get("error_details") or {}
@@ -467,8 +539,17 @@ def _execute_question(
                 "message": str(traj.meta.get("error") or "执行失败"),
             }
     except Exception as exc:  # noqa: BLE001
+        from workflow.user_gateway.sandbox import EvalCancelled
+
+        if isinstance(exc, EvalCancelled):
+            raise
         status = "failed"
         error = {"stage": "graph_execution", "code": type(exc).__name__, "message": str(exc)[:1000]}
+    finally:
+        if window_token is not None:
+            from workflow.user_gateway.loader import pop_window_logger
+
+            pop_window_logger(window_token)
     finished_at = _now()
     summary = _summary_from(
         run_id=run_id,
@@ -514,30 +595,36 @@ def _clip(text: Any, limit: int = 180) -> str:
     return " ".join(str(text or "").split())[:limit]
 
 
+def _rule(title: str) -> str:
+    body = f" {title} "
+    return f"──{body}{'─' * max(8, 42 - len(body))}"
+
+
+def _kv(label: str, value: Any, *, limit: int = 220) -> str:
+    return f"{label:<6}{_clip(value, limit)}"
+
+
 def _payload_brief(kind: str, payload: Any) -> str:
     if not isinstance(payload, dict):
-        return _clip(payload, 320)
+        return _clip(payload, 160)
     if kind == "plan_step":
         return (
-            f"next={payload.get('next')} args={_clip(payload.get('args'), 180)} "
-            f"sub_goal={_clip(payload.get('sub_goal'), 120)} done={payload.get('done')}"
+            f"next={payload.get('next')}  "
+            f"goal={_clip(payload.get('sub_goal'), 80)}  done={payload.get('done')}"
         )
+    if kind == "tool_invoke":
+        return _clip(payload, 160)
     if kind == "tool_result":
-        return (
-            f"ok={payload.get('ok')} evidence={payload.get('evidence_type')} "
-            f"tier={payload.get('tier') or 'lite'} output={_clip(payload.get('output'), 720)}"
-        )
+        mark = "成功" if payload.get("ok") else "失败"
+        return f"{mark}  {_clip(payload.get('output'), 160)}"
     if kind == "verify":
-        return (
-            f"ok={payload.get('ok')} conclusion={payload.get('step_conclusion')} "
-            f"ready_to_stop={payload.get('ready_to_stop')} "
-            f"reason={_clip(payload.get('reason'), 180)}"
-        )
+        state = "可停" if payload.get("ready_to_stop") else str(payload.get("step_conclusion") or "")
+        return f"{state}  {_clip(payload.get('reason'), 120)}"
     if kind == "feedback":
-        return f"reason={_clip(payload.get('reason'), 220)} attributed_to={payload.get('attributed_to')}"
+        return _clip(payload.get("reason"), 160)
     if kind in ("final_answer", "error"):
-        return _clip(payload.get("text") or payload.get("answer") or payload.get("error") or payload, 320)
-    return _clip(payload, 320)
+        return _clip(payload.get("text") or payload.get("answer") or payload.get("error") or payload, 200)
+    return _clip(payload, 160)
 
 
 def _expand_payload_trace(prefix: str, payload: Any) -> List[str]:
@@ -546,7 +633,7 @@ def _expand_payload_trace(prefix: str, payload: Any) -> List[str]:
     trace = payload.get("trace")
     if not isinstance(trace, dict):
         return []
-    limit = _eval_log_limit()
+    limit = min(160, _eval_log_limit())
     lines: List[str] = []
     outline = trace.get("outline")
     if isinstance(outline, dict):
@@ -557,18 +644,15 @@ def _expand_payload_trace(prefix: str, payload: Any) -> List[str]:
     tool = trace.get("tool") or trace.get("tool_name")
     if tool:
         lines.append(f"{prefix}   tool = {_clip(tool, limit)}")
-    ctx = trace.get("context")
-    sub_goal = trace.get("sub_goal")
-    if ctx or sub_goal:
-        lines.append(f"{prefix}   context / sub_goal = {_clip(ctx or sub_goal, limit)}")
+    goal = trace.get("sub_goal") or trace.get("context")
+    if goal:
+        lines.append(f"{prefix}   goal = {_clip(goal, limit)}")
     bts = trace.get("bts")
     if isinstance(bts, dict):
         parts = [f"n={bts.get('n', '')}", f"selected={bts.get('selected', '')}"]
         if bts.get("planner_selected") is not None:
             parts.append(f"planner_selected={bts.get('planner_selected')}")
         lines.append(f"{prefix}   bts {' '.join(parts)}")
-    elif bts is not None:
-        lines.append(f"{prefix}   bts = {_clip(bts, limit)}")
     for key, label in (
         ("command", "command"),
         ("output", "output"),
@@ -584,27 +668,18 @@ def _expand_payload_trace(prefix: str, payload: Any) -> List[str]:
             continue
         if key == "llm_error":
             text = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False, default=str)
-            lines.append(f"{prefix}   {label} = {text}")
+            lines.append(f"{prefix}   {label} = {_clip(text, limit)}")
             continue
         if key == "outline_updated" and isinstance(val, dict):
-            items = [f"{k}={_clip(v, limit)}" for k, v in val.items()]
+            items = [f"{k}={_clip(v, 80)}" for k, v in val.items()]
             lines.append(f"{prefix}   {label} = {'; '.join(items)}")
             continue
         lines.append(f"{prefix}   {label} = {_clip(val, limit)}")
-    known = {
-        "outline", "tool", "tool_name", "context", "sub_goal", "bts",
-        "command", "output", "analysis", "explanation", "new_info",
-        "conclusion", "outline_updated", "llm_error",
-    }
-    for key, val in trace.items():
-        if key in known or val is None or val == "":
-            continue
-        lines.append(f"{prefix}   {key} = {_clip(val, limit)}")
     return lines
 
 
-def format_eval_trace(prefix: str, messages: List[Dict[str, Any]]) -> List[str]:
-    """One console line per agent hop: who sent what to whom."""
+def format_eval_trace(prefix: str, messages: List[Dict[str, Any]], *, detail: bool = False) -> List[str]:
+    """Compact hop list. Set detail=True to expand traces (download / debug)."""
     lines: List[str] = []
     for msg in messages:
         if not isinstance(msg, dict):
@@ -612,10 +687,12 @@ def format_eval_trace(prefix: str, messages: List[Dict[str, Any]]) -> List[str]:
         if msg.get("src") and msg.get("dst"):
             kind = str(msg.get("kind") or "message")
             lines.append(
-                f"{prefix} t{msg.get('turn', 0)} {msg.get('src')} -> {msg.get('dst')} {kind} "
+                f"{prefix} t{msg.get('turn', 0)}  "
+                f"{msg.get('src')} → {msg.get('dst')}  {kind}  "
                 f"{_payload_brief(kind, msg.get('payload'))}"
             )
-            lines.extend(_expand_payload_trace(prefix, msg.get("payload")))
+            if detail:
+                lines.extend(_expand_payload_trace(prefix, msg.get("payload")))
             continue
         role = str(msg.get("role") or msg.get("type") or "")
         calls = msg.get("tool_calls") if isinstance(msg.get("tool_calls"), list) else []
@@ -626,16 +703,16 @@ def format_eval_trace(prefix: str, messages: List[Dict[str, Any]]) -> List[str]:
                 fn = call.get("function") if isinstance(call.get("function"), dict) else {}
                 name = call.get("name") or fn.get("name") or "tool"
                 args = call.get("args") or call.get("arguments") or fn.get("arguments") or {}
-                lines.append(f"{prefix} {role or 'assistant'} -> {name} tool_call {_clip(args, 320)}")
+                lines.append(f"{prefix} {role or 'assistant'} → {name}  tool_call  {_clip(args, 160)}")
             continue
         if role == "tool":
             lines.append(
-                f"{prefix} {msg.get('name') or 'tool'} -> assistant tool_result {_clip(msg.get('content'), 320)}"
+                f"{prefix} {msg.get('name') or 'tool'} → assistant  tool_result  {_clip(msg.get('content'), 160)}"
             )
             continue
         content = msg.get("content")
         if role and content:
-            lines.append(f"{prefix} {role} {_clip(content, 320)}")
+            lines.append(f"{prefix} {role}  {_clip(content, 160)}")
     if not lines:
         lines.append(f"{prefix} （本次没有 agent 消息）")
     return lines
@@ -652,23 +729,83 @@ def _run_eval_job(
     model_public: Optional[Dict[str, Any]],
     split: str,
     parquet: str,
+    local_llm: bool = False,
 ) -> None:
     from rl.rewards.outcome import accuracy
 
     correct = 0
     scored = 0
+    cancel = _eval_cancel.get(run_id)
+    llm_started_by_us = False
+    from workflow.user_gateway.sandbox import EvalCancelled, bind_eval_cancel, reset_eval_cancel
+
+    cancel_token = bind_eval_cancel(cancel)
     try:
         total = len(tasks)
-        PROCS.append_log(experiment_id, run_id, f"MAS 测试 · {split} · {parquet} · {total} 条")
+        model_name = str((model_public or {}).get("model") or model_summary.get("name") or "")
+        model_base = str((model_public or {}).get("base_url") or "")
+        PROCS.append_log(experiment_id, run_id, _rule("MAS 测试"))
+        PROCS.append_log(experiment_id, run_id, _kv("数据集", f"{split} · {parquet}"))
+        PROCS.append_log(experiment_id, run_id, _kv("题目数", total))
+        if model_name or model_base:
+            PROCS.append_log(
+                experiment_id,
+                run_id,
+                _kv("模型", f"{model_name}" + (f" @ {model_base}" if model_base else "")),
+            )
+        if local_llm:
+            PROCS.append_log(experiment_id, run_id, _kv("本地", "正在检查 vLLM"))
+            try:
+                from science_infra.control.services import ensure_local_llm_ready
+
+                ready = ensure_local_llm_ready(experiment_id)
+                llm_started_by_us = bool(ready.get("started")) and not bool(ready.get("reused"))
+            except Exception as exc:  # noqa: BLE001
+                PROCS.append_log(experiment_id, run_id, _kv("失败", f"vLLM 启动失败：{exc}"))
+                PROCS.finish_inline(experiment_id, run_id, state="failed", message=str(exc)[:500], returncode=1)
+                return
+            models = "、".join(str(item) for item in (ready.get("models") or []))
+            state = "已在服务" if ready.get("reused") else "已启动"
+            PROCS.append_log(
+                experiment_id,
+                run_id,
+                _kv(
+                    "vLLM",
+                    f"{state} {ready.get('base_url') or ''}" + (f" · {models}" if models else ""),
+                ),
+            )
         for index, task in enumerate(tasks, start=1):
-            question = _clip(task.get("question"), 360)
-            PROCS.append_log(experiment_id, run_id, f"[{index}/{total}] 开始 {task.get('id') or '-'} {question}")
+            if cancel is not None and cancel.is_set():
+                PROCS.append_log(experiment_id, run_id, "")
+                PROCS.append_log(experiment_id, run_id, _rule("已停止"))
+                PROCS.append_log(experiment_id, run_id, _kv("统计", f"已完成 {index - 1}/{total} 题后停止"))
+                PROCS.finish_inline(
+                    experiment_id,
+                    run_id,
+                    state="cancelled",
+                    message=f"用户停止 · 已完成 {index - 1}/{total}",
+                    returncode=0,
+                )
+                return
+            question = _clip(task.get("question"), 280)
+            PROCS.append_log(experiment_id, run_id, "")
+            PROCS.append_log(experiment_id, run_id, _rule(f"题目 {index}/{total}"))
+            PROCS.append_log(experiment_id, run_id, _kv("编号", task.get("id") or "-"))
+            PROCS.append_log(experiment_id, run_id, _kv("问题", question))
+
+            def _on_window(line: str, _index: int = index, _total: int = total) -> None:
+                if cancel is not None and cancel.is_set():
+                    return
+                text = str(line or "")
+                if text.startswith("· ") or text.startswith("  "):
+                    PROCS.append_log(experiment_id, run_id, f"[{_index}/{_total}] {text}")
+                else:
+                    PROCS.append_log(experiment_id, run_id, f"[{_index}/{_total}]   {text}")
+
             summary, traj = _execute_question(
                 experiment_id, workflow, task, llm=llm, model_summary=model_summary, model_public=model_public,
+                on_window=_on_window,
             )
-            messages = list(getattr(traj, "messages", None) or [])
-            for line in format_eval_trace(f"[{index}/{total}]", messages):
-                PROCS.append_log(experiment_id, run_id, line)
             gold = str(task.get("answer") or "")
             aliases = task.get("answers") if isinstance(task.get("answers"), list) else None
             matched = None
@@ -685,24 +822,68 @@ def _run_eval_job(
                     correct += 1
             error = (summary.get("error") or {}).get("message") if isinstance(summary.get("error"), dict) else None
             verdict = "正确" if matched is True else "错误" if matched is False else summary.get("status") or "完成"
+            PROCS.append_log(experiment_id, run_id, _rule(f"结果 {index}/{total}"))
+            PROCS.append_log(experiment_id, run_id, _kv("判定", verdict))
             PROCS.append_log(
                 experiment_id,
                 run_id,
-                f"[{index}/{total}] {verdict} 答案={_clip(summary.get('final_answer'), _eval_log_limit()) or '无'}"
-                + (f" 标准={_clip(gold, _eval_log_limit())}" if gold else "")
-                + (f" 错误={_clip(error, _eval_log_limit())}" if error else ""),
+                _kv("答案", _clip(summary.get("final_answer"), 240) or "无"),
             )
-        message = f"完成 · {total} 条 · 有标准答案 {scored} · 答对 {correct}"
-        PROCS.append_log(experiment_id, run_id, message)
+            if gold:
+                PROCS.append_log(experiment_id, run_id, _kv("标准", _clip(gold, 240)))
+            if error:
+                PROCS.append_log(experiment_id, run_id, _kv("错误", _clip(error, 240)))
+            del traj
+            if cancel is not None and cancel.is_set():
+                PROCS.append_log(experiment_id, run_id, "")
+                PROCS.append_log(experiment_id, run_id, _rule("已停止"))
+                PROCS.append_log(experiment_id, run_id, _kv("统计", f"已完成 {index}/{total} 题后停止 · 答对 {correct}"))
+                PROCS.finish_inline(
+                    experiment_id,
+                    run_id,
+                    state="cancelled",
+                    message=f"用户停止 · 已完成 {index}/{total}",
+                    returncode=0,
+                )
+                return
+        PROCS.append_log(experiment_id, run_id, "")
+        PROCS.append_log(experiment_id, run_id, _rule("汇总"))
+        message = f"完成 {total} 条 · 有标准答案 {scored} · 答对 {correct}"
+        PROCS.append_log(experiment_id, run_id, _kv("统计", message))
         PROCS.finish_inline(experiment_id, run_id, state="succeeded", returncode=0)
+    except EvalCancelled:
+        PROCS.append_log(experiment_id, run_id, "")
+        PROCS.append_log(experiment_id, run_id, _rule("已停止"))
+        PROCS.append_log(experiment_id, run_id, _kv("统计", "用户停止，已中断当前题目"))
+        PROCS.finish_inline(
+            experiment_id,
+            run_id,
+            state="cancelled",
+            message="用户停止",
+            returncode=0,
+        )
     except Exception as exc:  # noqa: BLE001
         message = f"测试失败：{exc}"
-        PROCS.append_log(experiment_id, run_id, message)
+        PROCS.append_log(experiment_id, run_id, _kv("失败", message))
         PROCS.finish_inline(experiment_id, run_id, state="failed", message=str(exc)[:500], returncode=1)
     finally:
+        reset_eval_cancel(cancel_token)
+        with _eval_guard:
+            release_llm = run_id in _eval_release_llm
+            _eval_release_llm.discard(run_id)
+        if llm_started_by_us or release_llm:
+            try:
+                from science_infra.control.services import stop_local_llm
+
+                stop_local_llm(experiment_id)
+                note = "用户停止，本地 vLLM 已关闭" if release_llm else "本轮启动的实例已停止"
+                PROCS.append_log(experiment_id, run_id, _kv("vLLM", note))
+            except Exception as exc:  # noqa: BLE001
+                PROCS.append_log(experiment_id, run_id, _kv("vLLM", f"停止失败：{exc}"))
         with _eval_guard:
             if _eval_running.get(experiment_id) == run_id:
                 _eval_running.pop(experiment_id, None)
+            _eval_cancel.pop(run_id, None)
 
 
 @router.post("/api/mas/eval-runs")
@@ -757,6 +938,7 @@ def create_eval_run(body: EvalRunRequest, experiment_id: str = Query("demo")) ->
             meta={"split": split, "parquet": parquet, "limit": limit},
         )
         _eval_running[experiment_id] = row["run_id"]
+        _eval_cancel[row["run_id"]] = threading.Event()
     threading.Thread(
         target=_run_eval_job,
         args=(experiment_id, row["run_id"]),
@@ -768,6 +950,7 @@ def create_eval_run(body: EvalRunRequest, experiment_id: str = Query("demo")) ->
             "model_public": model_public,
             "split": split,
             "parquet": parquet,
+            "local_llm": effective.kind == "local",
         },
         daemon=True,
     ).start()
@@ -778,6 +961,41 @@ def create_eval_run(body: EvalRunRequest, experiment_id: str = Query("demo")) ->
         "parquet": parquet,
         "limit": limit,
     }
+
+
+@router.post("/api/mas/eval-runs/{run_id}/stop")
+def stop_eval_run(run_id: str, experiment_id: str = Query("demo")) -> Dict[str, Any]:
+    """Collaborative cancel for MAS eval. Also stops the local vLLM for this experiment."""
+    if not re.fullmatch(r"[a-f0-9]{8,64}", run_id):
+        raise HTTPException(400, "run_id 无效")
+    try:
+        require_experiment(experiment_id)
+    except FileNotFoundError as error:
+        raise HTTPException(404, "实验不存在") from error
+    with _eval_guard:
+        active = _eval_running.get(experiment_id)
+        cancel = _eval_cancel.get(run_id)
+        if active != run_id or cancel is None:
+            row = PROCS.disk_run(run_id, experiment_id) or {}
+            state = str(row.get("state") or "")
+            if state in {"cancelled", "succeeded", "failed", "interrupted"}:
+                return {"run_id": run_id, "state": state, "message": "测试已结束"}
+            raise HTTPException(404, "没有正在运行的测试，或 run_id 不匹配")
+        cancel.set()
+        _eval_release_llm.add(run_id)
+    from workflow.user_gateway.sandbox import reap_search_browsers
+
+    reap_search_browsers()
+    PROCS.update_inline(experiment_id, run_id, state="stopping", message="正在停止测试…")
+    PROCS.append_log(experiment_id, run_id, _kv("停止", "收到停止测试请求，正在关闭本地 vLLM"))
+    try:
+        from science_infra.control.services import stop_local_llm
+
+        stop_local_llm(experiment_id)
+        PROCS.append_log(experiment_id, run_id, _kv("vLLM", "本地 vLLM 已关闭"))
+    except Exception as exc:  # noqa: BLE001
+        PROCS.append_log(experiment_id, run_id, _kv("vLLM", f"关闭失败：{exc}"))
+    return {"run_id": run_id, "state": "stopping"}
 
 
 @router.get("/api/mas/rollout-runs/{run_id}/export")

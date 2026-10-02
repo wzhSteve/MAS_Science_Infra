@@ -44,6 +44,24 @@
 .mas-library-item small { display: block; margin-top: 3px; font-size: 10px; color: var(--text-secondary); }
 .mas-library-icon { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--border-subtle); border-radius: 7px; color: var(--text-secondary); background: var(--surface); flex-shrink: 0; }
 .mas-library-plus { color: var(--text-secondary); }
+.mas-library-user-block { margin-bottom: 6px; }
+.mas-library-user-actions { display: flex; justify-content: flex-end; padding: 0 8px 4px; }
+.mas-epc-runtime {
+  margin: 0 8px 10px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  display: grid;
+  gap: 8px;
+}
+.mas-epc-runtime__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mas-epc-runtime__head strong { font-size: 12px; }
+.mas-epc-runtime__field { display: grid; gap: 4px; font-size: 11px; color: var(--text-secondary); }
+.mas-epc-runtime__field .ui-input { font-size: 12px; }
+.mas-epc-runtime__tools { margin: 0; padding: 0; border: 0; display: grid; gap: 6px; }
+.mas-epc-runtime__tools legend { font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; }
+.mas-node--user-wrap .mas-node__role { color: var(--text-secondary); }
 .mas-property-section { display: flex; flex-direction: column; align-items: stretch; gap: 12px; margin: 0; padding: 0 0 18px; border: 0; }
 .mas-property-section + .mas-property-section { border-top: 1px solid var(--border-subtle); padding-top: 18px; }
 .mas-property-section h3, .mas-property-section legend { font-size: 12px; font-weight: 600; }

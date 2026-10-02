@@ -71,6 +71,13 @@ def new_id() -> str:
     return uuid4().hex
 
 
+def report_progress(text: str) -> None:
+    """Live console line for the eval window that is currently running."""
+    from .loader import note_window_progress
+
+    note_window_progress(str(text or ""))
+
+
 def load_upload(project_id: str, rel_path: str) -> str:
     """Read a file from the project's locked ``upload/`` tree."""
     from .paths import assert_in_user_space, project_dir
@@ -92,6 +99,7 @@ __all__ = [
     "make_message",
     "new_id",
     "plan_step",
+    "report_progress",
     "tool_result",
     "validate_json_schema",
     "validate_payload",

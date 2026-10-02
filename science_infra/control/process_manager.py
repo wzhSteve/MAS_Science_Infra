@@ -238,6 +238,35 @@ class ProcessManager:
         self._write_status(experiment_id, run_id, row)
         return row
 
+    def update_inline(
+        self,
+        experiment_id: str,
+        run_id: str,
+        *,
+        state: Optional[str] = None,
+        message: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Patch an in-process job status without finishing it."""
+        with self._lock:
+            current = self._pending.get(run_id) or self.disk_run(run_id, experiment_id) or {}
+            row = dict(current)
+            row["run_id"] = run_id
+            row["experiment_id"] = experiment_id
+            if state is not None:
+                row["state"] = state
+                row["running"] = state in ACTIVE_STATES
+            if message is not None:
+                row["message"] = message
+            if meta:
+                merged = dict(row.get("meta") or {})
+                merged.update(meta)
+                row["meta"] = merged
+            if run_id in self._pending:
+                self._pending[run_id] = row
+        self._write_status(experiment_id, run_id, row)
+        return row
+
     def mark_failed(
         self,
         *,

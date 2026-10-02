@@ -32,13 +32,20 @@ export function workflowGraphRevision(workflow: WorkflowSpec): string {
   });
 }
 
-function isHubAgent(agent: { id: string; kind?: string; role?: string }): boolean {
+function isUserWrap(agent: { profile?: { backend?: string }; meta?: { wraps?: string } }): boolean {
+  const wraps = typeof agent.meta?.wraps === 'string' ? agent.meta.wraps : '';
+  return agent.profile?.backend === 'user_space' || wraps.startsWith('EPC-AW.');
+}
+
+function isHubAgent(agent: { id: string; kind?: string; role?: string; profile?: { backend?: string }; meta?: { wraps?: string } }): boolean {
+  if (isUserWrap(agent)) return false;
   const role = (agent.role || '').toLowerCase();
   const kind = (agent.kind || '').toLowerCase();
   return agent.id === 'hub' || kind === 'hub' || role === 'hub' || role === 'orchestrator';
 }
 
-function isExecutorAgent(agent: { id: string; kind?: string; role?: string }): boolean {
+function isExecutorAgent(agent: { id: string; kind?: string; role?: string; profile?: { backend?: string }; meta?: { wraps?: string } }): boolean {
+  if (isUserWrap(agent)) return false;
   const role = (agent.role || '').toLowerCase();
   const kind = (agent.kind || '').toLowerCase();
   return agent.id === 'executor' || kind === 'executor' || role === 'executor';
@@ -122,7 +129,7 @@ export function workflowToFlow(
     type: 'agent',
     position: { x: 80 + (i % 3) * 260, y: 80 + Math.floor(i / 3) * 170 },
     data: {
-      label: a.id,
+      label: (typeof a.label === 'string' && a.label.trim()) ? a.label.trim() : a.id,
       kind: a.kind || inferredKind(a),
       role: a.role || 'agent',
       skills: a.skills || [],
@@ -184,6 +191,13 @@ export function workflowToFlow(
       data: {
         label: 'tool-agent pool',
         members: [...(router.candidates || [])],
+        memberLabels: Object.fromEntries(
+          (router.candidates || []).map((id) => {
+            const agent = declared.find((item) => item.id === id);
+            const label = typeof agent?.label === 'string' && agent.label.trim() ? agent.label.trim() : id;
+            return [id, label];
+          }),
+        ),
         memberTiers: Object.fromEntries(
           (router.candidates || []).flatMap((id) => {
             const tier = declared.find((agent) => agent.id === id)?.profile?.tier;
@@ -281,6 +295,9 @@ export function flowToWorkflow(
       id: n.id,
       kind,
       role: n.data.role || 'agent',
+      label: (typeof n.data.label === 'string' && n.data.label.trim() && n.data.label !== n.id)
+        ? n.data.label.trim()
+        : (typeof previous?.label === 'string' ? previous.label : undefined),
       skills: n.data.skills || [],
       tools: [...(n.data.tools || [])],
       memory_scope: n.data.memory_scope || 'agent',
@@ -315,6 +332,7 @@ export function flowToWorkflow(
         id: member,
         kind,
         role: previous?.role || (kind === 'tool' ? 'tool' : 'agent'),
+        label: typeof previous?.label === 'string' ? previous.label : undefined,
         skills: previous?.skills || [],
         tools: [...(previous?.tools || [])],
         memory_scope: previous?.memory_scope || (kind === 'tool' ? 'none' : 'agent'),

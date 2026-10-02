@@ -60,6 +60,8 @@ class TestHiveTaskRows(unittest.TestCase):
                 self.assertTrue(str(trained[0]["question"]).strip())
                 self.assertIn("answer", trained[0])
                 self.assertTrue(str(trained[0]["source"]).strip())
+                if item.id in {"hotpotqa", "bamboogle", "musique", "2wiki", "gaia", "medqa"}:
+                    self.assertEqual(trained[0]["source"], item.id)
                 self.assertEqual(registered_dataset(item.path), item.path)
                 sampled = sample_parquet_tasks(item.path, n=1, source="all")
                 self.assertEqual(sampled[0]["question"], trained[0]["question"])
