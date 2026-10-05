@@ -345,8 +345,10 @@ class TirAgent:
         agent_id: str = "planner",
         api_key: Optional[str] = None,
         execution_recorder: Optional[ExecutionRecorder] = None,
+        record_tool_nodes: bool = True,
     ) -> None:
         self.execution_recorder = execution_recorder
+        self.record_tool_nodes = record_tool_nodes
         self.max_turns = max_turns
         self.model_name = model_name
         self.endpoint = endpoint
@@ -561,34 +563,47 @@ class TirAgent:
         n_python = int(state.get("n_python") or 0)
         tool_calls = getattr(last, "tool_calls", None) or []
         recorder = self.execution_recorder
+        record_nodes = bool(getattr(self, "record_tool_nodes", True))
         parents = list(recorder.trace.tail_ids) if recorder else []
-        node_ids = [
-            recorder.begin(str(call["name"]), "tool", int(state.get("num_turns") or 0),
-                           call.get("args", {}), parents=parents)
-            for call in tool_calls
-        ] if recorder else []
-        if recorder and node_ids:
-            recorder.join(node_ids)
+        if recorder and record_nodes:
+            node_ids = [
+                recorder.begin(str(call["name"]), "tool", int(state.get("num_turns") or 0),
+                               call.get("args", {}), parents=parents) or ""
+                for call in tool_calls
+            ]
+            live_ids = [node_id for node_id in node_ids if node_id]
+            if live_ids:
+                recorder.join(live_ids)
+        else:
+            node_ids = [""] * len(tool_calls)
+            live_ids = []
 
         def _one(indexed_call: tuple[int, Any]):
             index, call = indexed_call
             name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
             call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", "")
             args = call.get("args") if isinstance(call, dict) else getattr(call, "args", {})
+            node_id = node_ids[index] if index < len(node_ids) else ""
             try:
                 content = self.tool_agent_invoker.invoke(str(name or ""), args)
             except Exception as error:
-                if recorder:
-                    recorder.request_error(node_ids[index], error)
-                    recorder.finish(node_ids[index], None, failed=True)
+                if recorder and node_id:
+                    recorder.request_error(node_id, error)
+                    recorder.finish(node_id, None, failed=True)
                 raise
             missing_tool = content is None
             if content is None:
                 content = f"Error: unknown tool {name}"
             content_s = clip_text(str(content), _TOOL_OBS_CHARS)
-            if recorder:
-                recorder.finish(node_ids[index], content, observation=content_s, failed=missing_tool)
-            return ToolMessage(content=content_s, tool_call_id=call_id or name or "tool"), str(name or "unknown"), content_s
+            if recorder and node_id:
+                recorder.finish(node_id, content, observation=content_s, failed=missing_tool)
+            call_args = args if isinstance(args, dict) else {}
+            return (
+                ToolMessage(content=content_s, tool_call_id=call_id or name or "tool"),
+                str(name or "unknown"),
+                content_s,
+                call_args,
+            )
 
         results: List[Any] = []
         if len(tool_calls) <= 1:
@@ -600,7 +615,8 @@ class TirAgent:
                 # map preserves input order
                 results = list(pool.map(_one, enumerate(tool_calls)))
 
-        for tm, tname, content_s in results:
+        folded_tools: List[Dict[str, Any]] = []
+        for tm, tname, content_s, call_args in results:
             tool_messages.append(tm)
             if tname in SEARCH_TOOL_NAMES:
                 n_search += 1
@@ -614,6 +630,9 @@ class TirAgent:
                     "prefix_message_count": len(state["messages"]) + len(tool_messages),
                 }
             )
+            folded_tools.append({"name": tname, "arguments": call_args, "observation": content_s})
+        if recorder and not record_nodes and folded_tools:
+            recorder.note_tools(folded_tools)
         new_messages = state["messages"] + tool_messages
         branch = list(state.get("branch_messages") or [])
         window_snapshots = list(state.get("window_snapshots") or [])
@@ -642,8 +661,8 @@ class TirAgent:
             _tool_name = str(results[0][1]) if len(results) == 1 else None
             _rid = self._router_by_tool.get(str(_tool_name)) if _tool_name else None
             _metrics: Dict[str, Any] = {"n_tools": len(tool_messages)}
-            if recorder:
-                _metrics.update(fork_node_ids=node_ids, source_attempt_id=recorder.trace.attempt_id)
+            if recorder and live_ids:
+                _metrics.update(fork_node_ids=live_ids, source_attempt_id=recorder.trace.attempt_id)
             if _tool_name and str(_tool_name) in getattr(self, "_blank_adapters", {}):
                 _metrics["agent_kind"] = "blank"
             if _rid is not None:

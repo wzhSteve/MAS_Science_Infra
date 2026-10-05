@@ -1,5 +1,7 @@
 """One naming rule for LangGraph model nodes and training span selection."""
 
+from __future__ import annotations
+
 import re
 from typing import Sequence
 from urllib.parse import quote

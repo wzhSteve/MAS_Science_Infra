@@ -375,6 +375,7 @@ def run_episode(
         if tools_override is not None
         else (list(llm.enabled_tools) if llm.enabled_tools is not None else list(spec.tools))
     )
+    record_tool_nodes = task.get("_record_tool_nodes", True) is not False
     from_spec = getattr(tir.TirAgent, "from_spec", None)
     if callable(from_spec):
         agent = from_spec(
@@ -390,6 +391,7 @@ def run_episode(
             system_prompt=system_prompt,
             agent_id=agent_id,
             api_key=llm.api_key,
+            record_tool_nodes=record_tool_nodes,
         )
     else:
         agent = tir.TirAgent(
@@ -404,6 +406,7 @@ def run_episode(
             system_prompt=system_prompt,
             agent_id=agent_id,
             api_key=llm.api_key,
+            record_tool_nodes=record_tool_nodes,
         )
     if execution_recorder:
         agent.execution_recorder = execution_recorder
@@ -641,6 +644,23 @@ def apply_verifier_feedback(
         raw.skill_results = prev_skills + list(raw.skill_results)
 
 
+def agent_window_rollout(spec: MASSpec) -> bool:
+    """True when a compilable centralized spec should record one node per agent window."""
+    compiled = compile_spec(spec)
+    if not compiled.ok:
+        return False
+    topo = str(spec.topology or "")
+    if topo not in ("centralized", "hub_react", "single", ""):
+        return False
+    downstream = compiled.agents.get(compiled.message_out.get("planner") or "")
+    profile = dict(getattr(downstream, "profile", None) or {}) if downstream else {}
+    direct_user_window = downstream is not None and (
+        getattr(downstream, "kind", None) == "blank"
+        or str(profile.get("backend") or "") == "user_space"
+    )
+    return bool(compiled.routers or direct_user_window)
+
+
 def run_compiled_episode(
     task: Dict[str, Any],
     llm: Optional[LLMConfig],
@@ -650,6 +670,7 @@ def run_compiled_episode(
     runner: EpisodeRunner,
     agent_llms: Optional[Mapping[str, LLMConfig]] = None,
     window_llm: Optional["WindowLLM"] = None,
+    execution_recorder: Optional[ExecutionRecorder] = None,
 ) -> EpisodeRaw:
     """Walk the compiled graph.
 
@@ -671,6 +692,7 @@ def run_compiled_episode(
         return run_centralized_episode(
             task, llm, archive, spec, memory, compiled,
             agent_llms=agent_llms, window_llm=window_llm,
+            execution_recorder=execution_recorder,
         )
     current = compiled.entry_agent
     hops = 0
@@ -742,6 +764,7 @@ def run_compiled_episode(
             sub_spec.hub = spec.hub.model_copy(update={"system_prompt": prompt})
 
         node_llm = (agent_llms or {}).get(current_agent_id, llm)
+        task_i["_record_tool_nodes"] = False
         raw = runner.run(task_i, node_llm, archive, sub_spec, memory, agent_id=current_agent_id)
         last_raw = raw
         n_search += int(raw.n_search)

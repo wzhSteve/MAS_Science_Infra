@@ -85,6 +85,14 @@ class TestCanonicalReward(unittest.TestCase):
             1.1,
         )
 
+    def test_tagged_answer_scores_inner_text(self):
+        from rl.rewards.outcome import accuracy
+
+        tagged = "<answer>James Madison</answer>"
+        self.assertEqual(accuracy(tagged, "james madison", source="bamboogle"), 1.0)
+        self.assertEqual(accuracy(tagged, "Titan IIIE", source="bamboogle"), 0.0)
+        self.assertEqual(accuracy("<answer>2</answer>", "2", source="gsm8k"), 1.0)
+
 
 class TestMockCollect(unittest.TestCase):
     def test_mock_events_reward_and_memory(self):

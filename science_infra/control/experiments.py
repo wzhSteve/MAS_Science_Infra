@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from science_infra.control.paths import experiments_root, server_data_path, tir_agent_root
 
-VALID_ALGOS = ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae")
+VALID_ALGOS = ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae", "flow_grpo")
 HARNESS_PLUGINS = (
     "log_error",
     "loss_volatility",

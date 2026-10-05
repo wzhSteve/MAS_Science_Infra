@@ -237,6 +237,18 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
         load_entry_module("epc-aw-main", reload=True)
         ctx = sys.modules["context"].get_episode_context(reset=True)
         self.assertEqual(ctx.max_steps, 7)
+        solver = __import__("types").SimpleNamespace(
+            planner=__import__("types").SimpleNamespace(
+                available_tools=["Wikipedia_Search_Tool"],
+                toolbox_metadata={},
+            )
+        )
+        sys.modules["context"]._register_dispatch_tools(
+            solver, ["Wikipedia_Search_Tool", "Bing_Search_Tool"],
+        )
+        self.assertIn("Bing_Search_Tool", solver.planner.available_tools)
+        self.assertNotIn("Web_Fetch_Tool", solver.planner.available_tools)
+        self.assertNotIn("Web_Search_Tool", solver.planner.available_tools)
         self.assertEqual(sys.modules["context"]._plan_n(), 3)
 
     def test_failed_tool_is_not_rewritten_to_base_generator(self) -> None:
@@ -259,6 +271,59 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
         tool_name = plan["payload"]["args"]["tool_name"]
         self.assertEqual(tool_name, "Python_Coder_Tool")
         self.assertNotIn("failed_tool_skip", plan["payload"].get("trace") or {})
+
+    def test_transport_failure_keeps_subgoal_and_switches_search_tool(self) -> None:
+        from types import SimpleNamespace
+
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        ctx = sys.modules["context"].get_episode_context(reset=True)
+        question = "Who was president when Citibank was founded?"
+        ctx._active_question = question
+        ctx.question = question
+        ctx.last_tool_output = (
+            "Wikipedia unreachable: HTTPSConnectionPool(host='en.wikipedia.org', port=443): Max retries exceeded"
+        )
+        ctx.last_sub_goal = "Find the founding year of Citibank"
+        ctx.last_tool_name = "Wikipedia_Search_Tool"
+        ctx.failed_tools = ["Wikipedia_Search_Tool"]
+        ctx.planner.available_tools = [
+            "Wikipedia_Search_Tool",
+            "Bing_Search_Tool",
+            "Web_Search_Tool",
+            "Base_Generator_Tool",
+            "Python_Coder_Tool",
+        ]
+
+        def _drift(*_args: object, **_kwargs: object) -> object:
+            return SimpleNamespace(
+                context="c",
+                sub_goal="Find the launch date",
+                tool_name="Base_Generator_Tool",
+            ), ""
+
+        ctx.planner.generate_next_step = _drift  # type: ignore[method-assign]
+        plan = ctx.plan_window({"kind": "plan_step", "dst": "planner", "payload": {"question": question}})
+        args = plan["payload"]["args"]
+        self.assertEqual(args["tool_name"], "Bing_Search_Tool")
+        self.assertEqual(args["sub_goal"], "Find the founding year of Citibank")
+        called = {"n": 0}
+
+        def _should_not_verify(*_args: object, **_kwargs: object) -> object:
+            called["n"] += 1
+            return ("direct", True, "1812", "STOP")
+
+        ctx.diagnoser.verificate_context = _should_not_verify  # type: ignore[method-assign]
+        ctx.last_tool_output = ctx.last_tool_output
+        verify = ctx.verify_window({"kind": "verify", "dst": "verifier", "payload": {}})
+        self.assertEqual(called["n"], 0)
+        self.assertFalse(verify["payload"]["ready_to_stop"])
+        self.assertEqual(verify["payload"]["trace"].get("conclusion"), "CONTINUE")
 
     def test_illegal_tool_skips_import(self) -> None:
         from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev

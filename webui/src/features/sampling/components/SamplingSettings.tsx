@@ -189,9 +189,10 @@ export const SamplingSettings = memo(function SamplingSettings({
             const algo = event.target.value;
             training.patch(current => ({ ...current, algo, algorithm: { ...current.algorithm, tir_algo: algo } }));
           }}>
-            {Array.from(new Set([algorithm, 'grpo', 'arpo', 'appo', 'aepo', 'igpo', 'gigpo', 'rae'])).map(value =>
+            {Array.from(new Set([algorithm, 'grpo', 'arpo', 'appo', 'aepo', 'igpo', 'gigpo', 'rae', 'flow_grpo'])).map(value =>
               <option key={value} value={value}>{value.toUpperCase()}</option>)}
           </Select>
+          {algorithm === 'flow_grpo' && <p className="field-hint">轨迹奖励广播到 planner turn，不分支。</p>}
         </FormField>
         <FormField label="每题候选数">
           <Input type="number" min={1} step={1} value={group ?? ''} onChange={event => {
@@ -202,7 +203,7 @@ export const SamplingSettings = memo(function SamplingSettings({
         </FormField>
       </div>
       <Button size="sm" disabled={training.dirty || training.pending !== null} onClick={() =>
-        onChange({ ...workflow, sampling: { ...DEFAULT_SAMPLING, mode: algorithm === 'grpo' ? 'grpo_n' : algorithm, group_n: group ?? 1 } })}>
+        onChange({ ...workflow, sampling: { ...DEFAULT_SAMPLING, mode: algorithm === 'grpo' || algorithm === 'flow_grpo' ? 'grpo_n' : algorithm, group_n: group ?? 1 } })}>
         启用分支采样配置
       </Button>
       {training.dirty && <p className="field-hint">请先保存实验，再启用 Sampling。</p>}

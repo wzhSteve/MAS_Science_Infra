@@ -90,7 +90,7 @@ class TestTrainCollectSplit(unittest.TestCase):
         from unittest.mock import patch
 
         from workflow.compiler import compile_spec
-        from workflow.runtime import ExecutionService, run_compiled_episode
+        from workflow.runtime import ExecutionService, agent_window_rollout, run_compiled_episode
 
         spec = _multi_spec()
         compiled = compile_spec(spec)
@@ -98,7 +98,9 @@ class TestTrainCollectSplit(unittest.TestCase):
         source = (ROOT / "lit_tir_agent.py").read_text(encoding="utf-8")
         rollout = source.split("def rollout(", 1)[1].split("\n    def ", 1)[0]
         self.assertIn("run_episode(", rollout)
-        self.assertNotIn("run_compiled_episode", rollout)
+        self.assertIn("run_compiled_episode(", rollout)
+        self.assertIn("agent_window_rollout", rollout)
+        self.assertFalse(agent_window_rollout(spec))
 
         with patch("workflow.runtime.run_compiled_episode", wraps=run_compiled_episode) as spy:
             traj = ExecutionService(mock=True, spec=spec).run(

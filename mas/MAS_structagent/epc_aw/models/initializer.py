@@ -124,60 +124,67 @@ class Initializer:
                 # print(f"\n==> Attempting to import: {import_path}")
                 try:
                     module = importlib.import_module(import_path)
+                    declared = str(getattr(module, "TOOL_NAME", "") or "")
                     for name, obj in inspect.getmembers(module):
-                        if inspect.isclass(obj) and name.endswith('Tool') and name != 'BaseTool':
-                            # print(f"Found tool class: {name}")
-                            try:
-                                # Check if the tool requires specific llm engine
-                                tool_index = -1
-                                current_dir_name = os.path.basename(root)
-                                for i, tool_name in enumerate(self.enabled_tools):
-                                    # First check short_to_long mapping
-                                    if hasattr(self, 'tool_name_mapping'):
-                                        short_to_long = self.tool_name_mapping.get('short_to_long', {})
-                                        long_to_internal = self.tool_name_mapping.get('long_to_internal', {})
+                        if not (inspect.isclass(obj) and name.endswith('Tool') and name != 'BaseTool'):
+                            continue
+                        # An imported class (Wikipedia's module imports Web_Search_Tool)
+                        # is not this directory's tool.
+                        if getattr(obj, "__module__", "") != getattr(module, "__name__", ""):
+                            continue
+                        if declared and name != declared:
+                            continue
+                        try:
+                            # Check if the tool requires specific llm engine
+                            tool_index = -1
+                            current_dir_name = os.path.basename(root)
+                            for i, tool_name in enumerate(self.enabled_tools):
+                                # First check short_to_long mapping
+                                if hasattr(self, 'tool_name_mapping'):
+                                    short_to_long = self.tool_name_mapping.get('short_to_long', {})
+                                    long_to_internal = self.tool_name_mapping.get('long_to_internal', {})
 
-                                        # If input is short name, convert to long name
-                                        long_name = short_to_long.get(tool_name, tool_name)
+                                    # If input is short name, convert to long name
+                                    long_name = short_to_long.get(tool_name, tool_name)
 
-                                        # Check if long name matches this directory
-                                        if long_name in long_to_internal:
-                                            if long_to_internal[long_name]["dir_name"] == current_dir_name:
-                                                tool_index = i
-                                                break
+                                    # Check if long name matches this directory
+                                    if long_name in long_to_internal:
+                                        if long_to_internal[long_name]["dir_name"] == current_dir_name:
+                                            tool_index = i
+                                            break
 
-                                    # Fallback to original behavior
-                                    if tool_name.lower().replace('_tool', '') == current_dir_name:
-                                        tool_index = i
-                                        break
+                                # Fallback to original behavior
+                                if tool_name.lower().replace('_tool', '') == current_dir_name:
+                                    tool_index = i
+                                    break
 
-                                if tool_index >= 0 and tool_index < len(self.tool_engine):
-                                    engine = self.tool_engine[tool_index]
-                                    if engine == "Default":
-                                        tool_instance = obj()
-                                    elif engine == "self":
-                                        tool_instance = obj(model_string=self.model_string)
-                                    else:
-                                        tool_instance = obj(model_string=engine)
-                                else:
+                            if tool_index >= 0 and tool_index < len(self.tool_engine):
+                                engine = self.tool_engine[tool_index]
+                                if engine == "Default":
                                     tool_instance = obj()
-                                # Use the external tool name (from TOOL_NAME) as the key
-                                metadata_key = getattr(tool_instance, 'tool_name', name)
-                                self.tool_instances[metadata_key] = tool_instance
+                                elif engine == "self":
+                                    tool_instance = obj(model_string=self.model_string)
+                                else:
+                                    tool_instance = obj(model_string=engine)
+                            else:
+                                tool_instance = obj()
+                            # Use the external tool name (from TOOL_NAME) as the key
+                            metadata_key = getattr(tool_instance, 'tool_name', name)
+                            self.tool_instances[metadata_key] = tool_instance
 
-                                self.toolbox_metadata[metadata_key] = {
-                                    'tool_name': getattr(tool_instance, 'tool_name', 'Unknown'),
-                                    'tool_description': getattr(tool_instance, 'tool_description', 'No description'),
-                                    'tool_version': getattr(tool_instance, 'tool_version', 'Unknown'),
-                                    'input_types': getattr(tool_instance, 'input_types', {}),
-                                    'output_type': getattr(tool_instance, 'output_type', 'Unknown'),
-                                    'demo_commands': getattr(tool_instance, 'demo_commands', []),
-                                    # 'user_metadata': getattr(tool_instance, 'user_metadata', {}), # This is a placeholder for user-defined metadata
-                                    'require_llm_engine': getattr(obj, 'require_llm_engine', False),
-                                }
-                                # print(f"Metadata for {metadata_key}: {self.toolbox_metadata[metadata_key]}")
-                            except Exception as e:
-                                print(f"Error instantiating {name}: {str(e)}")
+                            self.toolbox_metadata[metadata_key] = {
+                                'tool_name': getattr(tool_instance, 'tool_name', 'Unknown'),
+                                'tool_description': getattr(tool_instance, 'tool_description', 'No description'),
+                                'tool_version': getattr(tool_instance, 'tool_version', 'Unknown'),
+                                'input_types': getattr(tool_instance, 'input_types', {}),
+                                'output_type': getattr(tool_instance, 'output_type', 'Unknown'),
+                                'demo_commands': getattr(tool_instance, 'demo_commands', []),
+                                # 'user_metadata': getattr(tool_instance, 'user_metadata', {}), # This is a placeholder for user-defined metadata
+                                'require_llm_engine': getattr(obj, 'require_llm_engine', False),
+                            }
+                            # print(f"Metadata for {metadata_key}: {self.toolbox_metadata[metadata_key]}")
+                        except Exception as e:
+                            print(f"Error instantiating {name}: {str(e)}")
                 except Exception as e:
                     print(f"Error loading module {import_path}: {str(e)}")
                     

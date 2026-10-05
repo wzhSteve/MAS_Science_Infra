@@ -22,7 +22,15 @@ from workflow.env_load import load_repo_dotenv
 from workflow.llm_diagnostics import log_model_route
 from workflow.execution_recording import ExecutionRecorder
 from workflow.memory import MemoryStore
-from workflow.runtime import LLMConfig, TirRunner, apply_verifier_feedback, episode_to_trajectory, run_episode
+from workflow.runtime import (
+    LLMConfig,
+    TirRunner,
+    agent_window_rollout,
+    apply_verifier_feedback,
+    episode_to_trajectory,
+    run_compiled_episode,
+    run_episode,
+)
 from workflow.spec import load_spec
 
 load_repo_dotenv()
@@ -110,6 +118,35 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             langchain_callbacks=[handler] if handler else None,
         )
         logger.info("[Rollout %s] source=%s q=%s", rollout_id, source, question[:180])
+        # user_space windows (AgentFlow / EPC-AW) read OPENAI_* from env, not WindowLLM.
+        from mas_agent import bind_training_llm_env
+
+        with bind_training_llm_env(endpoint=endpoint, model=str(llm.model), api_key="EMPTY"):
+            return self._rollout_with_bound_llm(
+                task_run=task_run,
+                cfg=cfg,
+                question=question,
+                ground_truth=ground_truth,
+                source=source,
+                rollout_id=rollout_id,
+                attempt_id=str(rollout.attempt.attempt_id),
+                resume_parent=resume_parent,
+                start=start,
+            )
+
+    def _rollout_with_bound_llm(
+        self,
+        *,
+        task_run: Dict[str, Any],
+        cfg: LLMConfig,
+        question: str,
+        ground_truth: str,
+        source: str,
+        rollout_id: str,
+        attempt_id: str,
+        resume_parent: str,
+        start: float,
+    ) -> float | None:
         arch = register_archive(Archive())
         mem = MemoryStore()
         execution_recorder = ExecutionRecorder.from_task(task_run)
@@ -120,7 +157,13 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
 
         def _run_one(t: Dict[str, Any]):
             recorder = execution_recorder if t.get("_rollout_id") == rollout_id else None
-            raw_one = run_episode(t, cfg, arch, spec=self.spec, memory=mem, execution_recorder=recorder)
+            if agent_window_rollout(self.spec):
+                raw_one = run_compiled_episode(
+                    t, cfg, arch, self.spec, mem, TirRunner(recorder),
+                    execution_recorder=recorder,
+                )
+            else:
+                raw_one = run_episode(t, cfg, arch, spec=self.spec, memory=mem, execution_recorder=recorder)
             return apply_verifier_feedback(t, raw_one, cfg, arch, self.spec, mem, TirRunner(recorder))
 
         if expand:
@@ -262,7 +305,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             agl.emit_annotation(
                 {
                     RESULT_ATTRIBUTE: result_annotation(
-                        rollout_id, rollout.attempt.attempt_id, prediction, reward,
+                        rollout_id, attempt_id, prediction, reward,
                         bool(format_ok), bool(raw.error), archive_id,
                         error_details=raw.error_details,
                     ),

@@ -155,7 +155,32 @@ def config_train_a800_2gpu() -> Dict[str, Any]:
     return config
 
 
-def train(config: Dict[str, Any], n_runners: int, active_agents: list[str]) -> None:
+def resolve_workflow_spec_path(
+    rl_path: Optional[str] = None, workflow_path: Optional[str] = None
+) -> Optional[str]:
+    """Explicit ``--workflow-yaml``, otherwise the sibling of the rl yaml."""
+    if workflow_path:
+        wf = Path(workflow_path).expanduser().resolve()
+        return str(wf) if wf.is_file() else None
+    if not rl_path:
+        return None
+    wf = Path(rl_path).expanduser().resolve().parent / "workflow.yaml"
+    return str(wf) if wf.is_file() else None
+
+
+def trainable_ids_from_spec(spec_path: str) -> list[str]:
+    from workflow.compiler import trainable_agents
+    from workflow.spec import load_spec
+
+    return trainable_agents(load_spec(spec_path))
+
+
+def train(
+    config: Dict[str, Any],
+    n_runners: int,
+    active_agents: list[str],
+    spec_path: Optional[str] = None,
+) -> None:
     import sys
 
     if str(REPO_ROOT) not in sys.path:
@@ -174,7 +199,11 @@ def train(config: Dict[str, Any], n_runners: int, active_agents: list[str]) -> N
         f"TIR context budget: max_model_len={max_model_len} "
         f"(prompt={max_prompt}+response={max_resp}) max_tokens={max_resp}"
     )
-    agent = LitTirAgent(max_tokens=max_resp, max_model_len=max_model_len)
+    agent = LitTirAgent(
+        max_tokens=max_resp, max_model_len=max_model_len, spec_path=spec_path
+    )
+    if spec_path:
+        print(f"Workflow spec: {spec_path}")
     tir_algo = str(config.get("algorithm", {}).get("tir_algo") or "grpo")
     tir_cfg = dict(config.get("algorithm", {}).get("tir") or {})
     os.environ["TIR_ALGO"] = tir_algo
@@ -386,7 +415,11 @@ def main() -> None:
         for value in str(args.active_agents or args.active_agent or "").split(",")
         if value.strip()
     ]
-    train(config, n_runners=n_runners, active_agents=active_agents)
+    spec_path = resolve_workflow_spec_path(rl_path, args.workflow_yaml)
+    if not active_agents and spec_path:
+        active_agents = trainable_ids_from_spec(spec_path)
+        print(f"Trainable agents from workflow: {active_agents}")
+    train(config, n_runners=n_runners, active_agents=active_agents, spec_path=spec_path)
 
 
 if __name__ == "__main__":

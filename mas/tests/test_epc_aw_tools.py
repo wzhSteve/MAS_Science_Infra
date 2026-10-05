@@ -340,6 +340,34 @@ class TestEpcAwChromeDemote(unittest.TestCase):
         self.assertFalse(out["payload"]["ok"])
         self.assertIn("Python_Coder_Tool", ctx.failed_tools)
 
+    def test_exec_marks_wikipedia_unreachable_failed(self) -> None:
+        ctx_mod = self._load_context()
+        ctx = ctx_mod.get_episode_context(reset=True)
+        ctx.planner.available_tools = [
+            "Wikipedia_Search_Tool",
+            "Bing_Search_Tool",
+            "Python_Coder_Tool",
+            "Base_Generator_Tool",
+        ]
+
+        def _down(tool_name: str, query: str, url: str) -> str:
+            return "Wikipedia unreachable: HTTPSConnectionPool(host='en.wikipedia.org', port=443): Max retries exceeded"
+
+        ctx_mod._run_dispatch = _down  # type: ignore
+        out = ctx.exec_window({
+            "kind": "tool_invoke",
+            "dst": "u_epc-aw-main__executor",
+            "payload": {
+                "question": "q",
+                "tool_name": "Wikipedia_Search_Tool",
+                "sub_goal": "Find the founding year of Citibank",
+                "context": "c",
+            },
+        })
+        self.assertFalse(out["payload"]["ok"])
+        self.assertEqual(out["payload"]["evidence_type"], "ERROR")
+        self.assertIn("Wikipedia_Search_Tool", ctx.failed_tools)
+
     def test_google_navigate_stops_a_hung_get(self) -> None:
         import time
 

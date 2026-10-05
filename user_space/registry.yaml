@@ -1,5 +1,10 @@
 version: 1
 projects:
+- id: agentflow
+  title: AgentFlow
+  mode: native_mas
+  status: ready
+  experiment_id: ''
 - id: epc-aw-main
   title: EPC-AW-main
   mode: native_mas

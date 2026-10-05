@@ -73,7 +73,32 @@ class ExecutionRecorder:
         self._started: dict[str, float] = {}
         self._lock = RLock()
         self._disabled = False
+        self._allowed_agents: set[str] | None = None
         self._publish()
+
+    def allow_agents(self, agent_ids: list[str]) -> None:
+        """Execution nodes may only use these workflow agent ids."""
+        self._allowed_agents = {str(agent_id) for agent_id in agent_ids if str(agent_id)}
+
+    def note_issue(self, message: str) -> None:
+        with self._lock:
+            if message and message not in self.trace.errors:
+                self.trace.errors.append(message)
+            self._publish()
+
+    def note_tools(self, calls: list[dict[str, Any]]) -> None:
+        """Attach inner tool calls to the latest agent node. Does not add a node."""
+        if not calls:
+            return
+        with self._lock:
+            agents = [node for node in self.trace.nodes if node.agent_kind == "agent"]
+            if not agents:
+                return
+            detail = self._details.get(agents[-1].node_id)
+            if detail is None:
+                return
+            detail["tool_calls"] = list(detail.get("tool_calls") or []) + list(calls)
+            self._publish(agents[-1].node_id)
 
     @classmethod
     def from_task(cls, task: dict[str, Any]) -> ExecutionRecorder | None:
@@ -113,6 +138,13 @@ class ExecutionRecorder:
               inputs: Any, *, parents: list[str] | None = None, model: str | None = None,
               input_changed: bool = False) -> str:
         with self._lock:
+            allowed = self._allowed_agents
+            if allowed is not None and (agent_kind != "agent" or agent_id not in allowed):
+                message = f"execution agent_id {agent_id!r} is not a workflow agent"
+                if message not in self.trace.errors:
+                    self.trace.errors.append(message)
+                self._publish()
+                return ""
             node_id = uuid4().hex
             previous = list(self.trace.tail_ids if parents is None else parents)
             self.trace.nodes.append(RolloutTreeNode(
@@ -137,8 +169,12 @@ class ExecutionRecorder:
             return node_id
 
     def request_error(self, node_id: str, error: Exception, *, retry_input: Any = None) -> None:
+        if not node_id:
+            return
         with self._lock:
-            detail = self._details[node_id]
+            detail = self._details.get(node_id)
+            if detail is None:
+                return
             detail["errors"].append(summarize_execution_error(error))
             if retry_input is not None:
                 detail.setdefault("previous_inputs", []).append(detail["input"])
@@ -148,8 +184,12 @@ class ExecutionRecorder:
 
     def finish(self, node_id: str, output: Any, *, reasoning: Any = None, tool_calls: Any = None,
                observation: Any = None, failed: bool = False, metrics: dict[str, Any] | None = None) -> None:
+        if not node_id:
+            return
         with self._lock:
-            node = next(n for n in self.trace.nodes if n.node_id == node_id)
+            node = next((n for n in self.trace.nodes if n.node_id == node_id), None)
+            if node is None:
+                return
             node.status = "failed" if failed else "succeeded"
             node.ended_at = time.time()
             node.summary = redact_text(output if isinstance(output, str) else json.dumps(

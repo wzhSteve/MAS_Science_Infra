@@ -32,7 +32,7 @@ class TestStudioMeta(unittest.TestCase):
         self.assertIn("arpo", algos)
         self.assertEqual(
             set(algos),
-            {"grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae"},
+            {"grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae", "flow_grpo"},
         )
 
 

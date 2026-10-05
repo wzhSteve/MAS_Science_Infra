@@ -16,6 +16,7 @@ const ALGORITHM_HINTS: Record<string, string> = {
   igpo: '使用信息增益调整优势。',
   gigpo: '按组内信息增益归一化。',
   rae: '结合分支验证与失败回溯。',
+  flow_grpo: '轨迹奖励广播到 planner turn，不分支。',
 };
 
 export type RlQuickSettingsProps = {

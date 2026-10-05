@@ -8,7 +8,7 @@ from typing import Any, Dict, TYPE_CHECKING
 if TYPE_CHECKING:
     from rl.train_signal import TrainSignal
 
-VALID_ALGOS = ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae")
+VALID_ALGOS = ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae", "flow_grpo")
 # Algorithms that fork extra rollouts. APPO shares ARPO's expansion path; credit differs later.
 BRANCHING_ALGOS = ("arpo", "appo", "aepo", "rae")
 
@@ -131,6 +131,18 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
         tir["rae_dead_end_backprop"] = bool(tir.get("rae_dead_end_backprop", True))
     algo_block["tir"] = tir
     cfg["algorithm"] = algo_block
+    if algo == "flow_grpo":
+        # Trajectory outcome is already broadcast onto every turn by the VERL daemon.
+        # These are AgentFlow's actor defaults; rollout.n stays the group size.
+        roll = dict(cfg.get("actor_rollout_ref") or {})
+        actor = dict(roll.get("actor") or {})
+        actor["use_kl_loss"] = True
+        actor["kl_loss_coef"] = 0.001
+        actor["entropy_coeff"] = 0.0
+        actor["clip_ratio_low"] = 0.2
+        actor["clip_ratio_high"] = 0.3
+        roll["actor"] = actor
+        cfg["actor_rollout_ref"] = roll
     trainer = dict(cfg.get("trainer") or {})
     base_name = str(trainer.get("experiment_name") or "tir_agent")
     if not base_name.endswith(algo):
@@ -148,6 +160,10 @@ def apply_train_signal(config: Dict[str, Any], signal: "TrainSignal") -> Dict[st
     actor["clip_ratio_high"] = float(signal.loss.clip_ratio_high)
     actor["entropy_coeff"] = float(signal.loss.entropy_coeff)
     actor["kl_loss_coef"] = float(signal.loss.kl_loss_coef)
+    if algo == "flow_grpo":
+        actor["use_kl_loss"] = True
+        if float(signal.loss.kl_loss_coef) == 0.0:
+            actor["kl_loss_coef"] = 0.001
     roll = dict(cfg.get("actor_rollout_ref") or {})
     roll["actor"] = actor
     cfg["actor_rollout_ref"] = roll

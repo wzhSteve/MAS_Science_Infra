@@ -68,6 +68,9 @@ def apply_tir_advantages(
         config=config,
     )
 
+    if algo == "flow_grpo":
+        # Stock GRPO on the broadcast trajectory reward. No branch credit.
+        return batch
     if algo == "arpo":
         return batch
     if algo == "appo":

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -270,6 +271,99 @@ class TestContractValidationFail(unittest.TestCase):
         # think requires text; empty args -> invalid -> evidence_type ERROR
         self.assertFalse(tool_msg["payload"]["ok"])
         self.assertEqual(tool_msg["payload"]["evidence_type"], "ERROR")
+
+
+def _executor_window_spec() -> MASSpec:
+    """EPC-AW shape: planner → blank executor → verifier, no router."""
+    return MASSpec.model_validate({
+        "schema_version": "0.3",
+        "topology": "centralized",
+        "entry_agent": "planner",
+        "tools": [],
+        "agents": [
+            {"id": "planner", "kind": "planner", "system_prompt": "plan"},
+            {"id": "executor", "kind": "blank", "system_prompt": "execute"},
+            {"id": "verifier", "kind": "verifier", "system_prompt": "verify"},
+        ],
+        "edges": [
+            {"from": "planner", "to": "executor", "kind": "message"},
+            {"from": "executor", "to": "verifier", "kind": "message"},
+            {"from": "verifier", "to": "planner", "kind": "feedback"},
+        ],
+    })
+
+
+class TestExecutionNodesAreWorkflowAgents(unittest.TestCase):
+    def test_pev_nodes_are_planner_executor_verifier(self):
+        from workflow.execution_recording import ExecutionRecorder
+
+        spec = _executor_window_spec()
+        compiled = compile_spec(spec)
+        arch = register_archive(Archive())
+        win = MockWindowLLM({
+            "planner": [json.dumps({
+                "next": "executor",
+                "args": {"query": "Citibank founded"},
+                "sub_goal": "Find the founding year",
+                "done": False,
+            })],
+            "executor": [json.dumps({
+                "output": "Citibank was founded in 1812 via Wikipedia_Search_Tool",
+                "trace": {"tool": "Wikipedia_Search_Tool", "command": "Citibank founded"},
+            })],
+            "verifier": [json.dumps({
+                "ok": True,
+                "reason": "ok",
+                "step_conclusion": "COMPLETE",
+                "slot_updates": [],
+                "ready_to_stop": True,
+                "answer": "1812",
+            })],
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = ExecutionRecorder(Path(tmp), "rollout", "attempt")
+            raw = run_centralized_episode(
+                {"id": "pev", "question": "When was Citibank founded?"},
+                None, arch, spec, MemoryStore(), compiled,
+                window_llm=win, execution_recorder=recorder,
+            )
+            self.assertFalse(raw.error, raw.error)
+            nodes = [node for node in recorder.trace.nodes if node.kind == "execution"]
+            self.assertEqual([node.agent_id for node in nodes], ["planner", "executor", "verifier"])
+            self.assertTrue(all(node.agent_kind == "agent" for node in nodes))
+            executor = nodes[1]
+            detail = json.dumps(recorder._details[executor.node_id], ensure_ascii=False, default=str)
+            self.assertIn("Wikipedia_Search_Tool", detail)
+            self.assertNotIn("Wikipedia_Search_Tool", [node.agent_id for node in nodes])
+            before = len(recorder.trace.nodes)
+            self.assertEqual(recorder.begin("Wikipedia_Search_Tool", "tool", 2, {"query": "x"}), "")
+            self.assertEqual(len(recorder.trace.nodes), before)
+            self.assertTrue(any("Wikipedia_Search_Tool" in issue for issue in recorder.trace.errors))
+
+    def test_declared_tool_agent_stays_a_node(self):
+        from workflow.execution_recording import ExecutionRecorder
+
+        spec = _linear_spec()
+        compiled = compile_spec(spec)
+        arch = register_archive(Archive())
+        win = MockWindowLLM({
+            "planner": [json.dumps({
+                "next": "python_coder", "args": {"code": "result=42"}, "sub_goal": "compute", "done": True,
+            })],
+            "verifier": [json.dumps({
+                "ok": True, "reason": "ok", "step_conclusion": "COMPLETE", "slot_updates": [],
+            })],
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = ExecutionRecorder(Path(tmp), "rollout", "attempt")
+            run_centralized_episode(
+                {"id": "tools", "question": "1+1"},
+                None, arch, spec, MemoryStore(), compiled,
+                window_llm=win, execution_recorder=recorder,
+            )
+            ids = [node.agent_id for node in recorder.trace.nodes]
+            self.assertEqual(ids, ["planner", "python_coder", "verifier"])
+            self.assertNotIn("route_exec", ids)
 
 
 # Live local-LLM test (skipped when the local vLLM endpoint is down) ---------

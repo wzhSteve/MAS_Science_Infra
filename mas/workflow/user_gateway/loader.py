@@ -231,6 +231,31 @@ def invoke_user_window(
     timeout_s: Optional[float] = None,
     reload: bool = False,
 ) -> AgentMessage:
+    # Whole window (incl. isolated worker) must sit under the MAS agent span so
+    # TracerTraceToTriplet can match agent__{id} and keep Proxy token_ids.
+    # Import lives outside workflow/ (AST-safe); see mas/rl_agent_span.py.
+    from rl_agent_span import maybe_agent_window_span
+
+    with maybe_agent_window_span(agent_id or str(getattr(inbound, "dst", "") or "")):
+        return _invoke_user_window_body(
+            project_id,
+            inbound,
+            agent_id=agent_id,
+            expected_kind=expected_kind,
+            timeout_s=timeout_s,
+            reload=reload,
+        )
+
+
+def _invoke_user_window_body(
+    project_id: str,
+    inbound: AgentMessage,
+    *,
+    agent_id: str = "",
+    expected_kind: Optional[str] = None,
+    timeout_s: Optional[float] = None,
+    reload: bool = False,
+) -> AgentMessage:
     runner = resolve_runner(project_id, reload=reload)
     logger = _WINDOW_LOGGER.get()
     label = agent_id or str(getattr(inbound, "dst", "") or project_id)

@@ -58,6 +58,8 @@ def bind_training_llm_env(*, endpoint: str, model: str, api_key: str) -> Iterato
         "OPENAI_API_BASE",
         "OPENAI_BASE_URL",
         "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "MODEL",
         "MODEL_Name",
         "MODEL_NAME",
         "SERVER_MODEL",
@@ -71,6 +73,8 @@ def bind_training_llm_env(*, endpoint: str, model: str, api_key: str) -> Iterato
         os.environ["OPENAI_API_KEY"] = api_key or "dummy"
         os.environ["MODEL_Name"] = model
         os.environ["MODEL_NAME"] = model
+        os.environ["OPENAI_MODEL"] = model
+        os.environ["MODEL"] = model
         server_models = [m.strip() for m in (prev.get("SERVER_MODEL") or "").split(",") if m.strip()]
         if model not in server_models:
             server_models.append(model)

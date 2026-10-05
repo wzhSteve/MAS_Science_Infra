@@ -57,22 +57,26 @@ class LocalWindowLLM:
         return self._client
 
     def invoke(self, system_prompt: str, user_text: str, *, agent_id: str, kind: str) -> str:
-        client = self._ensure()
-        sys = system_prompt or ""
-        if "JSON" not in sys and "json" not in sys:
-            sys = (sys + "\n" if sys else "") + "Reply with a single JSON object only. No markdown, no thinking."
-        messages = []
-        if sys:
-            messages.append({"role": "system", "content": sys})
-        messages.append({"role": "user", "content": user_text})
-        resp = client.chat.completions.create(
-            model=self.llm.model,
-            messages=messages,
-            temperature=getattr(self.llm, "temperature", 0.3) or 0.3,
-            max_tokens=getattr(self.llm, "max_tokens", 1024) or 1024,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        )
-        return str(resp.choices[0].message.content or "")
+        # Import lives outside workflow/ (AST-safe); see mas/rl_agent_span.py.
+        from rl_agent_span import maybe_agent_window_span
+
+        with maybe_agent_window_span(agent_id):
+            client = self._ensure()
+            sys = system_prompt or ""
+            if "JSON" not in sys and "json" not in sys:
+                sys = (sys + "\n" if sys else "") + "Reply with a single JSON object only. No markdown, no thinking."
+            messages = []
+            if sys:
+                messages.append({"role": "system", "content": sys})
+            messages.append({"role": "user", "content": user_text})
+            resp = client.chat.completions.create(
+                model=self.llm.model,
+                messages=messages,
+                temperature=getattr(self.llm, "temperature", 0.3) or 0.3,
+                max_tokens=getattr(self.llm, "max_tokens", 1024) or 1024,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+            return str(resp.choices[0].message.content or "")
 
 
 class MockWindowLLM:
@@ -138,6 +142,47 @@ def _emit_window(
     window_events.append(event)
 
 
+def _tool_calls_for_result(msg: AgentMessage, recorded_as: str) -> Optional[List[Dict[str, Any]]]:
+    """Inner tool name stays on the owning agent's node, not as its own node."""
+    payload = msg.payload if isinstance(msg.payload, dict) else {}
+    trace = payload.get("trace") if isinstance(payload.get("trace"), dict) else {}
+    name = str(trace.get("tool") or trace.get("tool_name") or payload.get("tool_name") or "")
+    if not name and msg.src != recorded_as:
+        name = str(msg.src or "")
+    if not name:
+        return None
+    call: Dict[str, Any] = {"name": name, "observation": payload.get("output")}
+    command = trace.get("command") or payload.get("command") or ""
+    if command:
+        call["arguments"] = {"command": command}
+    return [call]
+
+
+def _record_agent_window(
+    recorder: Any,
+    *,
+    agent_id: str,
+    turn: int,
+    inputs: Any,
+    output: Any,
+    tool_calls: Any = None,
+    failed: bool = False,
+    metrics: Optional[Dict[str, Any]] = None,
+) -> None:
+    if recorder is None:
+        return
+    node_id = recorder.begin(str(agent_id), "agent", turn, inputs)
+    if not node_id:
+        return
+    recorder.finish(
+        node_id,
+        output,
+        tool_calls=tool_calls,
+        failed=failed,
+        metrics=metrics or {},
+    )
+
+
 def _log_window(archive, agent_id: str, turn: int, in_msg: AgentMessage, out_msg: AgentMessage, ok: bool) -> None:
     archive.append(
         ExecutionEvent(
@@ -166,6 +211,7 @@ def run_centralized_episode(
     *,
     agent_llms: Optional[Mapping[str, Any]] = None,
     window_llm: Optional[WindowLLM] = None,
+    execution_recorder: Any = None,
 ):
     """Centralized planner-led walk with explicit AgentMessage envelopes."""
     from .runtime import EpisodeRaw, LLMConfig  # local to avoid cycle
@@ -213,6 +259,9 @@ def run_centralized_episode(
             router_id = router_ids_run[0]
 
     blank_ids = {aid for aid, node in compiled.agents.items() if getattr(node, "kind", None) == "blank"}
+    allowed_agents = set(compiled.agents)
+    if execution_recorder is not None:
+        execution_recorder.allow_agents(list(allowed_agents))
 
     max_turns = max(4, int(spec.hub.max_feedback_hops or 1) * 3 + 4)
     turn = 0
@@ -314,6 +363,10 @@ def run_centralized_episode(
             _log_window(archive, "planner", turn, err_msg, err_msg, False)
             all_messages.append(err_msg.model_dump())
             _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": False})
+            _record_agent_window(
+                execution_recorder, agent_id="planner", turn=turn,
+                inputs={"question": question}, output={"error": str(ve)}, failed=True,
+            )
             continue
 
         if p_payload["done"] and not p_payload.get("next"):
@@ -326,6 +379,10 @@ def run_centralized_episode(
             _log_window(archive, "planner", turn, plan_msg, fa_msg, True)
             all_messages.extend([plan_msg.model_dump(), fa_msg.model_dump()])
             _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={})
+            _record_agent_window(
+                execution_recorder, agent_id="planner", turn=turn,
+                inputs={"question": question}, output={"answer": final_answer, "done": True},
+            )
             done = True
             break
 
@@ -333,6 +390,10 @@ def run_centralized_episode(
         _log_window(archive, "planner", turn, plan_msg, plan_msg, ok)
         all_messages.append(plan_msg.model_dump())
         _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": ok})
+        _record_agent_window(
+            execution_recorder, agent_id="planner", turn=turn,
+            inputs={"question": question}, output=p_payload, failed=not ok,
+        )
         if not ok:
             last_feedback = f"planner produced invalid plan_step: {reason}"
             continue
@@ -487,10 +548,17 @@ def run_centralized_episode(
                     payload={"output": f"invalid output: {why}", "ok": False, "evidence_type": "EMPTY"},
                     trace_ref=prev_msg.msg_id,
                 )
+            payload = {
+                "output": str(parsed.get("output") or json.dumps(parsed)),
+                "ok": True,
+                "evidence_type": "DIRECT",
+            }
+            if isinstance(parsed.get("trace"), dict):
+                payload["trace"] = parsed["trace"]
             return make_message(
                 task_id=task_id, turn=turn, src=aid, dst=dst,
                 kind="tool_result",
-                payload={"output": str(parsed.get("output") or json.dumps(parsed)), "ok": True, "evidence_type": "DIRECT"},
+                payload=payload,
                 trace_ref=prev_msg.msg_id,
             )
 
@@ -620,6 +688,25 @@ def run_centralized_episode(
                     metrics={"ok": bool(tmsg.payload.get("ok"))},
                     tool_id=tmsg.src,
                 )
+                recorded = tmsg.src if tmsg.src in allowed_agents else ""
+                if not recorded and execution_recorder is not None:
+                    execution_recorder.note_issue(
+                        f"execution agent_id {tmsg.src!r} is not a workflow agent"
+                    )
+                    invoke = next((m for m in chain if m.kind == "tool_invoke"), None)
+                    hop = str(invoke.dst) if invoke is not None else ""
+                    recorded = hop if hop in allowed_agents else ""
+                if recorded:
+                    _record_agent_window(
+                        execution_recorder,
+                        agent_id=recorded,
+                        turn=turn,
+                        inputs={"dst": recorded},
+                        output=dict(tmsg.payload or {}),
+                        tool_calls=_tool_calls_for_result(tmsg, recorded),
+                        failed=not bool(tmsg.payload.get("ok")),
+                        metrics={"ok": bool(tmsg.payload.get("ok"))},
+                    )
                 if tmsg.src in ("wikipedia_search", "bing_search", "web_fetch", "google_search", "web_search"):
                     n_search += 1
                 if tmsg.src == "python_coder":
@@ -646,6 +733,14 @@ def run_centralized_episode(
             _log_window(archive, "verifier", turn, last_tool, v_msg, v_ok)
             all_messages.append(v_msg.model_dump())
             _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics={"ok": v_ok})
+            if "verifier" in allowed_agents:
+                _record_agent_window(
+                    execution_recorder, agent_id="verifier", turn=turn,
+                    inputs={"sub_goal": p_payload.get("sub_goal")},
+                    output=dict(v_msg.payload or {}),
+                    failed=not v_ok,
+                    metrics={"ok": v_ok},
+                )
         else:
             tool_summary = "\n".join(f"- {m.src}: {m.payload.get('output')}" for m in tool_msgs)
             v_user = (
@@ -707,6 +802,13 @@ def run_centralized_episode(
             _log_window(archive, verifier_id, turn, last_tool, v_msg, v_ok)
             all_messages.append(v_msg.model_dump())
             _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics={"ok": v_ok})
+            _record_agent_window(
+                execution_recorder, agent_id=verifier_id, turn=turn,
+                inputs={"sub_goal": p_payload.get("sub_goal")},
+                output=dict(v_msg.payload or {}),
+                failed=not v_ok,
+                metrics={"ok": v_ok},
+            )
 
         # 5. termination / feedback / fact commit
         if v_msg.kind == "verify" and commit_to_fact(v_msg.payload, last_tool.payload if last_tool else {}):

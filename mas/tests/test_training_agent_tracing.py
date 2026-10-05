@@ -53,6 +53,65 @@ def test_real_tir_graph_uses_the_same_legal_name_as_adapter(agent_id):
     assert not re.search(pattern, "tools")
 
 
+def test_agent_window_span_emits_mas_agent_name(monkeypatch):
+    """user_space windows must tag spans with agent.name == agent_node_name(id)."""
+    import sys
+    import types
+
+    from rl_agent_span import agent_window_span
+
+    captured: list = []
+
+    class _CM:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _operation(**attrs):
+        captured.append(attrs)
+        return _CM()
+
+    agl_mod = types.ModuleType("agentlightning")
+    agl_mod.operation = _operation  # type: ignore[attr-defined]
+    tracer_pkg = types.ModuleType("agentlightning.tracer")
+    tracer_base = types.ModuleType("agentlightning.tracer.base")
+    tracer_base.get_active_tracer = lambda: object()  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "agentlightning", agl_mod)
+    monkeypatch.setitem(sys.modules, "agentlightning.tracer", tracer_pkg)
+    monkeypatch.setitem(sys.modules, "agentlightning.tracer.base", tracer_base)
+
+    with agent_window_span("planner"):
+        pass
+    assert captured == [{"agent.name": "agent__planner"}]
+    pattern = agent_span_pattern(["planner"])
+    assert re.search(pattern, captured[0]["agent.name"])
+    assert not re.search(pattern, agent_node_name("u_agentflow__executor"))
+
+
+def test_agent_window_span_is_noop_without_tracer(monkeypatch):
+    import sys
+    import types
+
+    from rl_agent_span import agent_window_span
+
+    called = []
+
+    agl_mod = types.ModuleType("agentlightning")
+    agl_mod.operation = lambda **kw: called.append(kw)  # type: ignore[attr-defined]
+    tracer_pkg = types.ModuleType("agentlightning.tracer")
+    tracer_base = types.ModuleType("agentlightning.tracer.base")
+    tracer_base.get_active_tracer = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "agentlightning", agl_mod)
+    monkeypatch.setitem(sys.modules, "agentlightning.tracer", tracer_pkg)
+    monkeypatch.setitem(sys.modules, "agentlightning.tracer.base", tracer_base)
+
+    with agent_window_span("planner"):
+        pass
+    assert called == []
+
+
 def test_node_encoding_is_injective_and_scope_stays_exact():
     assert agent_node_name("hub") == "agent__hub"
     assert agent_node_name("a:b") != agent_node_name("a%3Ab")

@@ -98,12 +98,16 @@ def accuracy(
 ) -> float:
     if prediction is None:
         return 0.0
+    text = str(prediction)
+    extracted = extract_answer_text(text)
+    if extracted:
+        text = extracted
     golds: List[str] = [gold]
     if aliases:
         golds.extend([str(a) for a in aliases if str(a)])
     if source == "gsm8k":
-        return 1.0 if any(numeric_match(prediction, g) for g in golds) else 0.0
-    return f1_score(prediction, golds)
+        return 1.0 if any(numeric_match(text, g) for g in golds) else 0.0
+    return f1_score(text, golds)
 
 
 def compute_outcome_reward(

@@ -830,7 +830,16 @@ class TirAgentModeDaemon(AgentModeDaemon):
                         for i, rid in enumerate(rollout_ids)
                     ], global_steps,
                 )
-        algo_id = {"grpo": 0.0, "arpo": 1.0, "aepo": 2.0, "igpo": 3.0, "gigpo": 4.0, "rae": 5.0, "appo": 6.0}
+        algo_id = {
+            "grpo": 0.0,
+            "arpo": 1.0,
+            "aepo": 2.0,
+            "igpo": 3.0,
+            "gigpo": 4.0,
+            "rae": 5.0,
+            "appo": 6.0,
+            "flow_grpo": 7.0,
+        }
         data_metrics["training/tir_algo"] = algo_id.get(self.tir_algo, 0.0)
         data_metrics["training/n_with_anchor"] = float(sum(1 for a in anchors if a))
         data_metrics["training/branch_local_count"] = float(self._branch_local_count_total)

@@ -83,6 +83,39 @@ _INFRA_TOOL_ERRORS = (
     "only supports Chrome version",
 )
 
+_TRANSPORT_MARKERS = (
+    "HTTPSConnectionPool",
+    "Max retries exceeded",
+    "NameResolutionError",
+    "ConnectTimeout",
+    "Read timed out",
+    "Connection refused",
+    "Network is unreachable",
+)
+
+_SEARCH_FALLBACK = (
+    "Wikipedia_Search_Tool",
+    "Bing_Search_Tool",
+    "Web_Search_Tool",
+    "Google_Search_Tool",
+)
+
+
+def _is_transport_failure(output: Any) -> bool:
+    """Search host did not answer. Distinct from a Python snippet timeout."""
+    text = str(output or "")
+    if text.startswith("Wikipedia unreachable:") or text.startswith("Bing unreachable:"):
+        return True
+    return any(marker in text for marker in _TRANSPORT_MARKERS)
+
+
+def _next_search_tool(available: List[str], failed: List[str]) -> str:
+    blocked = set(failed)
+    for name in _SEARCH_FALLBACK:
+        if name in available and name not in blocked:
+            return name
+    return ""
+
 
 def _runtime_path() -> Path:
     return Path(__file__).resolve().parent.parent / "contracts" / "runtime.yaml"
@@ -1085,15 +1118,40 @@ _FAST_TIMEOUT = (3, 8)
 _WEB_TEXT_LIMIT = 1200
 
 
+def _proxy_candidates() -> List[Optional[Dict[str, str]]]:
+    """SSH RemoteForward / local Clash first, then a direct connection."""
+    raws: List[str] = []
+    for key in ("WEB_SEARCH_PROXY", "GOOGLE_CHROME_PROXY", "CHROME_PROXY"):
+        value = (os.environ.get(key) or "").strip()
+        if value and "://" not in value:
+            value = "http://" + value
+        if value and value not in raws:
+            raws.append(value)
+    default = "http://127.0.0.1:7890"
+    if default not in raws:
+        raws.append(default)
+    ordered: List[Optional[Dict[str, str]]] = [{"http": raw, "https": raw} for raw in raws]
+    ordered.append(None)
+    return ordered
+
+
 def _fast_get(url: str, params: Optional[Dict[str, str]] = None) -> Any:
     import requests
 
-    return requests.get(
-        url,
-        params=params,
-        timeout=_FAST_TIMEOUT,
-        headers={"User-Agent": "MAS-Science-Infra/1.0"},
-    )
+    errors: List[str] = []
+    for proxies in _proxy_candidates():
+        label = (proxies or {}).get("http") or "direct"
+        try:
+            return requests.get(
+                url,
+                params=params,
+                timeout=_FAST_TIMEOUT,
+                headers={"User-Agent": "MAS-Science-Infra/1.0"},
+                proxies=proxies,
+            )
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+    raise RuntimeError("; ".join(errors) or "no route")
 
 
 def _html_to_text(html: str) -> str:
@@ -1432,8 +1490,12 @@ def _run_dispatch(tool_name: str, query: str, url: str) -> str:
     return f"No result was generated because the tool was not found: {tool_name}"
 
 
-def _register_dispatch_tools(solver: Any) -> None:
-    """Expose Bing and Web_Fetch without a ref_Rep package."""
+def _register_dispatch_tools(solver: Any, enabled: Optional[List[str]] = None) -> None:
+    """Expose Bing and Web_Fetch without a ref_Rep package.
+
+    Only names listed in the runtime enabled_tools are added. An imported
+    Web_Search_Tool is not promoted just because Wikipedia was loaded.
+    """
     planner = getattr(solver, "planner", None)
     if planner is None:
         return
@@ -1445,7 +1507,10 @@ def _register_dispatch_tools(solver: Any) -> None:
     if not isinstance(meta, dict):
         meta = {}
         planner.toolbox_metadata = meta
+    allowed = {str(name) for name in (enabled or [])}
     for name, item in _DISPATCH_META.items():
+        if allowed and name not in allowed:
+            continue
         if name not in tools:
             tools.append(name)
         meta[name] = dict(item)
@@ -1540,7 +1605,7 @@ def _build_real() -> Dict[str, Any]:
         _patch_google_search_model_string()
         _guard_wikipedia_sys_exit()
         _install_fast_search()
-    _register_dispatch_tools(solver)
+    _register_dispatch_tools(solver, enabled)
     if hasattr(solver, "planner") and hasattr(solver.planner, "n"):
         solver.planner.n = n
     _patch_engines(solver)
@@ -1943,6 +2008,18 @@ class EpcAwEpisodeContext:
             self.last_trace["tool_fallback"] = tool_name or "empty"
             tool_name = "Base_Generator_Tool"
         tool_name, tool_ok = self._normalize_tool(tool_name)
+        prev_output = str(self.last_tool_output or "")
+        prev_goal = str(self.last_sub_goal or "")
+        if _is_transport_failure(prev_output):
+            if prev_goal and sub_goal != prev_goal:
+                self.last_trace["subgoal_held"] = {"from": sub_goal, "to": prev_goal}
+                sub_goal = prev_goal
+            if tool_name == "Base_Generator_Tool" or tool_name in self.failed_tools:
+                replacement = _next_search_tool(self._available_tools(), self.failed_tools)
+                if replacement and replacement != tool_name:
+                    self.last_trace["search_fallback"] = {"from": tool_name, "to": replacement}
+                    tool_name = replacement
+                    tool_ok = True
         self.tool_available = tool_ok
         self.last_context = str(context or target)
         self.last_sub_goal = str(sub_goal or target)
@@ -2065,7 +2142,8 @@ class EpcAwEpisodeContext:
                 result = f"tool error: {exc}"
         output = result if isinstance(result, str) else str(result)
         self.last_tool_output = output
-        infra_fail = any(token in output for token in _INFRA_TOOL_ERRORS)
+        transport_fail = _is_transport_failure(output)
+        infra_fail = transport_fail or any(token in output for token in _INFRA_TOOL_ERRORS)
         if infra_fail and tool_name and tool_name not in self.failed_tools:
             self.failed_tools.append(tool_name)
             _progress(f"mark failed_tools += {tool_name}")
@@ -2097,22 +2175,29 @@ class EpcAwEpisodeContext:
         target = self.last_sub_goal or _first_outline_target(self.system_memory)
         outline = self.system_memory.get_outline() if hasattr(self.system_memory, "get_outline") else {}
         _progress("正在校验结果")
-        try:
-            result = self.diagnoser.verificate_context(
-                question,
-                None,
-                target,
-                outline,
-                self.last_tool_output,
-                self.step_count or 1,
-                self._obtained(),
-            )
-        except Exception as exc:
-            self.last_trace["llm_error"] = str(exc)
-            result = {"error": type(exc).__name__, "message": str(exc)}
-        if _is_llm_error(result):
-            self.last_trace["llm_error"] = result
-        analysis, new_flag, new_info, conclusion = _parse_verify_result(result)
+        if _is_transport_failure(self.last_tool_output):
+            self.last_trace["transport_failure"] = True
+            analysis = "检索没有连上，这条结果不能当作证据。"
+            new_flag = False
+            new_info = ""
+            conclusion = "CONTINUE"
+        else:
+            try:
+                result = self.diagnoser.verificate_context(
+                    question,
+                    None,
+                    target,
+                    outline,
+                    self.last_tool_output,
+                    self.step_count or 1,
+                    self._obtained(),
+                )
+            except Exception as exc:
+                self.last_trace["llm_error"] = str(exc)
+                result = {"error": type(exc).__name__, "message": str(exc)}
+            if _is_llm_error(result):
+                self.last_trace["llm_error"] = result
+            analysis, new_flag, new_info, conclusion = _parse_verify_result(result)
         self.last_verify_analysis = analysis
         if new_flag and new_info and hasattr(self.system_memory, "add_obtained_information"):
             self.system_memory.add_obtained_information(new_info)
@@ -2120,7 +2205,11 @@ class EpcAwEpisodeContext:
         updated_outline = outline
         if not ready:
             epc_aw_analysis = ""
-            if str(self.planner_selected_index) != str(self.bts_selected_index) and hasattr(self.diagnoser, "epc_aw_diagnosis"):
+            if (
+                not self.last_trace.get("transport_failure")
+                and str(self.planner_selected_index) != str(self.bts_selected_index)
+                and hasattr(self.diagnoser, "epc_aw_diagnosis")
+            ):
                 try:
                     epc_aw_analysis, constraint = self.diagnoser.epc_aw_diagnosis(
                         self.planner_selected_plan if self.planner_selected_plan is not None else self.last_plan,
@@ -2137,7 +2226,7 @@ class EpcAwEpisodeContext:
                 except Exception as exc:
                     self.last_trace["llm_error"] = str(exc)
                     epc_aw_analysis = ""
-            if hasattr(self.diagnoser, "update_outline"):
+            if not self.last_trace.get("transport_failure") and hasattr(self.diagnoser, "update_outline"):
                 try:
                     updated_outline = self.diagnoser.update_outline(
                         question,
