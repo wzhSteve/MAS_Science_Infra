@@ -266,3 +266,78 @@ def fetch_page(url: str, max_chars: int = _MAX_SNIPPET_CHARS) -> str:
         return text
     return "fetch_unavailable: " + "; ".join(errors[-4:])
 
+
+def _pdf_text(data: bytes) -> str:
+    if not data or not data.startswith(b"%PDF"):
+        return ""
+    try:
+        import io
+
+        from PyPDF2 import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        parts = [(page.extract_text() or "") for page in list(reader.pages)[:3]]
+        return " ".join(" ".join(parts).split())
+    except Exception:
+        return ""
+
+
+def fetch_by_type(url: str, query: str = "", max_chars: int = _MAX_SNIPPET_CHARS) -> str:
+    """Open one URL and branch on Content-Type. Does not search."""
+    target = (url or "").strip()
+    if not target:
+        return "Error: empty url."
+    if os.getenv("TIR_OFFLINE_SEARCH", "").strip().lower() in ("1", "true", "yes"):
+        return "search_unavailable: TIR_OFFLINE_SEARCH=1"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    errors: List[str] = []
+    path = target.lower().split("?", 1)[0]
+    for proxies in proxy_candidates():
+        try:
+            resp = requests.get(target, headers=headers, timeout=8.0, proxies=proxies, stream=True)
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+            continue
+        try:
+            if resp.status_code >= 400:
+                errors.append(f"GET {resp.status_code}")
+                continue
+            ctype = str(resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype.startswith("image/") or path.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                size = str(resp.headers.get("Content-Length") or "unknown")
+                return (
+                    f"type: image\nurl: {target}\ncontent_type: {ctype or 'image'}\nbytes: {size}"
+                )
+            if "pdf" in ctype or path.endswith(".pdf"):
+                data = resp.content[:200000]
+                text = _pdf_text(data)
+                if not text:
+                    return f"type: pdf\nurl: {target}\nPDF has no text layer; it looks like a scan."
+                return f"type: pdf\nurl: {target}\n{text[:max_chars]}"
+            body = resp.text or ""
+            if "html" in ctype or body.lstrip().startswith("<"):
+                soup = BeautifulSoup(body, "html.parser")
+                for tag in soup(["script", "style", "noscript"]):
+                    tag.decompose()
+                text = " ".join(soup.get_text(" ", strip=True).split())
+                kind = "html"
+            else:
+                text = " ".join(body.split())
+                kind = "text"
+            if len(text) > max_chars:
+                text = text[:max_chars] + " ...[truncated]"
+            lines = [f"type: {kind}", f"url: {target}"]
+            q = (query or "").strip()
+            if q:
+                lines.append(f"query: {q}")
+            lines.append(text or "(empty page)")
+            return "\n".join(lines)
+        finally:
+            resp.close()
+    return "fetch_unavailable: " + "; ".join(errors[-4:])
+

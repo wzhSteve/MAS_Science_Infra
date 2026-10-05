@@ -10,6 +10,7 @@ import numpy as np
 from agentlightning.types import EnqueueRolloutRequest, Rollout, RolloutConfig, RolloutLegacy, Task
 from agentlightning.verl.daemon import AgentModeDaemon, _to_native
 
+from .overlay import BRANCHING_ALGOS
 from .arpo_rollout import (
     aepo_global_budget,
     branch_probability,
@@ -187,7 +188,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
             )
         if (
             self.is_train
-            and self.tir_algo in ("arpo", "aepo", "rae")
+            and self.tir_algo in BRANCHING_ALGOS
             and self._expand_in_runner()
             and self._ready_batch()
         ):
@@ -211,7 +212,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
             log_model_route("daemon-to-vllm", f"http://{address}/v1/", model)
         orig_n = int(self.train_rollout_n)
         self._full_group_n = orig_n
-        if is_train and self.tir_algo in ("arpo", "aepo", "rae"):
+        if is_train and self.tir_algo in BRANCHING_ALGOS:
             if self.tir_algo == "aepo":
                 self.train_rollout_n = 1
             else:
@@ -221,7 +222,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
         # super() snapshots each sample via _to_native() at enqueue time, so
         # post-hoc mutation of daemon-side dicts (the old approach) never reached
         # the agent and ARPO branching silently never happened (branch_local=0).
-        if is_train and self.tir_algo in ("arpo", "aepo", "rae") and self._expand_in_runner():
+        if is_train and self.tir_algo in BRANCHING_ALGOS and self._expand_in_runner():
             self._preinject_expand_fields(data, n_init=int(self.train_rollout_n) if self.tir_algo != "aepo" else 1)
         try:
             await super()._async_set_up(data, server_addresses, is_train=is_train)
@@ -242,7 +243,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
         if self._tree_recorder:
             self._tree_recorder.initial(self._task_id_to_original_sample, "train" if is_train else "val")
 
-        if is_train and self.tir_algo in ("arpo", "aepo", "rae") and self._expand_in_runner():
+        if is_train and self.tir_algo in BRANCHING_ALGOS and self._expand_in_runner():
             self._stamp_expand_budgets()
             # Pass declared sites into wave-1 samples for ActiveSetSession
             configured_sites = self.tir_config.get("sites")
@@ -419,7 +420,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
     async def _wait_for_training_rollouts(self, verbose: bool = True):
         try:
             await super()._async_run_until_finished(verbose=verbose)
-            if not self.is_train or self.tir_algo not in ("arpo", "aepo", "rae"):
+            if not self.is_train or self.tir_algo not in BRANCHING_ALGOS:
                 return
             if self._expand_in_runner():
                 branches_before = self._store_enqueue_branch_count
@@ -829,7 +830,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                         for i, rid in enumerate(rollout_ids)
                     ], global_steps,
                 )
-        algo_id = {"grpo": 0.0, "arpo": 1.0, "aepo": 2.0, "igpo": 3.0, "gigpo": 4.0, "rae": 5.0}
+        algo_id = {"grpo": 0.0, "arpo": 1.0, "aepo": 2.0, "igpo": 3.0, "gigpo": 4.0, "rae": 5.0, "appo": 6.0}
         data_metrics["training/tir_algo"] = algo_id.get(self.tir_algo, 0.0)
         data_metrics["training/n_with_anchor"] = float(sum(1 for a in anchors if a))
         data_metrics["training/branch_local_count"] = float(self._branch_local_count_total)

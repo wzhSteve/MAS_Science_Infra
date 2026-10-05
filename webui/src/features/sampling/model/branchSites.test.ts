@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkflowSpec } from '../../../shared/api/types';
 import {
+  SAMPLING_MODE_OPTIONS,
   deriveBranchCandidates,
   effectiveSites,
   findCandidateSite,
+  isBranchingMode,
   updateCandidateSite,
 } from './branchSites';
 
@@ -23,6 +25,16 @@ const workflow: WorkflowSpec = {
 };
 
 describe('branch site model', () => {
+  it('treats APPO as its own branching mode', () => {
+    const appo = SAMPLING_MODE_OPTIONS.find((option) => option.value === 'appo');
+    const arpo = SAMPLING_MODE_OPTIONS.find((option) => option.value === 'arpo');
+    expect(appo?.label).toBe('APPO');
+    expect(appo?.help).not.toContain('ARPO');
+    expect(arpo?.help).not.toContain('APPO');
+    expect(isBranchingMode('appo')).toBe(true);
+    expect(isBranchingMode('grpo_n')).toBe(false);
+  });
+
   it('derives user-facing observation points from workflow entities', () => {
     const candidates = deriveBranchCandidates(workflow);
     expect(candidates.map((candidate) => candidate.label)).toEqual(expect.arrayContaining([

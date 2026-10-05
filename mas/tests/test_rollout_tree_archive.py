@@ -151,12 +151,15 @@ def daemon_class(expansions):
     source = ast.parse((ROOT.parent / "rl" / "hooks" / "daemon.py").read_text(encoding="utf-8"))
     body = next(node for node in source.body if isinstance(node, ast.ClassDef) and node.name == "TirAgentModeDaemon")
     module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), body], type_ignores=[])
+    from rl.hooks.overlay import BRANCHING_ALGOS
+
     namespace = {
         "AgentModeDaemon": object, "RolloutTreeRecorder": RolloutTreeRecorder,
         "identify_plans": identify_plans, "load_local_expansion": expansions.get,
         "EnqueueRolloutRequest": SimpleNamespace, "RolloutConfig": SimpleNamespace,
         "_to_native": lambda value: value,
         "resume_boundary_proxy": len,
+        "BRANCHING_ALGOS": BRANCHING_ALGOS,
     }
     exec(compile(ast.fix_missing_locations(module), "daemon.py", "exec"), namespace)
     return namespace["TirAgentModeDaemon"]

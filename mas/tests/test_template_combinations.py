@@ -32,7 +32,7 @@ from workflow.router import reset_round_robin  # noqa: E402
 from workflow.spec import MASSpec  # noqa: E402
 from workflow.templates import TEMPLATE_ORDER, load_template_workflow  # noqa: E402
 
-SEARCH_IDS = ("wikipedia_search", "google_search", "web_search")
+SEARCH_IDS = ("wikipedia_search", "bing_search", "web_fetch")
 NETWORK_TOOL_IDS = SEARCH_IDS + ("think",)
 
 VERIFY_OK = json.dumps({"ok": True, "reason": "ok", "step_conclusion": "COMPLETE", "slot_updates": []})
@@ -110,10 +110,16 @@ class TestTemplatesCompile(unittest.TestCase):
             self.assertEqual(spec.entry_agent, "planner")
             kinds = {a.id: a.kind for a in spec.agents}
             self.assertEqual(kinds.get("planner"), "planner")
-            self.assertEqual(kinds.get("verifier"), "verifier")
+            if tid == "tir_five_tools":
+                self.assertNotIn("verifier", kinds)
+            else:
+                self.assertEqual(kinds.get("verifier"), "verifier")
             self.assertNotIn("hub", kinds)
             edge_kinds = {e.kind for e in spec.edges}
-            self.assertTrue(edge_kinds <= {"route", "message", "feedback"})
+            allowed = {"route", "message", "feedback"}
+            if tid == "tir_five_tools":
+                allowed.add("tool_call")
+            self.assertTrue(edge_kinds <= allowed)
             compiled = compile_spec(spec)
             self.assertTrue(compiled.ok, f"{tid}: {compiled.reason}")
             self.assertTrue(compiled.routers)
@@ -140,7 +146,8 @@ class TestTemplatesCompile(unittest.TestCase):
                 self.assertTrue(router.candidates, router.id)
                 for candidate in router.candidates:
                     self.assertIn(candidate, agent_ids, f"{tid}:{candidate}")
-                self.assertEqual(compiled.message_out.get(router.id), "verifier", tid)
+                if tid != "tir_five_tools":
+                    self.assertEqual(compiled.message_out.get(router.id), "verifier", tid)
 
 
 class TestEveryTemplateEpisode(unittest.TestCase):
@@ -158,6 +165,7 @@ class TestEveryTemplateEpisode(unittest.TestCase):
             "fanout_parallel": _plan("python_coder", {"code": "result=42"}, done=True, sub_goal="compute"),
             "blank_set": _plan("python_coder", {"code": "result=42"}, done=True, sub_goal="compute"),
             "score_robin": _plan("python_coder", {"code": "result=42"}, done=True, sub_goal="compute"),
+            "tir_five_tools": _plan("wikipedia_search", {"query": "q"}, done=True, sub_goal="search"),
         }
         selected = {
             "centralized": "wikipedia_search",
@@ -166,6 +174,7 @@ class TestEveryTemplateEpisode(unittest.TestCase):
             "fanout_parallel": "python_coder",
             "blank_set": "python_coder",
             "score_robin": "python_coder",
+            "tir_five_tools": "wikipedia_search",
         }
         self.assertEqual(set(plans), set(TEMPLATE_ORDER))
         for tid in TEMPLATE_ORDER:
@@ -251,11 +260,11 @@ class TestPevSearch(unittest.TestCase):
         spec = _spec("pev_search")
         win = MockWindowLLM({
             "planner": [_plan(
-                ["wikipedia_search", "google_search", "web_search"],
+                ["wikipedia_search", "bing_search", "web_fetch"],
                 [
                     {"query": "wiki-q"},
-                    {"query": "google-q"},
-                    {"query": "web-q", "url": "https://example.com"},
+                    {"query": "bing-q"},
+                    {"query": "fetch-q", "url": "https://example.com"},
                 ],
                 done=True,
                 sub_goal="search",
@@ -275,21 +284,21 @@ class TestPevSearch(unittest.TestCase):
         self.assertEqual(raw.n_search, 3)
         by_name = {name: args for name, args in tracker}
         self.assertEqual(by_name["wikipedia_search"]["query"], "wiki-q")
-        self.assertEqual(by_name["google_search"]["query"], "google-q")
-        self.assertEqual(by_name["web_search"]["url"], "https://example.com")
+        self.assertEqual(by_name["bing_search"]["query"], "bing-q")
+        self.assertEqual(by_name["web_fetch"]["url"], "https://example.com")
 
-    def test_web_search_missing_url_errors_without_kernel(self):
+    def test_web_fetch_missing_url_errors_without_kernel(self):
         spec = _spec("pev_search")
         win = MockWindowLLM({
-            "planner": [_plan("web_search", {"query": "no-url"}, done=True, sub_goal="web")],
+            "planner": [_plan("web_fetch", {"query": "no-url"}, done=True, sub_goal="web")],
             "verifier": [VERIFY_OK],
         })
         tracker: List = []
-        with _mock_tool_invokes(("web_search",), tracker):
+        with _mock_tool_invokes(("web_fetch",), tracker):
             raw, _c, _k = _run(spec, win, task_id="pev_search_nourl")
         self.assertEqual(tracker, [])
         tool = _msgs(raw, "tool_result")[0]
-        self.assertEqual(tool["src"], "web_search")
+        self.assertEqual(tool["src"], "web_fetch")
         self.assertFalse(tool["payload"]["ok"])
         self.assertEqual(tool["payload"]["evidence_type"], "ERROR")
 
@@ -299,8 +308,8 @@ class TestCentralizedFiveTools(unittest.TestCase):
         spec = _spec("centralized")
         sequence = [
             ("wikipedia_search", {"query": "q"}),
-            ("google_search", {"query": "q"}),
-            ("web_search", {"query": "q", "url": "https://example.com"}),
+            ("bing_search", {"query": "q"}),
+            ("web_fetch", {"query": "q", "url": "https://example.com"}),
             ("python_coder", {"code": "result=42"}),
             ("think", {"text": "reason"}),
         ]

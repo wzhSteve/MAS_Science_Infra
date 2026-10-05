@@ -13,6 +13,11 @@ class LossSpec(BaseModel):
     clip_ratio_high: float = 0.3
     entropy_coeff: float = 0.0
     kl_loss_coef: float = 0.0
+    # Preset only. Actor policy loss still uses VERL clip until future_kl is wired.
+    loss_mode: str = "vanilla"  # vanilla | future_kl
+    future_kl_weight: float = 1.0
+    decay_rate: float = 64.0
+    future_kl_clip_ratio: float = 0.2
     extra: Dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}
@@ -24,6 +29,7 @@ class AdvantageSpec(BaseModel):
     name: str = "grpo"
     use_critic: bool = False
     gamma: float = 1.0
+    reward_scale_discount: float = 0.9
     extra: Dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}

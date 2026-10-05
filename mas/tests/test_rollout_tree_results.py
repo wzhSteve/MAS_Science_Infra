@@ -227,8 +227,11 @@ def test_actual_daemon_completion_uses_exact_attempt(tmp_path, rejected):
     module = ast.Module(body=[
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), method
     ], type_ignores=[])
+    from rl.hooks.overlay import BRANCHING_ALGOS
+
     namespace = {"extract_tir_meta_from_spans": lambda spans: {},
-                 "Task": SimpleNamespace, "RolloutLegacy": SimpleNamespace}
+                 "Task": SimpleNamespace, "RolloutLegacy": SimpleNamespace,
+                 "BRANCHING_ALGOS": BRANCHING_ALGOS}
     exec(compile(ast.fix_missing_locations(module), "daemon.py", "exec"), namespace)
     spans = [SimpleNamespace(attributes={RESULT_ATTRIBUTE: result().model_dump_json()})]
 

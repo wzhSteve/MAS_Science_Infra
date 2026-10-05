@@ -670,7 +670,7 @@ def mas_palette() -> Dict[str, Any]:
     except Exception:
         skills = ["verifier"]
         roles = ["planner", "verifier"]
-    tools = ["wikipedia_search", "google_search", "web_search", "python_coder", "think"]
+    tools = ["wikipedia_search", "bing_search", "web_fetch", "python_coder", "think"]
     edge_kinds = ["message", "tool_call", "feedback", "route", "sample_barrier"]
     # agent-framework W2: unified agent palette (schema 0.3). The UI renders a
     # single "Agent" drag category from these kind templates; legacy roles/tools
@@ -697,9 +697,13 @@ def mas_palette() -> Dict[str, Any]:
     ]
     tool_agents = []
     try:
-        from tools.tool_agents import TOOL_AGENTS
+        from tools.tool_agents import PALETTE_TOOL_IDS, TOOL_AGENTS
 
-        for _ta in TOOL_AGENTS.values():
+        tools = list(PALETTE_TOOL_IDS)
+        for tid in tools:
+            _ta = TOOL_AGENTS.get(tid)
+            if _ta is None:
+                continue
             tool_agents.append(
                 {
                     "id": _ta.id,

@@ -30,7 +30,7 @@ class TestPaletteContract(unittest.TestCase):
         from science_infra.control.services import mas_palette
 
         pal = mas_palette()
-        expected = ["wikipedia_search", "google_search", "web_search", "python_coder", "think"]
+        expected = ["wikipedia_search", "bing_search", "web_fetch", "python_coder", "think"]
         self.assertEqual(pal["tools"], expected)
         tool_ids = [t["id"] for t in pal["tool_agents"]]
         self.assertEqual(sorted(tool_ids), sorted(expected))
@@ -79,10 +79,16 @@ class TestPaletteContract(unittest.TestCase):
             self.assertEqual(wf["entry_agent"], "planner", tmpl["id"])
             kinds = {a["id"]: a["kind"] for a in wf["agents"]}
             self.assertEqual(kinds["planner"], "planner", tmpl["id"])
-            self.assertEqual(kinds["verifier"], "verifier", tmpl["id"])
+            if tmpl["id"] == "tir_five_tools":
+                self.assertNotIn("verifier", kinds)
+            else:
+                self.assertEqual(kinds["verifier"], "verifier", tmpl["id"])
             self.assertNotIn("hub", kinds)
             edge_kinds = {e["kind"] for e in wf["edges"]}
-            self.assertTrue(edge_kinds <= {"route", "message", "feedback"}, tmpl["id"])
+            allowed = {"route", "message", "feedback"}
+            if tmpl["id"] == "tir_five_tools":
+                allowed.add("tool_call")
+            self.assertTrue(edge_kinds <= allowed, tmpl["id"])
             spec = MASSpec.model_validate(wf)
             c = compile_spec(spec)
             self.assertTrue(c.ok, f"{tmpl['id']}: {c.reason}")

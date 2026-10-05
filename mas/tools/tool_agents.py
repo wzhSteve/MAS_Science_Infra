@@ -5,8 +5,9 @@ kernel output (or writes code, or reasons) and returns a ``tool_result``.
 Pure functions in ``mas/tools`` stay as kernels used *inside* the agent;
 they are not first-class MAS nodes.
 
-Ids: ``wikipedia_search``, ``google_search``, ``web_search``, ``python_coder``,
-``think``. ``execute_python`` maps to ``python_coder``.
+Palette ids: ``wikipedia_search``, ``bing_search``, ``web_fetch``, ``python_coder``,
+``think``. ``google_search`` resolves to ``bing_search`` and ``web_search``
+resolves to ``web_fetch``. ``execute_python`` maps to ``python_coder``.
 """
 
 from __future__ import annotations
@@ -142,9 +143,27 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
     return None
 
 
+PALETTE_TOOL_IDS = (
+    "wikipedia_search",
+    "bing_search",
+    "web_fetch",
+    "python_coder",
+    "think",
+)
+_LEGACY_TOOL_ALIASES = {
+    "google_search": "bing_search",
+    "web_search": "web_fetch",
+}
+
 TOOL_AGENT_ARGS_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "wikipedia_search": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    "bing_search": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     "google_search": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    "web_fetch": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "url": {"type": "string"}},
+        "required": ["url"],
+    },
     "web_search": {
         "type": "object",
         "properties": {"query": {"type": "string"}, "url": {"type": "string"}},
@@ -172,13 +191,20 @@ def _kernel(name: str) -> Optional[Callable[[Dict[str, Any]], str]]:
                 return str(_wiki_fn(args.get("query") or ""))
 
             return _wiki
-        if name == "google_search":
+        if name in ("bing_search", "google_search"):
             from .search import web_search as _ws
 
-            def _gog(args: Dict[str, Any]) -> str:
+            def _bing(args: Dict[str, Any]) -> str:
                 return str(_ws(args.get("query") or ""))
 
-            return _gog
+            return _bing
+        if name == "web_fetch":
+            from .search import fetch_by_type as _typed
+
+            def _typed_fetch(args: Dict[str, Any]) -> str:
+                return str(_typed(str(args.get("url") or ""), str(args.get("query") or "")))
+
+            return _typed_fetch
         if name == "web_search":
             from .search import fetch_page as _fp
 
@@ -200,8 +226,10 @@ def _kernel(name: str) -> Optional[Callable[[Dict[str, Any]], str]]:
 
 _DESCRIPTIONS = {
     "wikipedia_search": "Read Wikipedia and extract content relevant to the query",
-    "google_search": "Search the web and summarize results",
-    "web_search": "Open a URL and answer the query from the page",
+    "bing_search": "Search Bing and return up to 5 hits with title, url, and snippet. Does not open those pages.",
+    "google_search": "Search Bing and return up to 5 hits with title, url, and snippet. Does not open those pages.",
+    "web_fetch": "Open exactly one url. HTML returns text. An image response returns type and size only. PDF returns its text layer.",
+    "web_search": "Open exactly one url. HTML returns text. An image response returns type and size only. PDF returns its text layer.",
     "python_coder": "Write and execute Python to solve the task",
     "think": "Reason about the given text with no external side effects",
 }
@@ -209,7 +237,15 @@ _DESCRIPTIONS = {
 
 def _default_registry() -> Dict[str, ToolAgent]:
     out: Dict[str, ToolAgent] = {}
-    for aid in ("wikipedia_search", "google_search", "web_search", "python_coder", "think"):
+    for aid in (
+        "wikipedia_search",
+        "bing_search",
+        "web_fetch",
+        "google_search",
+        "web_search",
+        "python_coder",
+        "think",
+    ):
         kernel = _kernel(aid)
         llm_fn = _epc_aw_llm_backend(aid)
         if kernel is None and llm_fn is None:
@@ -246,6 +282,7 @@ def get_tool_agent(agent_id: str) -> Optional[ToolAgent]:
             return user  # duck-typed: invoke(args) -> str
     except Exception:
         pass
+    agent_id = _LEGACY_TOOL_ALIASES.get(agent_id, agent_id)
     return TOOL_AGENTS.get(agent_id)
 
 

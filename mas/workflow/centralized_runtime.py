@@ -620,7 +620,7 @@ def run_centralized_episode(
                     metrics={"ok": bool(tmsg.payload.get("ok"))},
                     tool_id=tmsg.src,
                 )
-                if tmsg.src in ("wikipedia_search", "google_search", "web_search"):
+                if tmsg.src in ("wikipedia_search", "bing_search", "web_fetch", "google_search", "web_search"):
                     n_search += 1
                 if tmsg.src == "python_coder":
                     n_python += 1

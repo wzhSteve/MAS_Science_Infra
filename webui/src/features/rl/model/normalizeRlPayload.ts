@@ -5,7 +5,7 @@ const SAMPLING_ALGORITHMS: Record<string, string> = {
   grpo: 'grpo',
   arpo: 'arpo',
   aepo: 'aepo',
-  appo: 'arpo',
+  appo: 'appo',
   rae: 'rae',
 };
 

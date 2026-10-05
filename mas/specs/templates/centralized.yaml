@@ -8,8 +8,8 @@ hub:
   max_feedback_hops: 5
 tools:
   - wikipedia_search
-  - google_search
-  - web_search
+  - bing_search
+  - web_fetch
   - python_coder
   - think
 agents:
@@ -19,18 +19,18 @@ agents:
     system_prompt: "把题目拆成下一步，选出 tool-agent 或并行子任务。只输出 JSON：next, args, sub_goal, done。"
     tools:
       - wikipedia_search
-      - google_search
-      - web_search
+      - bing_search
+      - web_fetch
       - python_coder
       - think
     trainable: true
   - id: wikipedia_search
     kind: tool
     trainable: false
-  - id: google_search
+  - id: bing_search
     kind: tool
     trainable: false
-  - id: web_search
+  - id: web_fetch
     kind: tool
     trainable: false
   - id: python_coder
@@ -47,8 +47,8 @@ routers:
   - id: route_exec
     candidates:
       - wikipedia_search
-      - google_search
-      - web_search
+      - bing_search
+      - web_fetch
       - python_coder
       - think
     strategy: from_plan

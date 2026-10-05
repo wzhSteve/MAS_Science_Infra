@@ -87,7 +87,9 @@ describe('RL configuration contract', () => {
     expect(updated.extension).toEqual({ keep: true });
   });
 
-  it('maps APPO sampling to the implemented ARPO runtime', () => {
-    expect(applyWorkflowSampling(config(), { mode: 'appo' }).algo).toBe('arpo');
+  it('keeps APPO sampling as its own training algorithm', () => {
+    const normalized = applyWorkflowSampling(config(), { mode: 'appo' });
+    expect(normalized.algo).toBe('appo');
+    expect(normalized.algorithm?.tir_algo).toBe('appo');
   });
 });

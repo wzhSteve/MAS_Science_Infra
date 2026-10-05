@@ -20,6 +20,7 @@ import yaml
 
 from science_infra.env import repo_root
 
+from rl.hooks.overlay import BRANCHING_ALGOS
 from .experiments import (
     VALID_ALGOS,
     apply_gpu_selection,
@@ -390,7 +391,7 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     rl["rollout_per_gpu"] = group_n
     sites = ((rl.get("algorithm") or {}).get("tir") or {}).get("sites")
     branch_site_count = sum(1 for site in sites or [] if site.get("enabled", True))
-    if algorithm in ("arpo", "aepo", "rae") and sites is None:
+    if algorithm in BRANCHING_ALGOS and sites is None:
         branch_site_count = 1
 
     checks: list[dict[str, str]] = []
@@ -525,7 +526,7 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
             "error",
             str(executable.get("reason") or "Workflow 不可执行。"),
         )
-    if executable.get("ok") and algorithm in ("arpo", "aepo", "rae"):
+    if executable.get("ok") and algorithm in BRANCHING_ALGOS:
         from workflow.contracts import BranchSite
         from workflow.site_policy import site_capability
         from workflow.spec import MASSpec

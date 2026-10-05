@@ -24,7 +24,7 @@ FEATURES: dict[str, tuple[list[str], str]] = {
         ["test_stage1_mas", "test_stage5_mas_sockets", "test_spec", "test_compiler"],
         "MAS 基础层: spec/compiler/依赖红线/奖励/mock 采集/memory sockets/runner 注入",
     ),
-    "rl": (["test_stage2_rl"], "RL overlay: TrainSignal/Archive resume 边界"),
+    "rl": (["test_stage2_rl", "test_appo_arpo_credit"], "RL overlay: TrainSignal/Archive resume，以及 APPO/ARPO 信用"),
     "harness": (["test_stage3_harness", "test_stage6_harness_thin"], "Harness: log/loss 波动/认知收敛/reward hacking"),
     "branch": (
         ["test_gates_and_rae", "test_branch_policy_activeset", "test_phase_abcd_rae_activeset"],

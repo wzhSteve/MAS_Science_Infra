@@ -18,7 +18,7 @@ from science_infra.control.experiments import VALID_ALGOS, ensure_experiment, lo
 
 
 class TestStudioMeta(unittest.TestCase):
-    def test_meta_algos_match_valid_algos_without_appo(self):
+    def test_meta_algos_include_arpo_and_appo(self):
         from fastapi.testclient import TestClient
 
         from science_infra.control.app import create_app
@@ -28,10 +28,11 @@ class TestStudioMeta(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         algos = r.json()["algos"]
         self.assertEqual(algos, list(VALID_ALGOS))
-        self.assertNotIn("appo", algos)
+        self.assertIn("appo", algos)
+        self.assertIn("arpo", algos)
         self.assertEqual(
             set(algos),
-            {"grpo", "arpo", "aepo", "igpo", "gigpo", "rae"},
+            {"grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae"},
         )
 
 

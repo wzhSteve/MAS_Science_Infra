@@ -8,7 +8,9 @@ from typing import Any, Dict, TYPE_CHECKING
 if TYPE_CHECKING:
     from rl.train_signal import TrainSignal
 
-VALID_ALGOS = ("grpo", "arpo", "aepo", "igpo", "gigpo", "rae")
+VALID_ALGOS = ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae")
+# Algorithms that fork extra rollouts. APPO shares ARPO's expansion path; credit differs later.
+BRANCHING_ALGOS = ("arpo", "appo", "aepo", "rae")
 
 DEFAULT_TIR: Dict[str, Any] = {
     "initial_rollouts": 2,
@@ -70,7 +72,7 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
         "grpo": "grpo",
         "arpo": "arpo",
         "aepo": "aepo",
-        "appo": "arpo",
+        "appo": "appo",
         "rae": "rae",
     }
     algo = algo_map.get(mode, mode if mode in VALID_ALGOS else "grpo")
@@ -110,12 +112,20 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
     algo_block["adv_estimator"] = "grpo"
     algo_block["use_kl_in_reward"] = False
     algo_block["tir_algo"] = algo
+    user_tir = dict(algo_block.get("tir") or {})
     tir = dict(DEFAULT_TIR)
-    tir.update(dict(algo_block.get("tir") or {}))
-    if algo in ("arpo", "aepo", "rae"):
+    tir.update(user_tir)
+    if algo in ("arpo", "appo", "aepo", "rae"):
         n = int(cfg.get("actor_rollout_ref", {}).get("rollout", {}).get("n", 4))
         tir["initial_rollouts"] = max(1, min(tir["initial_rollouts"], n - 1 if n > 1 else 1))
         tir["ready_batch"] = bool(tir.get("ready_batch", True))
+    if algo == "arpo" and "loss_mode" not in user_tir:
+        tir["loss_mode"] = "vanilla"
+    if algo == "appo":
+        if "loss_mode" not in user_tir:
+            tir["loss_mode"] = "future_kl"
+        if "reward_scale_discount" not in user_tir:
+            tir["reward_scale_discount"] = 0.9
     if algo == "rae":
         tir["rae_full_tgt"] = bool(tir.get("rae_full_tgt", False))
         tir["rae_dead_end_backprop"] = bool(tir.get("rae_dead_end_backprop", True))
@@ -143,6 +153,15 @@ def apply_train_signal(config: Dict[str, Any], signal: "TrainSignal") -> Dict[st
     cfg["actor_rollout_ref"] = roll
     tir = dict(cfg["algorithm"].get("tir") or {})
     tir["gamma"] = float(signal.advantage.gamma)
+    tir["reward_scale_discount"] = float(signal.advantage.reward_scale_discount)
+    loss_mode = str(signal.loss.loss_mode or "vanilla")
+    if algo == "appo" and loss_mode == "vanilla":
+        loss_mode = str(tir.get("loss_mode") or "future_kl")
+    tir["loss_mode"] = loss_mode
+    tir["future_kl_weight"] = float(signal.loss.future_kl_weight)
+    tir["decay_rate"] = float(signal.loss.decay_rate)
+    tir["future_kl_clip_ratio"] = float(signal.loss.future_kl_clip_ratio)
+    tir["loss_applied_to_actor"] = loss_mode != "future_kl"
     cfg["algorithm"]["tir"] = tir
     return ensure_trainer_horizon(cfg)
 

@@ -68,7 +68,14 @@ def apply_tir_advantages(
         config=config,
     )
 
-    if algo in ("grpo", "arpo"):
+    if algo == "arpo":
+        return batch
+    if algo == "appo":
+        return apply_appo_credit(
+            batch,
+            discount=float(tir.get("reward_scale_discount", 0.9)),
+        )
+    if algo == "grpo":
         batch = _maybe_zero_prefix(batch, tir)
         return batch
     if algo == "rae":
@@ -102,6 +109,70 @@ def apply_tir_advantages(
             gamma=float(tir.get("gamma", 1.0)),
             mode=str(tir.get("gigpo_mode", "mean_std")),
         )
+    return batch
+
+
+def apply_appo_credit(batch: DataProto, *, discount: float = 0.9) -> DataProto:
+    """Branch rows leave the actor. Their outcome is written back onto the parent.
+
+    ``future_kl`` is stored on the training config and is not applied here.
+    """
+    if "advantages" not in batch.batch:
+        return batch
+    adv = batch.batch["advantages"].clone()
+    n = int(adv.shape[0])
+    ntb = batch.non_tensor_batch
+    roles = _as_list(ntb.get("rollout_role"))
+    data_ids = _as_list(ntb["data_id_list"] if "data_id_list" in ntb else ntb.get("uid"))
+    if "rollout_id_list" in ntb:
+        rollout_ids = _as_list(ntb["rollout_id_list"])
+    else:
+        rollout_ids = _as_list(ntb.get("rollout_id"))
+    parent_links = _as_list(ntb.get("resume_parent_id"))
+    if "response_mask" in batch.batch:
+        mask = batch.batch["response_mask"].to(dtype=adv.dtype)
+    else:
+        mask = torch.ones_like(adv)
+    if "token_level_scores" in batch.batch:
+        outcomes = batch.batch["token_level_scores"].sum(-1).detach()
+    else:
+        outcomes = adv.new_zeros(n)
+
+    branch_rows: List[int] = []
+    parent_rows: List[int] = []
+    for i in range(n):
+        role = str(roles[i] if i < len(roles) and roles[i] is not None else "parent").lower()
+        if role in ("child", "probe", "branch"):
+            branch_rows.append(i)
+            adv[i] = 0
+        else:
+            parent_rows.append(i)
+
+    grouped: Dict[tuple, List[float]] = defaultdict(list)
+    for i in branch_rows:
+        did = str(data_ids[i]) if i < len(data_ids) and data_ids[i] is not None else ""
+        parent_id = str(parent_links[i]) if i < len(parent_links) and parent_links[i] else ""
+        grouped[(did, parent_id)].append(float(outcomes[i]))
+
+    scale = float(discount)
+    for i in parent_rows:
+        did = str(data_ids[i]) if i < len(data_ids) and data_ids[i] is not None else ""
+        rid = str(rollout_ids[i]) if i < len(rollout_ids) and rollout_ids[i] else ""
+        vals = list(grouped.get((did, rid), []))
+        if not vals:
+            for (group_id, parent_id), group_vals in grouped.items():
+                if group_id == did and (parent_id == "" or rid == "" or parent_id == rid):
+                    vals.extend(group_vals)
+        if not vals:
+            continue
+        bonus = scale * (sum(vals) / len(vals))
+        adv[i] = adv[i] + bonus * mask[i]
+    batch.batch["advantages"] = adv
+    if "returns" in batch.batch:
+        returns = batch.batch["returns"].clone()
+        for i in branch_rows:
+            returns[i] = 0
+        batch.batch["returns"] = returns
     return batch
 
 

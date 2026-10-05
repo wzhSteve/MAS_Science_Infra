@@ -41,7 +41,7 @@ const SUPPORT = {
   unavailable: { tone: 'neutral', label: '暂不支持' },
 } as const;
 const EMPTY_OPPORTUNITIES: SamplingOpportunity[] = [];
-const IMPLEMENTED_MODES = new Set(['grpo', 'grpo_n', 'arpo']);
+const IMPLEMENTED_MODES = new Set(['grpo', 'grpo_n', 'arpo', 'appo']);
 
 const CandidateRow = memo(function CandidateRow({ opportunity, selected, onSelect }: {
   opportunity: SamplingOpportunity;
@@ -189,7 +189,7 @@ export const SamplingSettings = memo(function SamplingSettings({
             const algo = event.target.value;
             training.patch(current => ({ ...current, algo, algorithm: { ...current.algorithm, tir_algo: algo } }));
           }}>
-            {Array.from(new Set([algorithm, 'grpo', 'arpo', 'aepo', 'igpo', 'gigpo', 'rae'])).map(value =>
+            {Array.from(new Set([algorithm, 'grpo', 'arpo', 'appo', 'aepo', 'igpo', 'gigpo', 'rae'])).map(value =>
               <option key={value} value={value}>{value.toUpperCase()}</option>)}
           </Select>
         </FormField>
@@ -254,6 +254,9 @@ export const SamplingSettings = memo(function SamplingSettings({
       {!branching && <div className="sampling-independent-note">
         <CircleDot size={14} /><span>GRPO 使用独立 Rollout，不需要配置分支位置</span>
       </div>}
+      {sampling.mode === 'appo' && <InlineNotice tone="warning">
+        APPO 的分支不进入 actor，折扣后的结果写回原轨迹。future_kl 已写入训练预设，尚未接到 actor 的 policy loss。
+      </InlineNotice>}
     </Section>}
 
     {previewError && <InlineNotice tone="warning">采样能力读取失败：{previewError}</InlineNotice>}

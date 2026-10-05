@@ -321,8 +321,6 @@ def main() -> int:
     base = args.base
     exp = args.experiment
     algo = str(args.algo or "arpo").lower().strip()
-    if algo == "appo":
-        algo = "arpo"
     failed = 0
 
     def ok(name: str, cond: bool, detail: Any = "") -> None:

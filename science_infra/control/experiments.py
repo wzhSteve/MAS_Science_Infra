@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from science_infra.control.paths import experiments_root, server_data_path, tir_agent_root
 
-VALID_ALGOS = ("grpo", "arpo", "aepo", "igpo", "gigpo", "rae")
+VALID_ALGOS = ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae")
 HARNESS_PLUGINS = (
     "log_error",
     "loss_volatility",
@@ -94,7 +94,7 @@ def default_workflow() -> Dict[str, Any]:
         "schema_version": "0.1.0",
         "topology": "centralized",
         "hub": {"role": "planner", "skills": []},
-        "tools": ["wikipedia_search", "google_search", "web_search", "python_coder", "think"],
+        "tools": ["wikipedia_search", "bing_search", "web_fetch", "python_coder", "think"],
         "llm": {"kind": "api", "model": "", "base_url": ""},
         "memory": {"agent": "messages", "system": "none"},
         "archive": {"window": "post_first_tool"},

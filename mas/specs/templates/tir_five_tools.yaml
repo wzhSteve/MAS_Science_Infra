@@ -1,0 +1,120 @@
+label: 单策略五工具（APPO / ARPO）
+schema_version: "0.3"
+topology: centralized
+entry_agent: planner
+hub:
+  role: planner
+  skills: []
+  max_feedback_hops: 5
+  system_prompt: ""
+tools:
+  - wikipedia_search
+  - bing_search
+  - web_fetch
+  - python_coder
+  - think
+agents:
+  - id: planner
+    kind: planner
+    role: planner
+    trainable: true
+    tools:
+      - wikipedia_search
+      - bing_search
+      - web_fetch
+      - python_coder
+      - think
+    system_prompt: "你是唯一的解题策略。逐步推理，需要事实时选择 wikipedia_search、bing_search 或 web_fetch，需要计算时选择 python_coder，需要整理已有信息时选择 think。每一步只输出 JSON：next, args, sub_goal, done。得到足够证据后把最终答案放进 done=true 的 JSON。"
+  - id: wikipedia_search
+    kind: tool
+    trainable: false
+  - id: bing_search
+    kind: tool
+    trainable: false
+  - id: web_fetch
+    kind: tool
+    trainable: false
+  - id: python_coder
+    kind: tool
+    trainable: false
+  - id: think
+    kind: tool
+    trainable: false
+routers:
+  - id: route_exec
+    candidates:
+      - wikipedia_search
+      - bing_search
+      - web_fetch
+      - python_coder
+      - think
+    strategy: from_plan
+    output_contract: json
+edges:
+  - from: planner
+    to: route_exec
+    kind: route
+  - from: planner
+    to: wikipedia_search
+    kind: tool_call
+  - from: planner
+    to: bing_search
+    kind: tool_call
+  - from: planner
+    to: web_fetch
+    kind: tool_call
+  - from: planner
+    to: python_coder
+    kind: tool_call
+  - from: planner
+    to: think
+    kind: tool_call
+sampling:
+  mode: grpo_n
+  group_n: 4
+  beam_size: 2
+  initial_rollouts: 2
+  max_branch_depth: 2
+  expand_in_runner: true
+  barriers: []
+  sites:
+    - id: site_wikipedia_search
+      enabled: true
+      anchor: {kind: after_tool, agent_id: planner, tool_id: wikipedia_search}
+      when: first
+      gate:
+        type: entropy_delta
+        params: {use_official_arpo_gate: true, branch_probability: 0.5, entropy_weight: 0.2}
+      priority: 10
+    - id: site_bing_search
+      enabled: true
+      anchor: {kind: after_tool, agent_id: planner, tool_id: bing_search}
+      when: first
+      gate:
+        type: entropy_delta
+        params: {use_official_arpo_gate: true, branch_probability: 0.5, entropy_weight: 0.2}
+      priority: 10
+    - id: site_web_fetch
+      enabled: true
+      anchor: {kind: after_tool, agent_id: planner, tool_id: web_fetch}
+      when: first
+      gate:
+        type: entropy_delta
+        params: {use_official_arpo_gate: true, branch_probability: 0.5, entropy_weight: 0.2}
+      priority: 10
+    - id: site_python_coder
+      enabled: true
+      anchor: {kind: after_tool, agent_id: planner, tool_id: python_coder}
+      when: first
+      gate:
+        type: entropy_delta
+        params: {use_official_arpo_gate: true, branch_probability: 0.5, entropy_weight: 0.2}
+      priority: 10
+    - id: site_think
+      enabled: true
+      anchor: {kind: after_tool, agent_id: planner, tool_id: think}
+      when: first
+      gate:
+        type: entropy_delta
+        params: {use_official_arpo_gate: true, branch_probability: 0.5, entropy_weight: 0.2}
+      priority: 10

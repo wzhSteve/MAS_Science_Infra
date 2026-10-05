@@ -14,6 +14,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "specs" / "templates"
 # Display order in the GraphPalette 模板 tab (must match files on disk).
 TEMPLATE_ORDER = [
     "centralized",
+    "tir_five_tools",
     "pev_python",
     "pev_search",
     "fanout_parallel",
@@ -22,6 +23,7 @@ TEMPLATE_ORDER = [
 ]
 
 TEMPLATE_LABELS = {
+    "tir_five_tools": "单策略五工具（APPO / ARPO）",
     "centralized": "中心化 PEV + Router",
     "pev_python": "最小 PEV（python_coder）",
     "pev_search": "检索 PEV（wiki / google / web）",

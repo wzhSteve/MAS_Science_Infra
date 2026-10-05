@@ -179,7 +179,7 @@ export const SAMPLING_MODE_OPTIONS = [
   { value: 'grpo_n', label: 'GRPO', help: '每道题生成固定数量的独立 Rollout。' },
   { value: 'arpo', label: 'ARPO', help: '根据 Entropy ΔH 在 Branch Site 扩展后续路径。' },
   { value: 'aepo', label: 'AEPO', help: '使用 Entropy 与 Information Gain 分配 Branch Budget。' },
-  { value: 'appo', label: 'APPO', help: '自适应路径采样；当前训练实现映射到 ARPO。' },
+  { value: 'appo', label: 'APPO', help: '在工具结果处分支。分支只做对比，信用按折扣写回原轨迹。future_kl 预设尚未接到 actor。' },
   { value: 'rae', label: 'RAE', help: '结合 Verifier Verdict 与 Dead-end Backprop。' },
 ] as const;
 

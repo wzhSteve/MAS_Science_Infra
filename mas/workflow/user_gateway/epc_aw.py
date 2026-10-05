@@ -1167,6 +1167,18 @@ _DISPATCH_META: Dict[str, Dict[str, Any]] = {
         }],
         "require_llm_engine": False,
     },
+    "Wikipedia_Search_Tool": {
+        "tool_name": "Wikipedia_Search_Tool",
+        "tool_description": (
+            "Search Wikipedia titles only. Returns title, url, and snippet. "
+            "Does not open the page. Call Web_Fetch_Tool with one url on a later step if the snippet is not enough."
+        ),
+        "tool_version": "1.0.0",
+        "input_types": {"query": "str - the search query."},
+        "output_type": "str - numbered hits, each with title, url, and snippet.",
+        "demo_commands": [{"command": 'execution = tool.execute(query="Citibank")', "description": "Search Wikipedia."}],
+        "require_llm_engine": False,
+    },
 }
 
 
