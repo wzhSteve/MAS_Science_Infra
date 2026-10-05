@@ -1,0 +1,125 @@
+Task:
+Evaluate the feasibility and relevance of a series of proposed plans
+based on the given query, available tools, and historical execution records.
+The final output must be a ranked list of plan indices.
+
+IMPORTANT ROLE ASSUMPTION:
+You are evaluating plans from the DIAGNOSER perspective.
+
+For the Diagnoser:
+Previous Steps consist EXCLUSIVELY of historical executions
+that were VERIFIED as SUCCESSFUL
+and led to correct or useful Target Information.
+They represent POSITIVE PRECEDENT, not failures.
+
+==================================================
+Context
+==================================================
+
+Query: {Question}
+
+Target Information: {Target_Information}
+
+Available Tools: {Available_Tools}
+
+Toolbox Metadata: {Toolbox_Metadata}
+
+Previous Steps: {Previous_Steps}
+
+IMPORTANT:
+- All Previous Steps are SUCCESSFUL execution traces.
+- They define KNOWN-WORKING patterns of:
+    • tool usage,
+    • evidence acquisition,
+    • execution structure.
+- Plans should be evaluated by their SIMILARITY to,
+  or DEVIATION from, these successful precedents.
+
+Proposed Plans: {Proposed_Plans}
+
+Obtained Information So Far: {Obtained_Information_So_Far}
+
+Number of Plans: {Number_of_Plans}
+
+Index Range: {Index_Range}
+
+==================================================
+Feasibility and Scoring Criteria
+==================================================
+
+{Feasibility_and_Scoring_Criteria}
+
+In addition to the criteria above, you MUST apply
+the following Diagnoser-specific principles:
+
+1. Success-Analogy Principle (MANDATORY):
+   - Plans that closely resemble Previous Steps
+     in tool choice, execution order, or evidence structure
+     SHOULD receive higher feasibility scores.
+   - Plans that lack similarity to any Previous Step
+     SHOULD receive lower feasibility scores,
+     unless there is a clear justification for generalization.
+
+2. Positive Precedent Priority:
+   - Established successful tool–evidence configurations
+     are more credible than novel but untested combinations.
+   - Abstraction is allowed, but unsupported novelty is penalized.
+
+3. Failure Awareness (Indirect):
+   - If a plan deviates significantly from all known successful patterns
+     without compensating structure, it should be treated as higher risk,
+     even if not explicitly contradicted by Previous Steps.
+
+==================================================
+Instructions
+==================================================
+
+1. For EVERY proposed plan, assign a feasibility score
+   in the range [1, 5] (floating-point values allowed).
+
+   You MUST differentiate plans whenever:
+   - their similarity to Previous Steps differs, OR
+   - their alignment with known successful patterns differs.
+
+   Do NOT assign identical scores unless plans are genuinely
+   indistinguishable with respect to:
+   - success analogy,
+   - tool usage,
+   - and structural feasibility.
+
+   Higher score = stronger belief that the plan would succeed,
+   based on historical positive precedent.
+
+2. Rank ALL plans strictly by these scores, from highest to lowest.
+   - ALL indices MUST appear exactly once.
+   - No omissions and no subsets.
+
+3. If two plans receive the same score after rigorous evaluation:
+   - Prefer the plan that more closely follows
+     previously successful execution patterns.
+   - If still tied, prefer the plan requiring fewer uncertain
+     or unreliable tool calls.
+
+4. Perform all reasoning step-by-step internally.
+   - Do NOT include reasoning or explanations in the final output.
+
+5. Output MUST be valid JSON ONLY.
+   - Do NOT output any text outside the JSON object.
+
+==================================================
+Response Format (STRICT)
+==================================================
+
+{{
+    "scores": {{"0": score0, "1": score1, ..., "N": scoreN}},
+    "ranked_plan_indices": [index1, index2, ..., indexN]
+}}
+
+==================================================
+Final Output Example
+==================================================
+
+{{
+    "scores": {{"0": 4.5, "1": 3.0, "2": 5.0}},
+    "ranked_plan_indices": [2, 0, 1]
+}}  

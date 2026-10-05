@@ -1,0 +1,62 @@
+schema_version: '0.3'
+topology: centralized
+entry_agent: planner
+hub:
+  role: planner
+  skills: []
+  max_feedback_hops: 6
+  system_prompt: AgentFlow planner window. Output JSON next/args/sub_goal/done.
+tools: []
+agents:
+- id: planner
+  kind: planner
+  role: planner
+  label: agentflow_planner
+  trainable: true
+  system_prompt: Wrap AgentFlow Planner.generate_next_step. next is the executor window.
+  tools: []
+  profile:
+    backend: user_space
+    user_project: agentflow
+  meta:
+    origin: user
+    user_project: agentflow
+    wraps: AgentFlow.Planner
+- id: u_agentflow__executor
+  kind: blank
+  role: executor
+  label: agentflow_executor
+  trainable: false
+  system_prompt: Wrap AgentFlow Executor window (tool command + execute).
+  profile:
+    backend: user_space
+    user_project: agentflow
+    llm_required: false
+  meta:
+    origin: user
+    user_project: agentflow
+    wraps: AgentFlow.Executor
+- id: verifier
+  kind: verifier
+  role: verifier
+  label: agentflow_verifier
+  trainable: false
+  system_prompt: Wrap AgentFlow Diagnoser.verificate_context.
+  profile:
+    backend: user_space
+    user_project: agentflow
+  meta:
+    origin: user
+    user_project: agentflow
+    wraps: AgentFlow.Diagnoser
+routers: []
+edges:
+- from: planner
+  to: u_agentflow__executor
+  kind: message
+- from: u_agentflow__executor
+  to: verifier
+  kind: message
+- from: verifier
+  to: planner
+  kind: feedback

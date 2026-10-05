@@ -1,0 +1,59 @@
+Task: Analyze the user query to determine the required reasoning skills, the most suitable tools, and create a detailed, step-by-step execution outline in JSON format.
+
+**Core Assumption:** Assume that in every step where external information is needed (via a tool), the required information will be successfully and completely retrieved.
+
+Inputs:
+- Query: {Question}
+- Available Tools: {Available_Tools}
+- Tool Metadata: {Toolbox_Metadata}
+
+### Analysis and Outline Requirements
+
+Your final output must be a single JSON object containing two main sections: `Analysis` and `ExecutionOutline`.
+
+## 1. Analysis (Detailed Breakdown)
+
+### 1.1 Core Objectives and Information Gaps
+* **Identify the fundamental request:** Precisely interpret the user's intent.
+* **Breakdown:** Decompose the query into the smallest necessary sub-questions or distinct pieces of information required.
+
+### 1.2 Required Reasoning Skills
+* **Infer Skills:** List and briefly explain the specific reasoning skills (e.g., Entity Recognition, Keyword Extraction, Disambiguation, Data Extraction, Multi-step Reasoning, Factual Verification, Synthesis) that are necessary to process the query and the retrieved data.
+
+### 1.3 Special Considerations
+* **Identify Risks/Ambiguities:** Note any potential ambiguities, missing constraints in the query, or areas where the query might need implicit assumptions or reformulation.
+* **Dependencies:** Note any multi-step dependencies (i.e., information from Step 1 is required to formulate the query for Step 2).
+
+## 2. Execution Outline (Evidence-Grounded)
+
+Construct a minimal, sequential execution plan (3 steps).
+
+Hard Requirement on Step 1
+- Its sole purpose is to:
+- Ground the task in external evidence;
+- Identify authoritative sources;
+- Surface key entities, facts, constraints, or candidates needed for planning.
+
+Create a sequential plan detailing the minimum number of steps required to fully answer the query by obtain the missing information, assuming all steps are successful.
+
+### Outline Structure
+The final plan must be an ordered list of steps within the JSON key `ExecutionOutline`. Each step object must contain:
+* `TargetInformation`: The specific piece of information this step aims to obtain for resolving the query.
+* `OperationDetails`: A description of the exact operation/query/data required for this step. Provide the exact query that would be passed to the tool (e.g., "Search for 'latest news on Tesla stock split'").
+* `Output`: The final result expected from this specific step (e.g., "A list of 5 restaurants near Times Square," "The definition of 'dark matter'").
+
+
+### Final Output Format
+
+You must output a single JSON object following this schema. Do not include any text, reasoning, or explanation outside of the JSON structure:
+
+{{
+"Analysis": "A precise interpretation of the user's intent.",
+"ExecutionOutline":
+    {{
+    "1": "Target Information: (TargetInformation). Operation Details: (ToolName/Internal Logic). Expected Output: (Specific Result).",
+    "2": "Target Information: (TargetInformation). Operation Details: (ToolName/Internal Logic). Expected Output: (Specific Result).",
+    "3": "Target Information: (TargetInformation). Operation Details: (ToolName/Internal Logic). Expected Output: (Specific Result)."
+    }}
+    // ... all subsequent steps required and the number of steps is limited to 3-5 steps
+}}

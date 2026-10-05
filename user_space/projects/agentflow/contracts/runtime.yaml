@@ -1,0 +1,11 @@
+n: 1
+max_steps: 2
+max_time: 120
+max_tokens: 256
+temperature: 0.7
+enabled_tools:
+- Base_Generator_Tool
+- Python_Coder_Tool
+- Wikipedia_Search_Tool
+- Bing_Search_Tool
+- Web_Fetch_Tool

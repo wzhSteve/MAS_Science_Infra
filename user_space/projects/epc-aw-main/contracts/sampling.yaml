@@ -1,0 +1,34 @@
+mode: arpo
+group_n: 4
+beam_size: 2
+sites:
+- id: after_planner
+  enabled: true
+  anchor:
+    kind: after_agent_turn
+    agent_id: planner
+  gate:
+    type: always
+  fork:
+    beam_size: 2
+    resume_mode: messages
+- id: after_u_epc-aw-main__executor
+  enabled: true
+  anchor:
+    kind: after_agent_turn
+    agent_id: u_epc-aw-main__executor
+  gate:
+    type: always
+  fork:
+    beam_size: 2
+    resume_mode: messages
+- id: after_verifier
+  enabled: true
+  anchor:
+    kind: after_verifier
+    agent_id: verifier
+  gate:
+    type: always
+  fork:
+    beam_size: 2
+    resume_mode: messages

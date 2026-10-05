@@ -1,0 +1,100 @@
+schema_version: '0.3'
+topology: centralized
+entry_agent: planner
+hub:
+  role: planner
+  skills: []
+  max_feedback_hops: 3
+  system_prompt: HIVE planner window. Output JSON next/args/sub_goal/done.
+agents:
+- id: planner
+  kind: planner
+  role: planner
+  trainable: true
+  system_prompt: Wrap HIVE Planner.generate_next_step. next must be the executor tool
+    id.
+  tools:
+  - u_hive__executor
+  profile:
+    backend: user_space
+    user_project: hive
+  meta:
+    origin: user
+    user_project: hive
+    wraps: HIVE.Planner
+- id: u_hive__executor
+  kind: tool
+  role: tool
+  trainable: false
+  system_prompt: Wrap HIVE Executor tool pool (Wikipedia/Google/Web/Python/BaseGenerator).
+  profile:
+    backend: user_space
+    user_project: hive
+    llm_required: false
+  meta:
+    origin: user
+    user_project: hive
+    wraps: HIVE.Executor
+- id: verifier
+  kind: verifier
+  role: verifier
+  trainable: false
+  system_prompt: Wrap HIVE Solver._run_verification (Diagnoser + after_verify).
+  profile:
+    backend: user_space
+    user_project: hive
+  meta:
+    origin: user
+    user_project: hive
+    wraps: HIVE.Diagnoser
+routers:
+- id: route_exec
+  candidates:
+  - u_hive__executor
+  strategy: from_plan
+  output_contract: json
+edges:
+- from: planner
+  to: route_exec
+  kind: route
+- from: route_exec
+  to: verifier
+  kind: message
+- from: verifier
+  to: planner
+  kind: feedback
+sampling:
+  mode: arpo
+  group_n: 4
+  beam_size: 2
+  sites:
+  - id: after_planner
+    enabled: true
+    anchor:
+      kind: after_agent_turn
+      agent_id: planner
+    gate:
+      type: always
+    fork:
+      beam_size: 2
+      resume_mode: messages
+  - id: after_route_exec
+    enabled: true
+    anchor:
+      kind: after_agent_turn
+      agent_id: route_exec
+    gate:
+      type: always
+    fork:
+      beam_size: 2
+      resume_mode: messages
+  - id: after_verifier
+    enabled: true
+    anchor:
+      kind: after_verifier
+      agent_id: verifier
+    gate:
+      type: always
+    fork:
+      beam_size: 2
+      resume_mode: messages

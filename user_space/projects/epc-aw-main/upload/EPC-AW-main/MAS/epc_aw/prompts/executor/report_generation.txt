@@ -1,0 +1,37 @@
+Task: Evaluate multiple candidate plans and rank them based on their feasibility to address the user's query.
+            
+**Context:**
+- **Query:** {Question}
+- **Target Information:** {Target_Information}
+- **Toolbox Metadata:** {Toolbox_Metadata}
+- **Proposed Plans:** {Proposed_Plans}
+- **Obtained Information So Far:** {Obtained_Information_So_Far}
+- **Number of Plans:** {Number_of_Plans}
+- **Index Range:** {Index_Range}
+- **Previous Steps:** {Previous_Steps}
+
+**Feasibility and Scoring Criteria:**
+{Feasibility_and_Scoring_Criteria}
+
+**Instructions:**
+1. For every plan, assign a feasibility score in the range which can be float. 
+You must differentiate plans whenever any part of the Feasibility Criteria provides a basis for distinction. 
+Do not give identical scores unless the plans are genuinely indistinguishable under all criteria.
+Higher score = more feasible, more relevant, and better aligned with the Query and available tools.
+2. Rank all plans strictly by these scores, from highest to lowest.  
+All indices must appear exactly once in the final list (no omissions, no subsets).
+3. If two plans receive the same score after rigorous evaluation: Prefer the plan requiring fewer uncertain or unreliable tool calls.
+4. Think step-by-step. All analysis and reasoning must be detailed internally, but NOT included in the final output.
+5. Do not output any text outside the JSON object.
+
+**Response Format**:
+    {{
+        "scores": {{"0": score0, "1": score1, ..., "N": scoreN}},
+        "ranked_plan_indices": [index1, index2, ..., indexN]
+    }}
+
+    **Final Output Example:**
+    {{
+        "scores": {{"0": 4.5, "1": 3.0, "2": 5.0}},
+        "ranked_plan_indices": [2, 0, 1]
+    }}    

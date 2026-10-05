@@ -1,0 +1,18 @@
+id: agentflow
+title: AgentFlow
+mode: native_mas
+status: ready
+entry: adapted/entry.py:UserAgent
+experiment_id: ''
+agent_ids:
+- planner
+- u_agentflow__executor
+- verifier
+tool_ids:
+- u_agentflow__executor
+writable_root:
+- adapted
+- contracts
+- artifacts
+wraps: AgentFlow.PEV
+source: /root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow

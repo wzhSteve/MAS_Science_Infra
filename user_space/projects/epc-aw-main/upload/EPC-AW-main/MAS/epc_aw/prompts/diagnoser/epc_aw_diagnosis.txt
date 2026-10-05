@@ -1,0 +1,123 @@
+**Task**  
+Determine whether the **Planner-selected plan** exhibits
+**Epistemic Planning Calibration failure in Agentic Workflow (EPC-AW)**—i.e.,
+it appears more feasible than the **BTS-selected plan** due to **implicit,
+unsupported assumptions** arising from **incomplete or unreachable information**.
+
+If EPC-AW is detected, generate **one reusable epistemic constraint**
+to prevent future planning decisions from repeating this failure.
+
+---
+
+## Background (Cognitive Miscalibration)
+
+In LLM-based Multi-Agent Systems (LLM-MAS), users do **not** provide complete
+information upfront. Agents must iteratively acquire and analyze evidence.
+This **incomplete-information setting** induces cognitive miscalibration:
+
+1. **Action Miscalibration**  
+   The planning agent’s confidence in its chosen actions does **not reflect
+   real-world feasibility** under actual tool and evidence constraints.
+
+2. **Goal Miscalibration**  
+   After failure, the planning agent often **fixates on tool invocation details**
+   (e.g., tweaking search parameters) and **repeats failed actions under the same goal**,
+   instead of questioning whether the **goal itself is epistemically invalid**.
+
+EPC-AW captures both failure modes.
+
+---
+
+## Inputs
+- Planner Plan: {Planner_Plan}  
+- BTS Plan: {BTS_Plan}  
+- Target Information: {Target_Information}  
+- Executor Result: {Executor_Result}  
+- Verified Memory (tool outputs only): {Verified_Memory}  
+
+---
+
+## ANALYSIS PROCEDURE
+
+### Step 0 — Information Sufficiency
+Using **Verified Memory only**, classify the question as:
+- ANSWERABLE
+- PARTIALLY_ANSWERABLE
+- NOT_ANSWERABLE
+
+If PARTIALLY / NOT:
+- List **missing concrete information** (entities, definitions, alignments),
+- Do **not** list queries or keywords.
+
+---
+
+### Step 1 — Failure Attribution  
+*(Required if PARTIALLY / NOT_ANSWERABLE)*
+
+Select all that apply:
+- QUERY_ABSTRACTION_FAILURE  
+- TOOL_CAPABILITY_LIMITATION  
+- ENTITY_UNDERDETERMINATION  
+- INFORMATION_NON_EXISTENCE  
+- PIPELINE_MISALIGNMENT  
+
+---
+
+### Step 2 — Tool Reachability Check
+
+Given the **current toolset**, is the missing information retrievable?
+
+Select ONE:
+- **YES** — specify tool and evidence type  
+- **NO** — explain hard tool or information mismatch  
+- **UNCERTAIN** — explain required plan decomposition change  
+
+---
+
+### Step 3 — Assumption Type Identification
+
+Identify assumption types relied on by the **Planner Plan**:
+- ASSUMED_EXISTENCE  
+- ASSUMED_TOOL_COVERAGE  
+- ASSUMED_SUFFICIENCY  
+- SEARCH_ABSENCE_EQUIVALENCE  
+- NONE  
+
+---
+
+### Step 4 — Evidence Grounding
+
+For each identified assumption:
+- Check direct support in **Verified Memory** or **Executor Result**.
+- Mark as **UNSUPPORTED** if no direct evidence exists.
+
+---
+
+### Step 5 — Counterfactual Feasibility Test
+
+Remove all **unsupported assumptions** from the Planner Plan.
+
+EPC-AW is **PRESENT** if:
+- The Planner Plan is no longer more feasible than the BTS Plan,
+  OR its advantage depends on repeating actions under an unchanged, invalid goal.
+
+EPC-AW is **ABSENT** if:
+- The Planner Plan remains equally or more feasible without those assumptions.
+
+---
+
+### Step 6 — Epistemic Constraint Generation (If EPC-AW Present)
+
+Generate **one concise, reusable constraint** that:
+- Explicitly targets **action miscalibration and/or goal miscalibration**,
+- Forbids feasibility judgments under unreachable or unverifiable information,
+- Requires **goal revision** (not tool-parameter tweaking) when failures persist.
+
+---
+
+## OUTPUT FORMAT (STRICT JSON ONLY)
+
+{{
+  "epc_aw_analysis": "Explain whether the Planner’s feasibility advantage depends on unsupported assumptions under incomplete or unreachable information conditions.",
+  "epistemic_constraint": "A concise, reusable planning constraint that prevents future assumption-induced feasibility miscalibration."
+}}

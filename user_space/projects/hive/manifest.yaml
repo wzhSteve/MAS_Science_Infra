@@ -1,0 +1,16 @@
+id: hive
+title: HIVE PEV wrap
+mode: native_mas
+status: ready
+entry: adapted/entry.py:UserAgent
+experiment_id: ''
+agent_ids:
+- planner
+- verifier
+tool_ids:
+- u_hive__executor
+writable_root:
+- adapted
+- contracts
+- artifacts
+wraps: ref_Rep/HIVE

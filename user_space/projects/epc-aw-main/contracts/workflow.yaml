@@ -1,0 +1,96 @@
+schema_version: '0.3'
+topology: centralized
+entry_agent: planner
+hub:
+  role: planner
+  skills: []
+  max_feedback_hops: 6
+  system_prompt: EPC-AW planner window. Output JSON next/args/sub_goal/done.
+agents:
+- id: planner
+  kind: planner
+  role: planner
+  label: epc_aw_planner
+  trainable: true
+  system_prompt: Wrap EPC-AW Planner.generate_next_step. next is the executor window.
+  tools: []
+  profile:
+    backend: user_space
+    user_project: epc-aw-main
+  meta:
+    origin: user
+    user_project: epc-aw-main
+    wraps: EPC-AW.Planner
+- id: u_epc-aw-main__executor
+  kind: blank
+  role: executor
+  label: epc_aw_executor
+  trainable: false
+  system_prompt: Wrap EPC-AW Executor window (tool command + execute).
+  profile:
+    backend: user_space
+    user_project: epc-aw-main
+    llm_required: false
+  meta:
+    origin: user
+    user_project: epc-aw-main
+    wraps: EPC-AW.Executor
+- id: verifier
+  kind: verifier
+  role: verifier
+  label: epc_aw_verifier
+  trainable: false
+  system_prompt: Wrap EPC-AW Diagnoser.verificate_context.
+  profile:
+    backend: user_space
+    user_project: epc-aw-main
+  meta:
+    origin: user
+    user_project: epc-aw-main
+    wraps: EPC-AW.Diagnoser
+routers: []
+edges:
+- from: planner
+  to: u_epc-aw-main__executor
+  kind: message
+- from: u_epc-aw-main__executor
+  to: verifier
+  kind: message
+- from: verifier
+  to: planner
+  kind: feedback
+sampling:
+  mode: arpo
+  group_n: 4
+  beam_size: 2
+  sites:
+  - id: after_planner
+    enabled: true
+    anchor:
+      kind: after_agent_turn
+      agent_id: planner
+    gate:
+      type: always
+    fork:
+      beam_size: 2
+      resume_mode: messages
+  - id: after_u_epc-aw-main__executor
+    enabled: true
+    anchor:
+      kind: after_agent_turn
+      agent_id: u_epc-aw-main__executor
+    gate:
+      type: always
+    fork:
+      beam_size: 2
+      resume_mode: messages
+  - id: after_verifier
+    enabled: true
+    anchor:
+      kind: after_verifier
+      agent_id: verifier
+    gate:
+      type: always
+    fork:
+      beam_size: 2
+      resume_mode: messages

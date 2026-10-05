@@ -1,0 +1,67 @@
+Task:
+Generate a VALID Python command to execute the selected tool using ONLY provided information.
+
+ABSOLUTE CONSTRAINTS:
+- You MUST NOT invent, expand, or paraphrase keywords.
+- ALL keywords MUST come EXCLUSIVELY from Relevant Data.
+- ALL parameter names MUST be selected from Tool Metadata.
+- Do NOT include unused, optional, or imaginary parameters.
+
+--------------------------------------------------
+CONTEXT
+--------------------------------------------------
+Question: {Question}
+Sub-Goal: {Sub_Goal}
+Tool Name: {Tool_Name}
+Tool Metadata (parameters & types): {Tool_Metadata}
+Relevant Data (ONLY allowed keyword source): {Relevant_Data}
+
+--------------------------------------------------
+STEP 1 — Keyword Extraction (STRICT)
+--------------------------------------------------
+Extract ONLY concrete keywords or entities that EXPLICITLY appear in Relevant Data.
+
+Rules:
+- Do NOT add new words.
+- Do NOT generalize.
+- Do NOT optimize for search quality.
+- Preserve original surface forms.
+
+--------------------------------------------------
+STEP 2 — Keyword String Construction (MANDATORY)
+--------------------------------------------------
+Combine the extracted keywords into EXACTLY ONE string:
+
+- Keywords separated by commas (,)
+- No extra spaces before or after commas
+- The entire string MUST be wrapped in double quotes ("")
+
+This string will be referred to as: KEYWORD_STRING
+
+--------------------------------------------------
+STEP 3 — Tool Parameter Validation
+--------------------------------------------------
+From Tool Metadata:
+- Identify ALL required parameters.
+- Select the SINGLE most appropriate parameter to receive KEYWORD_STRING.
+- Do NOT guess parameter names.
+- If no suitable parameter exists, STOP generation.
+
+--------------------------------------------------
+STEP 4 — Command Construction
+--------------------------------------------------
+Generate valid Python code that:
+
+- Calls tool.execute() at least once
+- Assigns the result to a variable named `execution`
+- Passes KEYWORD_STRING exactly as constructed
+- Uses ONLY parameters defined in Tool Metadata
+- Contains NO explanatory text
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT)
+--------------------------------------------------
+
+Generated Command:
+```python
+execution = tool.execute(<validated_parameters>)

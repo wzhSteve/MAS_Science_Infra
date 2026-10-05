@@ -1,0 +1,18 @@
+id: epc-aw-main
+title: EPC-AW-main
+mode: native_mas
+status: ready
+entry: adapted/entry.py:UserAgent
+experiment_id: alpha
+agent_ids:
+- planner
+- u_epc-aw-main__executor
+- verifier
+tool_ids:
+- u_epc-aw-main__executor
+writable_root:
+- adapted
+- contracts
+- artifacts
+wraps: EPC-AW.PEV
+source: /root/autodl-tmp/MAS_Science_Infra/user_space/projects/epc-aw-main/upload/EPC-AW-main

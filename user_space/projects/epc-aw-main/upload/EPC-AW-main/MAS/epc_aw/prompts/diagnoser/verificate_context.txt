@@ -1,0 +1,91 @@
+Task:
+Evaluate whether the latest tool execution RESULT provides REAL and NEW evidence toward the Current Target Information, and decide the next system action.
+
+ABSOLUTE CONSTRAINT:
+You MUST reason ONLY from:
+- Latest Executor Result
+- Memory (all previous tools & results)
+- Obtained Information So Far
+
+Assumptions, guesses, paraphrasing, or plausibility are FORBIDDEN.
+
+Repetition or restatement of known facts MUST be treated as ZERO information gain.
+
+Lack of evidence MUST cause STRUCTURAL CHANGE, not repetition.
+
+--------------------------------------------------
+CONTEXT
+--------------------------------------------------
+Question: {Question}
+Current Target Information: {Target_Information}
+Current ExecutionOutline: {Outline}
+Latest Executor Result: {Result_Executor}
+Memory (All Previous Tools & Results): {Memory}
+Obtained Information So Far: {Obtained_Information_So_Far}
+
+--------------------------------------------------
+STEP 1 - Evidence & Information Gain Classification (MANDATORY)
+--------------------------------------------------
+Classify the Latest Executor Result along TWO orthogonal axes:
+
+(1) Evidence Type — select EXACTLY ONE:
+- DIRECT_EVIDENCE  
+  (explicitly contains the target information itself)
+- PARTIAL_EVIDENCE  
+  (contains verifiable facts that constrain or narrow the target)
+- NO_RELEVANT_EVIDENCE  
+  (contains no facts usable for the target)
+
+(2) Information Gain — determine:
+- NEW_USABLE_INFORMATION  
+  (introduces at least one fact NOT present in Memory or Obtained_Information_So_Far,
+   and that fact can be directly used to advance or refine subsequent steps)
+- NO_INFORMATION_GAIN  
+  (only repeats, rephrases, or loosely elaborates existing information)
+
+You MUST internally determine both, even though only the final flags are output.
+
+If Evidence Type = DIRECT_EVIDENCE → skip to STEP 4.
+
+--------------------------------------------------
+STEP 2 - Failure Attribution (MANDATORY, SINGLE CHOICE)
+--------------------------------------------------
+Based ONLY on Executor Result + Memory, select EXACTLY ONE:
+
+(A) RETRIEVAL_ABSTRACTION_FAILURE  
+→ Query too abstract or underspecified to retrieve concrete evidence.
+
+(B) TOOL_INFORMATION_MISMATCH  
+→ The tool cannot access the required evidence type (e.g., figures, full text).
+
+(C) INCORRECT_OR_PREMATURE_SUBGOAL  
+→ The current subgoal assumes information not yet established.
+
+(D) MISSING_INTERMEDIATE_EVIDENCE_STEP  
+→ A required intermediate artifact (paper ID, citation, section, figure index) is missing.
+
+(E) GENUINE_ABSENCE_OF_INFORMATION  
+→ All reasonable evidence levels are expected to fail.
+
+You MUST explicitly output the chosen label.
+
+If failure type = (E):
+You MUST justify why EACH lower evidence level would also fail.
+
+--------------------------------------------------
+STEP 4 - Global Completion Check
+--------------------------------------------------
+
+STOP is NEVER permitted without a required answer to the question.
+STOP is NEVER allowed solely due to missing information.
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON ONLY)
+--------------------------------------------------
+
+{{
+  "Analysis": "Evidence-grounded explanation covering (a) evidence type, (b) information gain judgment, (c) selected failure attribution, and (d) why the next action is structurally correct.",
+  "New_Obtained_Information_Flag": "<True if and only if NEW_USABLE_INFORMATION or DIRECT_EVIDENCE, else False>",
+  "New_Obtained_Information": "<List ONLY the newly obtained facts, or empty if none>",
+  "Conclusion": "<CONTINUE or STOP>"
+}}
