@@ -56,7 +56,9 @@ __all__ = [
 
 def __getattr__(name: str):
     if name in ("AdvantageSpec", "LossSpec", "TrainSignal", "batch_to_train_signal"):
-        from .train_signal import AdvantageSpec, LossSpec, TrainSignal, batch_to_train_signal
+        # Phase 3 shim removal: TrainSignal / LossSpec live in rl.*
+        from rl.loss import AdvantageSpec, LossSpec
+        from rl.train_signal import TrainSignal, batch_to_train_signal
 
         return {
             "AdvantageSpec": AdvantageSpec,

@@ -59,14 +59,15 @@ class TestSpecAndPlugins(unittest.TestCase):
 
 
 class TestCanonicalReward(unittest.TestCase):
-    def test_algos_reexports_workflow(self):
-        import algos.rewards as ar
-        import workflow.rewards as wr
+    def test_rl_rewards_is_canonical(self):
+        # Phase 3 shim removal: rl.rewards.outcome is the single reward entry.
+        import rl.rewards.outcome as ro
 
-        self.assertIs(ar.compute_outcome_reward, wr.compute_outcome_reward)
+        self.assertTrue(callable(ro.compute_outcome_reward))
+        self.assertTrue(callable(ro.parse_alias_field))
 
     def test_format_and_accuracy(self):
-        from workflow.rewards import compute_outcome_reward
+        from rl.rewards.outcome import compute_outcome_reward
 
         self.assertEqual(
             compute_outcome_reward(None, "2", source="gsm8k", format_ok=False, n_search=0, n_python=0),

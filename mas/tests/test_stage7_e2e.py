@@ -126,9 +126,10 @@ class TestC5YamlTools(unittest.TestCase):
 
 class TestC6TrainSignalOverlay(unittest.TestCase):
     def test_collect_json_drives_hydra_tir_algo(self):
-        from algos.overlay import apply_train_signal
+        from rl.hooks.overlay import apply_train_signal
         from workflow import Collector, batch_to_train_signal
-        from workflow.train_signal import AdvantageSpec, LossSpec, TrainSignal
+        from rl.loss import AdvantageSpec, LossSpec
+        from rl.train_signal import TrainSignal
 
         batch = Collector(mock=True).collect(_load_tasks("tasks_ok.json"))
         sig = batch_to_train_signal(batch, algo="igpo")

@@ -20,9 +20,11 @@ from .llm_diagnostics import summarize_execution_error
 from .execution_recording import ExecutionRecorder
 from .plugins import invoke_hub_skills, invoke_skill, REGISTRY
 from .protocol import AgentMessage, commit_to_fact, make_message, validate_json_schema, validate_payload
-from .rewards import has_answer_format
 from .router import select as router_select
 from .spec import MASSpec, load_spec
+# Phase 3 shim removal: has_answer_format lives in rl.rewards.outcome
+# (pre-existing dependency via the deleted workflow/rewards.py shim).
+from rl.rewards.outcome import has_answer_format
 
 logger = logging.getLogger(__name__)
 

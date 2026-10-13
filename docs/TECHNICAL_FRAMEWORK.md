@@ -38,7 +38,7 @@
 4. rollout / resume 协议字段保留：`role`、`resume_boundary`、`verdict_list`。
 5. Assistant 写入只限 `user_space/projects/<id>/`。
 
-兼容 shim：`mas/workflow/rewards.py` → `rl.rewards.outcome`；`mas/workflow/train_signal.py` → `rl.loss` + `rl.train_signal`；`mas/algos/*` → `rl.hooks.*`。
+Reward / TrainSignal 唯一入口：`rl.rewards.outcome` / `rl.loss` + `rl.train_signal` / `rl.hooks.*`（原 `mas/workflow/{rewards,train_signal}.py` 与 `mas/algos/*` 兼容 shim 已于重构 Phase 3 删除）。
 
 ## 2. 三条运行时
 

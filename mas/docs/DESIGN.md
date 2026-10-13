@@ -144,9 +144,9 @@ python legacy/structagent/train_mas_agent.py fast
 
 ```text
 workflow/contracts.py   — Trajectory / BranchPoint / Snapshot
-workflow/archive.py     — Archive + dump_resume_with_archive（兼容 resume_messages）
+workflow/memory/archive.py — Archive + dump_resume_with_archive（兼容 resume_messages）
 workflow/collector.py   — Collector：TirAgent 或 --mock → Trajectory + reward
-workflow/train_signal.py — AdvantageSpec / LossSpec → RL
+rl/loss.py + rl/train_signal.py — AdvantageSpec / LossSpec / TrainSignal → RL（Phase 3 起 shim 删除，唯一入口）
 scripts/collect_rollouts.py
 scripts/check_workflow_deps.py   — workflow 禁止 import agentlightning/verl
 ```

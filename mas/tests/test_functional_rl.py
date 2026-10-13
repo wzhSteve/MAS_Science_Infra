@@ -30,7 +30,7 @@ class TestRewardTiers(unittest.TestCase):
     def test_outcome_ladder_and_hash_format_contract(self):
         from workflow.collector import default_reward_fn
         from workflow.contracts import Trajectory
-        from workflow.rewards import compute_outcome_reward
+        from rl.rewards.outcome import compute_outcome_reward
 
         self.assertEqual(
             compute_outcome_reward(None, "2", source="gsm8k", format_ok=False, n_search=0, n_python=0),

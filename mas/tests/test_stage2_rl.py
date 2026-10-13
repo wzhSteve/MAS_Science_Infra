@@ -31,8 +31,9 @@ def _base_cfg():
 
 class TestTrainSignalOverlay(unittest.TestCase):
     def test_igpo_overlay(self):
-        from algos.overlay import apply_train_signal
-        from workflow.train_signal import AdvantageSpec, LossSpec, TrainSignal
+        from rl.hooks.overlay import apply_train_signal
+        from rl.loss import AdvantageSpec, LossSpec
+        from rl.train_signal import TrainSignal
 
         sig = TrainSignal(
             advantage=AdvantageSpec(name="igpo", gamma=0.9),
@@ -47,9 +48,10 @@ class TestTrainSignalOverlay(unittest.TestCase):
 
     def test_cli_algo_matches_collect_signal_fields(self):
         """train_tir_agent.py --algo igpo uses the same TrainSignal field set as collect JSON."""
-        from algos.overlay import apply_train_signal
+        from rl.hooks.overlay import apply_train_signal
         from workflow import Collector, batch_to_train_signal
-        from workflow.train_signal import AdvantageSpec, LossSpec, TrainSignal
+        from rl.loss import AdvantageSpec, LossSpec
+        from rl.train_signal import TrainSignal
 
         cli_sig = TrainSignal(
             advantage=AdvantageSpec(name="igpo", use_critic=False),
@@ -70,7 +72,7 @@ class TestTrainSignalOverlay(unittest.TestCase):
         self.assertEqual(collect_sig.loss.name, cli_sig.loss.name)
 
     def test_unknown_algo_raises(self):
-        from algos.overlay import apply_algo_overlay
+        from rl.hooks.overlay import apply_algo_overlay
 
         with self.assertRaises(ValueError):
             apply_algo_overlay(_base_cfg(), "ppo")

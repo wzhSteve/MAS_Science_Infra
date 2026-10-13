@@ -30,7 +30,7 @@ class TestDashboardModel(unittest.TestCase):
         from science_infra.ui.status import render_status_html
         from workflow import Collector
         from workflow.harness import HARNESS
-        from workflow.train_signal import batch_to_train_signal
+        from rl.train_signal import batch_to_train_signal
 
         batch = Collector(mock=True).collect(
             [{"id": "s", "question": "1+1", "answer": "2", "source": "gsm8k", "_mock_answer": "2"}]

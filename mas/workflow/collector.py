@@ -9,9 +9,13 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 from .contracts import Trajectory, TrajectoryBatch
 from .env_load import load_repo_dotenv
-from .rewards import compute_outcome_reward, parse_alias_field
 from .runtime import ExecutionService, LLMConfig
 from .spec import load_spec
+
+# Phase 3 shim removal (docs/MAS_refactor plan): outcome rewards live in rl/.
+# The workflow→rl dependency pre-existed via the deleted mas/workflow/rewards.py
+# shim; check_workflow_deps guards AGL/VERL/Ray only (not rl).
+from rl.rewards.outcome import compute_outcome_reward, parse_alias_field
 from uuid import uuid4
 
 RewardFn = Callable[[Trajectory, Dict[str, Any]], float]
