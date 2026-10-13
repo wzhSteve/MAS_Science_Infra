@@ -1,0 +1,14 @@
+test_blank_agent_window_uses_bare_id (mas.tests.test_centralized_integration.TestBlankAgentInserted.test_blank_agent_window_uses_bare_id) ... ok
+test_tool_args_invalid_evidence_error (mas.tests.test_centralized_integration.TestContractValidationFail.test_tool_args_invalid_evidence_error) ... ok
+test_declared_tool_agent_stays_a_node (mas.tests.test_centralized_integration.TestExecutionNodesAreWorkflowAgents.test_declared_tool_agent_stays_a_node) ... ok
+test_pev_nodes_are_planner_executor_verifier (mas.tests.test_centralized_integration.TestExecutionNodesAreWorkflowAgents.test_pev_nodes_are_planner_executor_verifier) ... ok
+test_next_outside_candidates_does_not_invoke_tool (mas.tests.test_centralized_integration.TestIllegalNext.test_next_outside_candidates_does_not_invoke_tool) ... ok
+test_four_message_cycle (mas.tests.test_centralized_integration.TestLinearPEV.test_four_message_cycle) ... ok
+test_verifier_fail_feedback (mas.tests.test_centralized_integration.TestLinearPEV.test_verifier_fail_feedback) ... ok
+test_linear_pev_live (mas.tests.test_centralized_integration.TestLiveLocalLLM.test_linear_pev_live) ... skipped 'local LLM not running'
+test_fan_out_two_tools_parallel (mas.tests.test_centralized_integration.TestMultiRouterParallel.test_fan_out_two_tools_parallel) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.575s
+
+OK (skipped=1)

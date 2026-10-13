@@ -1,0 +1,60 @@
+{
+  "commit_to_fact_signature": "commit_to_fact(verify_payload, tool_result_payload) -> bool",
+  "fact_commit_event_keys": [
+    "ok",
+    "phase",
+    "turn"
+  ],
+  "memory_event_keys_note": "MEMORY_READ/MEMORY_WRITE payload contracts verified in Phase 2 test_memory_package",
+  "protocol": {
+    "msg_seq": [
+      {
+        "dst": "hub_router",
+        "kind": "plan_step",
+        "payload_keys": [
+          "args",
+          "done",
+          "next",
+          "sub_goal"
+        ],
+        "src": "planner",
+        "turn": 1
+      },
+      {
+        "dst": "web_fetch",
+        "kind": "route_decision",
+        "payload_keys": [
+          "args",
+          "candidates",
+          "selected",
+          "strategy"
+        ],
+        "src": "hub_router",
+        "turn": 1
+      },
+      {
+        "dst": "web_fetch",
+        "kind": "tool_invoke",
+        "payload_keys": [
+          "args",
+          "tool"
+        ],
+        "src": "hub_router",
+        "turn": 1
+      },
+      {
+        "dst": "verifier",
+        "kind": "tool_result",
+        "payload_keys": [
+          "evidence_type",
+          "ok",
+          "output"
+        ],
+        "src": "web_fetch",
+        "turn": 1
+      }
+    ]
+  },
+  "source": "protocol payload-key contracts driven via make_message/validate_payload",
+  "version": 1
+}
