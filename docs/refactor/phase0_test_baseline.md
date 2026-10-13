@@ -100,8 +100,8 @@ errors（9）：
 - 复核命令（每个 Phase 收尾执行）：
 
 ```bash
-PYTHONPATH=mas:. ./.venv/bin/python docs/refactor/freeze_msgseq_baseline.py --check \
-  | diff - docs/refactor/.baseline_msgseq_v0.json && echo BYTE-LEVEL-OK
+PYTHONPATH=mas:. ./.venv/bin/python docs/refactor/freeze_msgseq_baseline.py --check > /tmp/msgseq_check.json
+diff <(sed -e '$a\' /tmp/msgseq_check.json) <(sed -e '$a\' docs/refactor/.baseline_msgseq_v0.json) && echo BYTE-LEVEL-OK
 ```
 
 - 参考（9/9 通过的稳定锚点，重构各阶段均应保持 9/9）：

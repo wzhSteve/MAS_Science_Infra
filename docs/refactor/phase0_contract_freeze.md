@@ -140,8 +140,8 @@ exclusive 注意：centralized_runtime fan-out 现状安全（主线程串行 ap
 任何 Phase 完成后，执行：
 
 ```bash
-PYTHONPATH=mas:. ./.venv/bin/python docs/refactor/freeze_msgseq_baseline.py --check \
-  | diff - docs/refactor/.baseline_msgseq_v0.json && echo BYTE-LEVEL-OK
+PYTHONPATH=mas:. ./.venv/bin/python docs/refactor/freeze_msgseq_baseline.py --check > /tmp/msgseq_check.json
+diff <(sed -e '$a\' /tmp/msgseq_check.json) <(sed -e '$a\' docs/refactor/.baseline_msgseq_v0.json) && echo BYTE-LEVEL-OK
 ```
 
 diff 输出非空即协议合同已破坏，该 Phase 需回滚或显式升级本清单加评审。

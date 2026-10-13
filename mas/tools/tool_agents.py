@@ -5,15 +5,44 @@ kernel output (or writes code, or reasons) and returns a ``tool_result``.
 Pure functions in ``mas/tools`` stay as kernels used *inside* the agent;
 they are not first-class MAS nodes.
 
-Palette ids: ``wikipedia_search``, ``bing_search``, ``web_fetch``, ``python_coder``,
-``think``. ``google_search`` resolves to ``bing_search`` and ``web_search``
-resolves to ``web_fetch``. ``execute_python`` maps to ``python_coder``.
+Palette ids: ``wikipedia_search``, ``google_search``, ``web_fetch``, ``python_coder``,
+``think``. ``web_search`` resolves to ``web_fetch``. ``execute_python`` maps to
+``python_coder``. Bing does not exist in this palette.
+
+Tool isolation contract (user requirement):
+  - ``wikipedia_search`` / ``google_search``: query -> top-10 (title, URL) ONLY.
+    They never return page content and never open a page.
+  - ``web_fetch`` / ``web_search``: url -> page content extraction. They never search.
 """
 
 from __future__ import annotations
 
+import importlib
 import os
+import sys
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+
+def _import_epc_aw_tool(module_path: str, attr: str) -> Any:
+    """Import a vendored EPC-AW tool class from ``legacy/structagent``.
+
+    Resolution order (both sys.path layouts must work):
+      1. ``legacy.structagent.epc_aw...`` — repo root on sys.path (normal runs).
+      2. Fallback: insert repo root (parent of ``mas/``) and retry once —
+         covers ``PYTHONPATH=mas`` single-root processes (check scripts).
+    Raises ImportError when the vendored stack is unavailable; callers
+    treat that as an explicit missing-dependency degradation (not a crash).
+    """
+    try:
+        mod = importlib.import_module(f"legacy.structagent.{module_path}")
+    except ImportError:
+        repo_root = str(Path(__file__).resolve().parents[2])
+        if repo_root in sys.path:
+            raise
+        sys.path.insert(0, repo_root)
+        mod = importlib.import_module(f"legacy.structagent.{module_path}")
+    return getattr(mod, attr)
 
 
 def effective_tier(tier: Optional[str]) -> str:
@@ -99,7 +128,7 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
     try:
         if name == "python_coder":
             def _py(args: Dict[str, Any]) -> Any:
-                from MAS_structagent.epc_aw.tools.python_coder.tool import Python_Coder_Tool
+                Python_Coder_Tool = _import_epc_aw_tool("epc_aw.tools.python_coder.tool", "Python_Coder_Tool")
 
                 t = Python_Coder_Tool(model_string=_model_name())
                 return t.execute(args.get("code") or args.get("query") or args.get("question") or "")
@@ -107,7 +136,7 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
             return _py
         if name == "wikipedia_search":
             def _wiki(args: Dict[str, Any]) -> Any:
-                from MAS_structagent.epc_aw.tools.wikipedia_search.tool import Wikipedia_Search_Tool
+                Wikipedia_Search_Tool = _import_epc_aw_tool("epc_aw.tools.wikipedia_search.tool", "Wikipedia_Search_Tool")
 
                 t = Wikipedia_Search_Tool(model_string=_model_name())
                 return t.execute(args.get("query") or "")
@@ -115,7 +144,7 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
             return _wiki
         if name == "google_search":
             def _gog(args: Dict[str, Any]) -> Any:
-                from MAS_structagent.epc_aw.tools.google_search.tool import Google_Search_Tool
+                Google_Search_Tool = _import_epc_aw_tool("epc_aw.tools.google_search.tool", "Google_Search_Tool")
 
                 t = Google_Search_Tool(model_string=_model_name())
                 return t.execute(args.get("query") or "")
@@ -123,7 +152,7 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
             return _gog
         if name == "web_search":
             def _web(args: Dict[str, Any]) -> Any:
-                from MAS_structagent.epc_aw.tools.web_search.tool import Web_Search_Tool
+                Web_Search_Tool = _import_epc_aw_tool("epc_aw.tools.web_search.tool", "Web_Search_Tool")
 
                 t = Web_Search_Tool(model_string=_model_name())
                 return t.execute(args.get("query") or "", args.get("url") or "")
@@ -131,7 +160,7 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
             return _web
         if name == "think":
             def _think(args: Dict[str, Any]) -> Any:
-                from MAS_structagent.epc_aw.tools.base_generator.tool import Base_Generator_Tool
+                Base_Generator_Tool = _import_epc_aw_tool("epc_aw.tools.base_generator.tool", "Base_Generator_Tool")
 
                 t = Base_Generator_Tool(model_string=_model_name())
                 query = str(args.get("text") or args.get("query") or args.get("input") or "")
@@ -145,19 +174,20 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
 
 PALETTE_TOOL_IDS = (
     "wikipedia_search",
-    "bing_search",
+    "google_search",
     "web_fetch",
     "python_coder",
     "think",
 )
+# Aliases: bing is gone; ``web_search`` is the user-facing name of the same
+# url->content tool as ``web_fetch``.
 _LEGACY_TOOL_ALIASES = {
-    "google_search": "bing_search",
+    "bing_search": "google_search",
     "web_search": "web_fetch",
 }
 
 TOOL_AGENT_ARGS_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "wikipedia_search": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
-    "bing_search": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     "google_search": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     "web_fetch": {
         "type": "object",
@@ -167,7 +197,7 @@ TOOL_AGENT_ARGS_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "web_search": {
         "type": "object",
         "properties": {"query": {"type": "string"}, "url": {"type": "string"}},
-        "required": ["query", "url"],
+        "required": ["url"],
     },
     "python_coder": {"type": "object", "properties": {"query": {"type": "string"}, "code": {"type": "string"}}, "required": []},
     "think": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
@@ -185,38 +215,29 @@ def _kernel(name: str) -> Optional[Callable[[Dict[str, Any]], str]]:
 
             return _py
         if name == "wikipedia_search":
-            from .wikipedia import wikipedia_search as _wiki_fn
-
             def _wiki(args: Dict[str, Any]) -> str:
+                # Late import so tests can patch tools.wikipedia.
+                from .wikipedia import wikipedia_search as _wiki_fn
+
                 return str(_wiki_fn(args.get("query") or ""))
 
             return _wiki
-        if name in ("bing_search", "google_search"):
-            from .search import web_search as _ws
+        if name == "google_search":
+            def _google(args: Dict[str, Any]) -> str:
+                # Late import so tests can patch tools.search.google_search.
+                from .search import google_search as _gs
 
-            def _bing(args: Dict[str, Any]) -> str:
-                return str(_ws(args.get("query") or ""))
+                return str(_gs(args.get("query") or ""))
 
-            return _bing
-        if name == "web_fetch":
-            from .search import fetch_by_type as _typed
-
+            return _google
+        if name in ("web_fetch", "web_search"):
             def _typed_fetch(args: Dict[str, Any]) -> str:
+                # Late import so tests can patch tools.search.fetch_by_type.
+                from .search import fetch_by_type as _typed
+
                 return str(_typed(str(args.get("url") or ""), str(args.get("query") or "")))
 
             return _typed_fetch
-        if name == "web_search":
-            from .search import fetch_page as _fp
-
-            def _web(args: Dict[str, Any]) -> str:
-                url = str(args.get("url") or "")
-                query = str(args.get("query") or "")
-                page = str(_fp(url))
-                if query:
-                    return f"query: {query}\n{page}"
-                return page
-
-            return _web
         if name == "think":
             return None
     except Exception:
@@ -225,11 +246,22 @@ def _kernel(name: str) -> Optional[Callable[[Dict[str, Any]], str]]:
 
 
 _DESCRIPTIONS = {
-    "wikipedia_search": "Read Wikipedia and extract content relevant to the query",
-    "bing_search": "Search Bing and return up to 5 hits with title, url, and snippet. Does not open those pages.",
-    "google_search": "Search Bing and return up to 5 hits with title, url, and snippet. Does not open those pages.",
-    "web_fetch": "Open exactly one url. HTML returns text. An image response returns type and size only. PDF returns its text layer.",
-    "web_search": "Open exactly one url. HTML returns text. An image response returns type and size only. PDF returns its text layer.",
+    "wikipedia_search": (
+        "Search Wikipedia for a query. Returns the top 10 entries, each with ONLY a title and its URL. "
+        "Does not return page content and does not open pages. Use web_fetch with one of the URLs to read a page."
+    ),
+    "google_search": (
+        "Search the open web for a query. Returns the top 10 entries, each with ONLY a title and its URL. "
+        "Does not return page content and does not open pages. Use web_fetch with one of the URLs to read a page."
+    ),
+    "web_fetch": (
+        "Input is a URL. Opens exactly that page and extracts its readable text content. "
+        "This tool does not search and does not accept a search query as input."
+    ),
+    "web_search": (
+        "Input is a URL. Opens exactly that page and extracts its readable text content. "
+        "Alias of web_fetch. This tool does not search."
+    ),
     "python_coder": "Write and execute Python to solve the task",
     "think": "Reason about the given text with no external side effects",
 }
@@ -239,10 +271,9 @@ def _default_registry() -> Dict[str, ToolAgent]:
     out: Dict[str, ToolAgent] = {}
     for aid in (
         "wikipedia_search",
-        "bing_search",
-        "web_fetch",
         "google_search",
-        "web_search",
+        "web_fetch",
+        "web_search",  # alias of web_fetch: url -> content, kept callable
         "python_coder",
         "think",
     ):

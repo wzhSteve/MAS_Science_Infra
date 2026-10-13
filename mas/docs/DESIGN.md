@@ -102,24 +102,24 @@ Daemon 从 span attributes 抽出，写入 `DataProto.non_tensor_batch` 的 `anc
 - `python train_tir_agent.py fast --algo grpo`
 - `python tir_agent.py`（需 `OPENAI_API_BASE`）
 
-## 7. MAS_structagent RL（独立入口）
+## 7. MAS_structagent RL（独立入口，已隔离至 legacy/structagent/）
 
-与 LangGraph `LitTirAgent` **并存**：可训对象是 `MAS_structagent`（Planner→Actor→Verifier）。
+与 LangGraph `LitTirAgent` **并存**：可训对象是 StructAgent 栈（Planner→Actor→Verifier）。Phase 1 重构后整体移至 [`legacy/structagent/`](../../legacy/structagent/)。
 
 ```text
 parquet → agl.VERL → main_llm (vLLM Qwen3-4B)
-       → LitMASAgent.rollout
-       → llm_runtime_override(base_url, model) + OPENAI_* 双保险
-       → construct_solver(...).solve(question)
-       → compute_mas_outcome_reward → emit_reward
+     → LitMASAgent.rollout
+     → llm_runtime_override(base_url, model) + OPENAI_* 双保险
+     → construct_solver(...).solve(question)
+     → compute_mas_outcome_reward → emit_reward
 ```
 
 | 文件 | 角色 |
 |------|------|
-| `mas_agent.py` | `bootstrap_mas_package` + `LitMASAgent` + debug |
-| `train_mas_agent.py` | GRPO 训练入口（关 Hermes tool parser） |
-| `MAS_structagent/epc_aw/engine/runtime_override.py` | 强制全部 `ChatOpenAI` 走 VERL endpoint |
-| `algos/rewards.py` → `compute_mas_outcome_reward` | 无 `<answer>` format 惩罚，仅 Acc/F1 |
+| `legacy/structagent/mas_agent.py` | `bootstrap_mas_package`（注册名 `sys.modules["MAS"]` 不变，`__path__` 指向 `legacy/structagent/epc_aw`）+ `LitMASAgent` + debug |
+| `legacy/structagent/train_mas_agent.py` | GRPO 训练入口（关 Hermes tool parser） |
+| `legacy/structagent/epc_aw/engine/runtime_override.py` | 强制全部 `ChatOpenAI` 走 VERL endpoint |
+| `rl/rewards/outcome.py` → `compute_mas_outcome_reward` | 无 `<answer>` format 惩罚，仅 Acc/F1 |
 
 要点：
 
@@ -132,9 +132,9 @@ parquet → agl.VERL → main_llm (vLLM Qwen3-4B)
 
 ```bash
 OPENAI_API_BASE=http://127.0.0.1:8000/v1 OPENAI_MODEL=/root/autodl-tmp/LLM/Qwen3-4B \
-  python mas_agent.py
-python train_mas_agent.py fast
-# 或 bash scripts/train_mas_2gpu.sh
+  python legacy/structagent/mas_agent.py
+python legacy/structagent/train_mas_agent.py fast
+# 或 bash legacy/structagent/scripts/train_mas_2gpu.sh
 ```
 
 

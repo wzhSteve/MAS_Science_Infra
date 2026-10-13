@@ -36,14 +36,16 @@ python train_tir_agent.py a800_2gpu --algo grpo
 
 `--n-runners` / `--model` 与 math_gsm 相同。配置档：`fast` / `a800` / `a800_2gpu`。正式训练 `max_prompt_length=8192`（检索 snippet 更长）。
 
-## MAS_structagent RL（独立入口）
+## MAS_structagent RL（独立入口，已隔离至 legacy/）
 
 用 Planner→Actor→Verifier 多智能体做 RL，**不改**上方 TirAgent 路径。训练 LLM 走 VERL `main_llm`（默认本地 Qwen3-4B），**不读** `.env` 的 dmxapi。详见 [docs/DESIGN.md §7](docs/DESIGN.md)。
 
+Phase 1 重构后，该平行栈整体移至 [`legacy/structagent/`](../legacy/structagent/)（`mas/` 只剩产品主栈）。`mas/mas_agent.py` 仅为兼容训练热路径的顶层名 import 保留的 6 行 shim。
+
 ```bash
-bash scripts/train_mas_2gpu.sh
-python train_mas_agent.py fast
-OPENAI_API_BASE=http://127.0.0.1:8000/v1 python mas_agent.py   # 冒烟，不启 VERL
+bash legacy/structagent/scripts/train_mas_2gpu.sh
+python legacy/structagent/train_mas_agent.py fast
+OPENAI_API_BASE=http://127.0.0.1:8000/v1 python legacy/structagent/mas_agent.py   # 冒烟，不启 VERL
 ```
 
 ## Agent 冒烟（不启 VERL）

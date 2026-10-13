@@ -63,7 +63,7 @@ flowchart LR
 | 单题调试 | `POST /api/mas/rollout-runs` | 同上，产物在 `artifacts/rollout-runs/` | 无 |
 | 训练 | `POST /api/rl/runs` → [`train_tir_agent.py`](../mas/train_tir_agent.py) | [`LitTirAgent.rollout`](../mas/lit_tir_agent.py) 只调 `run_episode`（单 hub TirAgent）+ YAML 声明的 BranchSite | 有（arpo/aepo/rae） |
 
-另有平行栈 [`train_mas_agent.py`](../mas/train_mas_agent.py)（StructAgent JSON chat）。产品 UI 不走这条，命令行可单独启。
+另有平行栈 [`legacy/structagent/train_mas_agent.py`](../legacy/structagent/train_mas_agent.py)（StructAgent JSON chat）。产品 UI 不走这条，命令行可单独启。
 
 user_space：上传或 Assistant scaffold 把 HIVE / EPC-AW 收成 PEV 窗口，`profile.backend: user_space`。执行时 [`user_gateway`](../mas/workflow/user_gateway/) 隔离加载 `run_window`，不污染 `mas/workflow` 的 AGL 边界。
 
@@ -174,7 +174,7 @@ MAS_Science_Infra/
 - `topology: decentralized` 无实现。
 - 独立 `Episode` / `Diagnostic` / `Intervention` 合同未冻结；Harness 仍是 Hypothesis。
 - 无 Experiment 生命周期状态机，无 Control fork API。
-- `train_mas_agent` 与 Tir 训练栈并存，UI 只接 Tir。
+- `legacy/structagent/train_mas_agent.py`（train_mas_agent）与 Tir 训练栈并存，UI 只接 Tir。
 - user_space 窗口走 centralized + gateway，未接入 Tir 训练热路径。
 - VERL 循环按 `total_epochs × dataloader` 迭代，`total_training_steps` 只做早停。`ensure_trainer_horizon` 会把 epochs 抬到至少等于 steps，否则 `steps=3, epochs=1` 会在 1/3 处以 rc=0 退出。
 - Tir 现已在每次 hub LLM 回复后发 `after_agent_turn`；`after_verifier` 仍取决于 verifier 是否真正跑过，训练里不保证。

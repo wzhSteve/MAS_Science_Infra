@@ -161,12 +161,15 @@ def train(config: Dict[str, Any], n_runners: int, active_agent: Optional[str], m
     import sys
     from pathlib import Path
 
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
+    engine_dir = str(Path(__file__).resolve().parent)
+    if engine_dir not in sys.path:
+        sys.path.insert(0, engine_dir)
     from science_infra.control.task_files import load_task_rows
     import agentlightning as agl
-    from mas_agent import LitMASAgent, bootstrap_mas_package
+    from mas_agent import LitMASAgent, bootstrap_mas_package  # noqa: F401  (same dir)
 
     # Tool search proxy only — do NOT set process-wide HTTP_PROXY (breaks VERL LLM).
     proxy = (

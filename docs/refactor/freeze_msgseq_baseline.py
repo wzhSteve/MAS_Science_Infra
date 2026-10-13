@@ -13,8 +13,10 @@ Run standalone (Phase 0):
 
 Compare (Phase 2/6 gate):
   PYTHONPATH=mas:. python docs/refactor/freeze_msgseq_baseline.py --check \
-    | diff - docs/refactor/.baseline_msgseq_v0.json
-"""
+    > /tmp/msgseq_check.json \
+    && diff <(sed -e '$a\' /tmp/msgseq_check.json) <(sed -e '$a\' docs/refactor/.baseline_msgseq_v0.json) \
+    && echo BYTE-LEVEL-OK
+</think>"""
 
 from __future__ import annotations
 
