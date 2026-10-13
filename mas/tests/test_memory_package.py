@@ -228,13 +228,18 @@ class TestArchiveRoot(unittest.TestCase):
             else:
                 os.environ["TIR_ARCHIVE_DIR"] = old
 
-    def test_default_points_at_old_location(self) -> None:
-        """Phase 2 freezes the on-disk location: mas/.tir_archives (the
-        Phase 5 artifacts migration is the only thing allowed to move it)."""
-        from workflow.memory.archive import archive_root
+    def test_default_points_at_new_artifacts_location(self) -> None:
+        """Phase 5 artifacts migration: default root resolves to
+        artifacts/mas/tir_archives (legacy mas/.tir_archives read-only)."""
+        from workflow.memory.archive import archive_root, legacy_archive_root
 
-        self.assertEqual(os.path.basename(archive_root()), ".tir_archives")
-        self.assertTrue(archive_root().endswith("mas/.tir_archives"))
+        self.assertEqual(os.path.basename(archive_root()), "tir_archives")
+        self.assertTrue(
+            archive_root().replace(os.sep, "/").endswith("artifacts/mas/tir_archives")
+        )
+        # legacy location stays resolvable and distinct (read-only fallback)
+        self.assertEqual(os.path.basename(legacy_archive_root()), ".tir_archives")
+        self.assertNotEqual(archive_root(), legacy_archive_root())
 
 
 if __name__ == "__main__":

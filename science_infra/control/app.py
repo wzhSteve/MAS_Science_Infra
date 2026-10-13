@@ -315,25 +315,32 @@ def create_app() -> FastAPI:
 
     @app.get("/api/mas/rollout-trees")
     def rollout_trees(experiment_id: str = Query("demo")) -> Dict[str, Any]:
-        """Read-only scan of mas/.local_expansion/*.json → list of RolloutTree payloads."""
-        import json
-        from science_infra.control.paths import tir_agent_root
+        """Read-only scan of expansion tree JSONs → list of RolloutTree payloads.
 
-        exp_dir = tir_agent_root() / ".local_expansion"
+        Phase 5: reads artifacts/mas/local_expansion first, then the legacy
+        mas/.local_expansion (read-only fallback).
+        """
+        import json
+        from science_infra.control.paths import mas_artifacts_root, tir_agent_root
+
+        exp_dirs = [mas_artifacts_root() / "local_expansion", tir_agent_root() / ".local_expansion"]
         # Daemon-persisted trees (tree_*.json) carry REAL store rollout ids on
         # child nodes; the same query also exists inside runner expansions
         # (ro-*.json) with synthetic "{parent}:0" ids. Serve daemon trees and
         # skip the duplicated runner expansion for the same tree_id.
         daemon_trees: Dict[str, Dict[str, Any]] = {}
         expansion_trees: List[Dict[str, Any]] = []
-        if exp_dir.is_dir():
+        # Dedup across both roots: new artifacts dir wins, legacy only fills gaps.
+        for exp_dir in exp_dirs:
+            if not exp_dir.is_dir():
+                continue
             for f in sorted(exp_dir.glob("tree_*.json")):
                 try:
                     payload = json.loads(f.read_text(encoding="utf-8"))
                 except Exception:
                     continue
                 if isinstance(payload.get("nodes"), list) and payload.get("tree_id"):
-                    daemon_trees[str(payload["tree_id"])] = {"file": f.name, "tree": payload}
+                    daemon_trees.setdefault(str(payload["tree_id"]), {"file": f.name, "tree": payload})
             for f in sorted(exp_dir.glob("*.json")):
                 if f.name.startswith("tree_"):
                     continue

@@ -263,17 +263,24 @@ def find_enabled_sites(wf: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def scan_expansions(root: Path) -> Dict[str, Any]:
-    exp_dir = root / "mas" / ".local_expansion"
+    # Phase 5: read new artifacts dir first, then the legacy in-tree dir
+    # (training may still run against either; data merges file-name-first).
+    new_dir = root / "artifacts" / "mas" / "local_expansion"
+    legacy_dir = root / "mas" / ".local_expansion"
     out: Dict[str, Any] = {
-        "dir": str(exp_dir),
+        "dir": str(new_dir if new_dir.is_dir() else legacy_dir),
         "n_files": 0,
         "n_with_plans": 0,
         "max_branch_local_count": 0,
         "sample_plan_meta_keys": [],
     }
-    if not exp_dir.is_dir():
-        return out
-    files = list(exp_dir.glob("*.json"))
+    files_by_name: Dict[str, Path] = {}
+    for exp_dir in (new_dir, legacy_dir):
+        if not exp_dir.is_dir():
+            continue
+        for f in exp_dir.glob("*.json"):
+            files_by_name.setdefault(f.name, f)
+    files = list(files_by_name.values())
     out["n_files"] = len(files)
     for f in files:
         try:

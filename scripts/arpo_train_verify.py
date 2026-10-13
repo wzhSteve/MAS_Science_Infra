@@ -256,11 +256,13 @@ def main() -> int:
     ok("log: wave-2 resume_messages / arpo_branch", saw_resume,
        "" if saw_resume else "not seen in run log")
 
-    exp_dir = REPO / "mas" / ".local_expansion"
+    exp_dirs = [REPO / "artifacts" / "mas" / "local_expansion", REPO / "mas" / ".local_expansion"]
     n_plans = 0
     branch_local_max = 0
     group_sizes: Dict[str, int] = defaultdict(int)
-    if exp_dir.is_dir():
+    for exp_dir in exp_dirs:
+        if not exp_dir.is_dir():
+            continue
         for f in exp_dir.glob("*.json"):
             try:
                 if f.stat().st_mtime < t_train - 5:

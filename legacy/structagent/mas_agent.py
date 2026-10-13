@@ -54,8 +54,23 @@ def bootstrap_mas_package() -> Path:
         pkg.__file__ = str(mas_root / "__init__.py")
         pkg.__path__ = [str(mas_root)]  # type: ignore[attr-defined]
         sys.modules["MAS"] = pkg
-    elif not getattr(existing, "__path__", None):
-        existing.__path__ = [str(mas_root)]  # type: ignore[attr-defined]
+    else:
+        # Anti-hijack (Phase 1 isolation semantics): a pre-existing
+        # ``MAS`` entry must not shadow the vendored engine. Foreign
+        # registrations (e.g. user-space tests inserting ref_Rep/EPC-AW on
+        # sys.path and importing ``MAS.epc_aw.*``) point elsewhere; the
+        # training stack asserts a single, vendored __path__, so drop any
+        # such module entries (MAS and submodules) and re-register ours.
+        paths = list(getattr(existing, "__path__", []) or [])
+        if [str(Path(p).resolve()) for p in paths] != [str(mas_root.resolve())]:
+            for name in [n for n in list(sys.modules) if n == "MAS" or n.startswith("MAS.")]:
+                del sys.modules[name]
+            pkg = types.ModuleType("MAS")
+            pkg.__file__ = str(mas_root / "__init__.py")
+            pkg.__path__ = [str(mas_root)]  # type: ignore[attr-defined]
+            sys.modules["MAS"] = pkg
+        elif not paths:
+            existing.__path__ = [str(mas_root)]  # type: ignore[attr-defined]
     return mas_root
 
 

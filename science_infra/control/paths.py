@@ -31,6 +31,16 @@ def mas_root() -> Path:
     return tir_agent_root()
 
 
+def mas_artifacts_root() -> Path:
+    """MAS runtime artifacts root (Phase 5 migration target).
+
+    Single write point for .tir_archives / local_expansion; the legacy
+    in-tree locations (mas/.tir_archives, mas/.local_expansion) remain
+    readable via explicit fallbacks but are never written.
+    """
+    return repo_root() / "artifacts" / "mas"
+
+
 def rl_root() -> Path:
     """Thin RL hooks package (reward / loss / algo overlays)."""
     return repo_root() / "rl"

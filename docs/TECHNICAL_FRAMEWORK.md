@@ -81,7 +81,7 @@ user_space：上传或 Assistant scaffold 把 HIVE / EPC-AW 收成 PEV 窗口，
 
 训练算法 [`VALID_ALGOS`](../science_infra/control/experiments.py)：`grpo, arpo, aepo, igpo, gigpo, rae`。UI 采样模式 `appo` 保存时映射为 `arpo`（[`normalizeRlPayload.ts`](../webui/src/features/rl/model/normalizeRlPayload.ts)）。
 
-树落盘：Daemon 写出 `mas/.local_expansion/tree_*.json`。前端主路径是 `GET /api/rl/runs/{runId}/rollout-trees`。`GET /api/mas/rollout-trees` 仍扫描全局目录，给调试用。
+树落盘：Daemon 写出 `artifacts/mas/local_expansion/tree_*.json`（旧 `mas/.local_expansion/` 只读 fallback）。前端主路径是 `GET /api/rl/runs/{runId}/rollout-trees`。`GET /api/mas/rollout-trees` 仍扫描全局目录，给调试用。
 
 细节：[ROLLOUT_SAMPLING.md](./ROLLOUT_SAMPLING.md)、[BRANCH_SITE_DESIGN.md](./BRANCH_SITE_DESIGN.md)。
 

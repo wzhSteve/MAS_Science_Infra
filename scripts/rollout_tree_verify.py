@@ -30,18 +30,25 @@ from branch_rollout_ui_test import req, wait_health  # noqa: E402
 
 
 def scan_trees_local(root: Path) -> List[Dict[str, Any]]:
-    exp_dir = root / "mas" / ".local_expansion"
+    # Phase 5: read new artifacts dir first, then the legacy in-tree dir.
+    exp_dirs = [root / "artifacts" / "mas" / "local_expansion", root / "mas" / ".local_expansion"]
     trees: List[Dict[str, Any]] = []
-    if not exp_dir.is_dir():
-        return trees
-    for f in sorted(exp_dir.glob("*.json")):
-        try:
-            payload = json.loads(f.read_text(encoding="utf-8"))
-        except Exception:
+    seen = set()
+    for exp_dir in exp_dirs:
+        if not exp_dir.is_dir():
             continue
-        tree = payload.get("tree")
-        if isinstance(tree, dict):
-            trees.append({"file": f.name, "tree": tree})
+        for f in sorted(exp_dir.glob("*.json")):
+            try:
+                payload = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            tree = payload.get("tree")
+            if isinstance(tree, dict):
+                key = str(tree.get("tree_id") or f.name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                trees.append({"file": f.name, "tree": tree})
     return trees
 
 

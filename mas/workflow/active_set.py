@@ -36,8 +36,18 @@ def resume_boundary_from_messages(messages: Optional[Sequence[Any]]) -> int:
 
 EXPANSION_DIR = os.getenv(
     "TIR_LOCAL_EXPANSION_DIR",
-    os.path.join(os.path.dirname(__file__), "..", ".local_expansion"),
+    # Phase 5 artifacts migration: single write point moves to
+    # artifacts/mas/local_expansion; legacy mas/.local_expansion stays read-only.
+    os.path.join(os.path.dirname(__file__), "..", "..", "artifacts", "mas", "local_expansion"),
 )
+
+
+def _legacy_expansion_dir() -> str:
+    """Pre-Phase-5 location (read-only fallback, never written)."""
+    return os.path.join(os.path.dirname(__file__), "..", ".local_expansion")
+
+
+LEGACY_EXPANSION_DIR = _legacy_expansion_dir()
 
 
 @dataclass
@@ -459,6 +469,8 @@ class ActiveSetSession:
 
 
 def dump_local_expansion(parent_rollout_id: str, payload: Dict[str, Any]) -> str:
+    # Phase 5: single write point = EXPANSION_DIR (artifacts/mas/local_expansion
+    # by default). The pre-migration directory is never written.
     path = Path(EXPANSION_DIR)
     path.mkdir(parents=True, exist_ok=True)
     dest = path / f"{parent_rollout_id}.json"
@@ -467,13 +479,15 @@ def dump_local_expansion(parent_rollout_id: str, payload: Dict[str, Any]) -> str
 
 
 def load_local_expansion(parent_rollout_id: str) -> Optional[Dict[str, Any]]:
-    dest = Path(EXPANSION_DIR) / f"{parent_rollout_id}.json"
-    if not dest.is_file():
-        return None
-    try:
-        return json.loads(dest.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+    # Read: new dir first, then the legacy location (read-only fallback).
+    for base in (Path(EXPANSION_DIR), Path(LEGACY_EXPANSION_DIR)):
+        dest = base / f"{parent_rollout_id}.json"
+        if dest.is_file():
+            try:
+                return json.loads(dest.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+    return None
 
 
 def tree_from_plans(

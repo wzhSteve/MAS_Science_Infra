@@ -25,16 +25,27 @@ from ..contracts import ArchiveRef, BranchPoint, ExecutionEvent, EventKind, Snap
 def archive_root() -> str:
     """Single resolution point for the archive root directory.
 
-    Priority: ``TIR_ARCHIVE_DIR`` env → repo ``mas/.tir_archives``.
-    The on-disk location is unchanged in Phase 2 (the Phase 5 artifacts
-    migration only swaps this default); consumers must go through this
-    function instead of re-deriving paths.
+    Priority: ``TIR_ARCHIVE_DIR`` env → repo ``artifacts/mas/tir_archives``
+    (Phase 5 artifacts migration). The pre-migration location
+    ``mas/.tir_archives`` stays readable as a legacy fallback via
+    ``legacy_archive_root()``; it is never written.
     """
     env = os.getenv("TIR_ARCHIVE_DIR", "")
     if env:
         return env
+    return str(mas_artifacts_root() / "tir_archives")
+
+
+def legacy_archive_root() -> str:
+    """Pre-Phase-5 archive location (read-only fallback, never written)."""
     repo_root = Path(__file__).resolve().parents[3]
     return str(repo_root / "mas" / ".tir_archives")
+
+
+def mas_artifacts_root() -> Path:
+    """MAS artifacts root: repo ``artifacts/mas/`` (Phase 5 single write point)."""
+    repo_root = Path(__file__).resolve().parents[3]
+    return repo_root / "artifacts" / "mas"
 
 
 DEFAULT_ARCHIVE_ROOT = archive_root()
@@ -254,9 +265,11 @@ def load_resume_messages(rollout_id: str) -> Optional[Dict[str, Any]]:
             }
         except Exception:
             pass
-    # Disk: scan archives for rollout_index
-    root = Path(DEFAULT_ARCHIVE_ROOT)
-    if root.is_dir():
+    # Disk: scan archives for rollout_index — new artifacts dir first, then
+    # the pre-Phase-5 location (read-only legacy fallback, never written).
+    for root in (Path(archive_root()), Path(legacy_archive_root())):
+        if not root.is_dir():
+            continue
         for arch_dir in root.iterdir():
             if not arch_dir.is_dir():
                 continue

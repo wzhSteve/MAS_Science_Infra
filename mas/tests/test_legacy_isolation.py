@@ -123,8 +123,16 @@ class TestMissingOptionalDependency(unittest.TestCase):
         self._saved_path = list(sys.path)
         # simulate "legacy/structagent not installed": drop every sys.path
         # entry that would let ``legacy.*`` resolve, plus any cached modules.
+        # ``MAS``/``MAS.*`` entries are dropped too — the vendored engine is
+        # imported *through* the ``MAS`` alias (bootstrap_mas_package), so a
+        # cached ``MAS.*`` subtree would keep the engine resolvable via
+        # sys.modules even with every path entry removed (test-semantics
+        # gap found by the full-suite run: foreign tests pre-caching the
+        # ref_Rep epc_aw tree masked the ImportError path under assert).
         sys.path = [p for p in sys.path if not str(p).startswith(str(REPO_ROOT))]
-        for name in [n for n in list(sys.modules) if n == "legacy" or n.startswith("legacy.")]:
+        for name in [n for n in list(sys.modules)
+                     if n == "legacy" or n.startswith("legacy.")
+                     or n == "MAS" or n.startswith("MAS.")]:
             del sys.modules[name]
 
     def tearDown(self) -> None:
@@ -158,19 +166,37 @@ class TestMissingOptionalDependency(unittest.TestCase):
 
         # When the tree genuinely cannot be resolved (no repo root anywhere,
         # no fallback possible), the loader itself raises ImportError:
-        sys.path = [p for p in sys.path if not str(p).startswith(str(REPO_ROOT))]
-        for name in [n for n in list(sys.modules) if n == "legacy" or n.startswith("legacy.")]:
-            del sys.modules[name]
-        with self.assertRaises(ImportError):
-            ta._import_epc_aw_tool("epc_aw.tools.base_generator.tool", "Base_Generator_Tool")
-        sys.path[:] = self._saved_path  # hard restore before leaving this branch
+        saved = list(sys.path)
+        saved_mods = {k: v for k, v in sys.modules.items()
+                      if k == "legacy" or k.startswith("legacy.")
+                      or k == "MAS" or k.startswith("MAS.")}
+        try:
+            sys.path = [p for p in sys.path if not str(p).startswith(str(REPO_ROOT))]
+            for name in list(saved_mods):
+                del sys.modules[name]
+            with self.assertRaises(ImportError):
+                ta._import_epc_aw_tool("epc_aw.tools.base_generator.tool", "Base_Generator_Tool")
+        finally:
+            sys.path[:] = saved  # hard restore even if assert raises
+            sys.modules.update(saved_mods)
 
         # The product stack itself never imports legacy at module import
         # time, so an unresolvable vendored stack never blocks the module:
         sys.path = [p for p in sys.path if not str(p).startswith(str(REPO_ROOT))]
         import importlib as _il
-        _il.reload(ta)
-        sys.path[:] = self._saved_path
+        # snapshot module attributes the reload will rebind in place —
+        # importers hold references to the OLD objects (from-import), so a
+        # bare reload would give later tests two diverging registries
+        # (observed as the five-tool-agents identity FAILURE) in the full
+        # discover run. Restore every public binding after the smoke check.
+        _snap = {k: getattr(ta, k) for k in vars(ta).keys() if not k.startswith("__")}
+        try:
+            _il.reload(ta)
+        finally:
+            for _k, _v in _snap.items():
+                setattr(ta, _k, _v)
+            sys.modules["tools.tool_agents"] = ta
+            sys.path[:] = self._saved_path
 
 
 def _kernel_forced() -> bool:
