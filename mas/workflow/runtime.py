@@ -6,17 +6,18 @@ Must not import agentlightning. TirAgent is loaded via importlib (AST-safe).
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Mapping, Optional, Protocol, Sequence, runtime_checkable
 from uuid import uuid4
 
-from .archive import Archive, branch_point_to_resume_task_fields, register_archive
+from .memory import MemoryStore
+from .memory.archive import Archive, branch_point_to_resume_task_fields, register_archive
 from .compiler import compile_spec, next_agent
 from .contracts import BranchPoint, EventKind, ExecutionEvent, ExecutionFailure, MemoryItem, Trajectory
 from .llm_diagnostics import summarize_execution_error
 from .execution_recording import ExecutionRecorder
-from .memory import MemoryStore
 from .plugins import invoke_hub_skills, invoke_skill, REGISTRY
 from .protocol import AgentMessage, commit_to_fact, make_message, validate_json_schema, validate_payload
 from .rewards import has_answer_format

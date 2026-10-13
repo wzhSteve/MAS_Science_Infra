@@ -272,15 +272,13 @@ def make_message(
 
 
 def commit_to_fact(verify_payload: Dict[str, Any], tool_result_payload: Dict[str, Any]) -> bool:
-    """HIVE-style commit gate: COMPLETE + DIRECT + slots filled => live fact."""
-    if verify_payload.get("step_conclusion") != "COMPLETE":
-        return False
-    if verify_payload.get("evidence_type") != "DIRECT":
-        # fall back to tool_result's evidence when verifier omits it
-        if tool_result_payload.get("evidence_type") != "DIRECT":
-            return False
-    slots = verify_payload.get("slot_updates") or []
-    if slots:
-        if not all(bool(s.get("filled")) for s in slots if isinstance(s, dict)):
-            return False
-    return True
+    """HIVE-style commit gate: COMPLETE + DIRECT + slots filled => live fact.
+
+    Phase 2 of the MAS refactor: delegates to
+    ``workflow.memory.facts.FactLedger`` (the single classification
+    implementation); the bool external signature is frozen by the Phase 0
+    contract (docs/refactor/phase0_contract_freeze.md §2).
+    """
+    from .memory.facts import FactLedger
+
+    return FactLedger.commits(FactLedger.classify(verify_payload, tool_result_payload))

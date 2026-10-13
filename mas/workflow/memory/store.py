@@ -1,4 +1,11 @@
-"""Two-layer memory: per-agent buffer + optional MAS system store.
+"""In-process memory: per-agent buffer + optional MAS system store.
+
+Memory subpackage (Phase 2 of the MAS refactor — docs/refactor/phase0_contract_freeze.md §3):
+  - ``store.py``   : MemoryStore — three scopes (agent private / shared hub / system),
+                     episode lifecycle, append-only writes.
+  - ``facts.py``   : FactLedger — HIVE verify-gate classification for fact commits.
+  - ``archive.py`` : Archive — persistent event stream + snapshots + resume index.
+  - ``__init__.py``: re-exports; ``from workflow.memory import X`` stays valid.
 
 Phase 0 default: agent=messages, system=none (no system writes).
 
@@ -12,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .contracts import MemoryItem
+from ..contracts import MemoryItem
 
 
 class MemoryStore:

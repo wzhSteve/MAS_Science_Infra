@@ -40,11 +40,17 @@ class ExecutionEvent(BaseModel):
 
 
 class Snapshot(BaseModel):
-    """Barrier sufficient to resume TirAgent via resume_messages / token_prefix."""
+    """Barrier sufficient to resume TirAgent via resume_messages / token_prefix.
+
+    ``schema_version`` (Phase 2, docs/refactor/phase0_contract_freeze.md §4):
+    persisted-contract versioning. Old snapshots written before this field
+    deserialize with the default ``1`` (Pydantic back-compat).
+    """
 
     snapshot_id: str = Field(default_factory=lambda: uuid4().hex)
     archive_id: str
     event_id: str = ""
+    schema_version: int = 1
     messages: List[Dict[str, Any]] = Field(default_factory=list)
     token_ids: Optional[List[int]] = None
     meta: Dict[str, Any] = Field(default_factory=dict)

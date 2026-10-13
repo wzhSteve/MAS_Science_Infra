@@ -18,11 +18,11 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Mapping, Optional, Protocol
 
 from .contracts import EventKind, ExecutionEvent
+from .memory.facts import FactLedger
 from .protocol import (
     DEFAULT_INPUT_SCHEMA,
     DEFAULT_OUTPUT_SCHEMA,
     AgentMessage,
-    commit_to_fact,
     make_message,
     validate_json_schema,
     validate_payload,
@@ -811,14 +811,18 @@ def run_centralized_episode(
             )
 
         # 5. termination / feedback / fact commit
-        if v_msg.kind == "verify" and commit_to_fact(v_msg.payload, last_tool.payload if last_tool else {}):
-            archive.append(
-                ExecutionEvent(
-                    kind=EventKind.MEMORY_WRITE,
-                    agent_id=verifier_id or "verifier",
-                    payload={"phase": "fact_commit", "turn": turn, "ok": True},
+        if v_msg.kind == "verify":
+            fact_decision = FactLedger.classify(v_msg.payload, last_tool.payload if last_tool else {})
+            if fact_decision == "COMMIT_FACT":
+                archive.append(
+                    ExecutionEvent(
+                        kind=EventKind.MEMORY_WRITE,
+                        agent_id=verifier_id or "verifier",
+                        # External contract frozen at Phase 0: keys {phase, turn, ok};
+                        # the `fact` field is append-only provenance.
+                        payload={"phase": "fact_commit", "turn": turn, "ok": True, "fact": fact_decision},
+                    )
                 )
-            )
         answer = str(
             v_payload.get("answer")
             or v_payload.get("direct_output")
