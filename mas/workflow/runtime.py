@@ -66,6 +66,9 @@ class EpisodeRaw:
     # workflow/prompts.py; empty for mock episodes).
     prompt_hash: Dict[str, Any] = field(default_factory=dict)
     prompt_source: Dict[str, Any] = field(default_factory=dict)
+    # Phase 6 planner_ctx audit: "none" (default, zero injection) or
+    # "latest" (hub memory injected into the first planner user text).
+    memory_mode: str = "none"
 
 
 def append_events_from_messages(archive: Archive, messages: List[Dict[str, Any]]) -> None:
@@ -267,6 +270,8 @@ def episode_to_trajectory(
             # resolution lives in workflow/prompts.py, MAS_design §7.2).
             "prompt_hash": dict(getattr(raw, "prompt_hash", None) or {}),
             "prompt_source": dict(getattr(raw, "prompt_source", None) or {}),
+            # Phase 6: planner_ctx audit ("none" = default zero-injection).
+            "memory_mode": getattr(raw, "memory_mode", "none") or "none",
         },
     )
     if routes:

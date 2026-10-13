@@ -13,6 +13,8 @@ Covers:
   - Snapshot schema_version: new snapshots persist version 1; legacy JSON
     without the field still parses (back-compat).
   - archive_root: TIR_ARCHIVE_DIR env takes priority over the default.
+  - planner_ctx (Phase 6): "latest" hub-memory injection via the centralized
+    runtime vs "none" default byte-level baseline equivalence.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from typing import Any
 
 MAS_ROOT = Path(__file__).resolve().parents[1]
 if str(MAS_ROOT) not in sys.path:
@@ -240,6 +243,146 @@ class TestArchiveRoot(unittest.TestCase):
         # legacy location stays resolvable and distinct (read-only fallback)
         self.assertEqual(os.path.basename(legacy_archive_root()), ".tir_archives")
         self.assertNotEqual(archive_root(), legacy_archive_root())
+
+
+class TestPlannerCtx(unittest.TestCase):
+    """Phase 6 planner_ctx (MAS_design §5): opt-in hub-memory injection.
+
+    ``latest`` -> first planner window user text carries the most recent
+    shared-hub memory item (marked ``[Previous episode memory]``),
+    MEMORY_READ/MEMORY_WRITE events fire (runtime.py schema), the episode
+    close writes the summary back and ``EpisodeRaw.memory_mode == "latest"``.
+    ``none``   -> the default: zero injection, no memory events, zero
+    message-sequence drift vs the Phase 0 baseline (evaluation-pollution
+    red line).
+    """
+
+    @staticmethod
+    def _linear_spec(memory_planner_ctx: str) -> Any:
+        from workflow.spec import MASSpec
+
+        return MASSpec.model_validate({
+            "schema_version": "0.3",
+            "topology": "centralized",
+            "entry_agent": "planner",
+            "tools": ["python_coder"],
+            "memory": {"agent": "messages", "system": "none", "planner_ctx": memory_planner_ctx},
+            "agents": [
+                {"id": "planner", "kind": "planner", "tools": ["python_coder"], "system_prompt": "plan"},
+                {"id": "python_coder", "kind": "tool", "trainable": False},
+                {"id": "verifier", "kind": "verifier", "system_prompt": "verify"},
+            ],
+            "routers": [{"id": "route_exec", "candidates": ["python_coder"], "strategy": "llm_choice"}],
+            "edges": [
+                {"from": "planner", "to": "route_exec", "kind": "route"},
+                {"from": "route_exec", "to": "verifier", "kind": "message"},
+                {"from": "verifier", "to": "planner", "kind": "feedback"},
+            ],
+        })
+
+    @staticmethod
+    def _scripted_win() -> Any:
+        from workflow.centralized_runtime import MockWindowLLM
+
+        return MockWindowLLM({
+            "planner": [json.dumps({"next": "python_coder", "args": {"code": "result=42"}, "sub_goal": "compute", "done": True})],
+            "verifier": [json.dumps({"ok": True, "reason": "ok", "step_conclusion": "COMPLETE", "slot_updates": []})],
+        })
+
+    @classmethod
+    def _run(cls, spec, memory, win=None):
+        """One scripted episode -> (raw, archive)."""
+        from workflow.archive import Archive
+        from workflow.centralized_runtime import run_centralized_episode
+        from workflow.compiler import compile_spec
+
+        compiled = compile_spec(spec)
+        arch = Archive()
+        raw = run_centralized_episode(
+            {"id": "ctx", "question": "What is 6*7?"},
+            None, arch, spec, memory, compiled,
+            window_llm=win or cls._scripted_win(),
+        )
+        return raw, arch
+
+    @staticmethod
+    def _capture_first_planner_user(win) -> dict:
+        """Wrap win.invoke so the first planner user text gets recorded."""
+        captured: dict = {}
+        orig_invoke = win.invoke
+
+        def _capture(system_prompt: str, user_text: str, *, agent_id: str, kind: str) -> str:
+            if agent_id == "planner" and "planner" not in captured:
+                captured["planner"] = user_text
+            return orig_invoke(system_prompt, user_text, agent_id=agent_id, kind=kind)
+
+        win.invoke = _capture
+        return captured
+
+    def test_planner_ctx_latest(self) -> None:
+        """latest: hub memory lands in the first planner window user text;
+        MEMORY_READ/MEMORY_WRITE events fire; meta records memory_mode."""
+        from workflow.memory import MemoryStore
+
+        mem = MemoryStore()
+        mem.write_agent("planner", {"final_answer": "42", "n_messages": 5}, memory_scope="shared")
+
+        win = self._scripted_win()
+        captured = self._capture_first_planner_user(win)
+        spec = self._linear_spec("latest")
+        raw, arch = self._run(spec, mem, win)
+        kinds = [str(e.kind.value) for e in arch._events]
+
+        # first-turn planner user text carries the marked hub memory item
+        first_user = captured.get("planner", "")
+        self.assertIn("[Previous episode memory]", first_user)
+        self.assertIn("42", first_user)
+        # memory events fired with the runtime.py schema
+        self.assertIn("memory_read", kinds)
+        self.assertIn("memory_write", kinds)
+        read_ev = next(e for e in arch._events if str(e.kind.value) == "memory_read")
+        self.assertEqual(read_ev.payload["scope"], "agent")
+        self.assertEqual(read_ev.payload["owner"], "hub")
+        self.assertEqual(read_ev.payload["n"], 1)
+        write_ev = next(e for e in arch._events if str(e.kind.value) == "memory_write" and e.payload.get("owner") == "hub")
+        self.assertEqual(write_ev.payload["scope"], "agent")
+        self.assertEqual(write_ev.payload["owner"], "hub")
+        self.assertEqual(write_ev.payload["memory_scope"], "shared")
+        # the episode close wrote the summary back to the hub buffer
+        latest = mem.latest("agent", "hub")
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.content["final_answer"], raw.final_answer)
+        self.assertEqual(latest.content["n_messages"], len(raw.messages))
+        # EpisodeRaw audits the mode
+        self.assertEqual(raw.memory_mode, "latest")
+
+    def test_planner_ctx_none_default(self) -> None:
+        """none (default): zero injection, no memory events — the message
+        sequence must stay byte-identical to the pre-Phase-6 baseline."""
+        from workflow.memory import MemoryStore
+
+        mem = MemoryStore()
+        mem.write_agent("planner", {"final_answer": "42", "n_messages": 5}, memory_scope="shared")
+
+        win = self._scripted_win()
+        captured = self._capture_first_planner_user(win)
+        spec = self._linear_spec("none")
+        raw, arch = self._run(spec, mem, win)
+        kind_values = [str(e.kind.value) for e in arch._events]
+
+        first_user = captured.get("planner", "")
+        self.assertNotIn("[Previous episode memory]", first_user)
+        # no MEMORY_READ; the only MEMORY_WRITE may be fact_commit (verifier
+        # path) — never a planner_ctx hub write
+        self.assertNotIn("memory_read", kind_values)
+        write_owners = [e.payload.get("owner") for e in arch._events if str(e.kind.value) == "memory_write"]
+        self.assertNotIn("hub", write_owners)
+        # EpisodeRaw audits the default
+        self.assertEqual(raw.memory_mode, "none")
+        # message-sequence baseline: default run matches the frozen Phase 0
+        # message kinds exactly (byte-level equivalence gate)
+        baseline_kinds = ["plan_step", "tool_invoke", "tool_result", "verify"]
+        self.assertEqual([m["kind"] for m in raw.messages], baseline_kinds)
 
 
 if __name__ == "__main__":

@@ -277,6 +277,39 @@ def run_centralized_episode(
     error: Optional[str] = None
     done = False
 
+    # Phase 6 planner_ctx (opt-in, default "none" = zero injection):
+    # "latest" injects the most recent shared-hub memory item after the
+    # first planner user text (MEMORY_READ below mirrors runtime.py's
+    # event schema) and writes the episode summary back at close time.
+    memory_mode = "none"
+    planner_mem_item = None
+    try:
+        memory_mode = str(getattr(spec.memory, "planner_ctx", "none") or "none")
+    except Exception:  # noqa: BLE001
+        memory_mode = "none"
+    if memory_mode == "latest" and memory is not None:
+        try:
+            hub_items = memory.read_agent("planner", memory_scope="shared")
+            planner_mem_item = hub_items[-1] if hub_items else None
+        except Exception:  # noqa: BLE001
+            planner_mem_item = None
+        hub_n = 1 if planner_mem_item is not None else 0
+        try:
+            archive.append(
+                ExecutionEvent(
+                    kind=EventKind.MEMORY_READ,
+                    payload={
+                        "scope": "agent",
+                        "owner": "hub",
+                        "kind": spec.memory.agent,
+                        "n": hub_n,
+                    },
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
     while turn < max_turns and not done:
         from .user_gateway.sandbox import eval_cancelled
 
@@ -292,6 +325,15 @@ def run_centralized_episode(
                 user = planner_user_text(question=question, candidates=all_cands)
             else:
                 user = planner_user_text(question=question, direct_executor=direct_executor)
+        # Phase 6 planner_ctx="latest": inject the most recent shared-hub
+        # memory item into the FIRST planner user text only (marked so eval
+        # contamination stays opt-in and auditable). Default "none" keeps
+        # this block dormant => byte-level identical behavior.
+        if turn == 1 and planner_mem_item is not None:
+            user = (
+                f"{user}\n\n[Previous episode memory]\n"
+                f"{json.dumps(dict(planner_mem_item.content or {}), ensure_ascii=False)}"
+            )
         try:
             planner_profile = dict(getattr(planner_node, "profile", None) or {})
             if str(planner_profile.get("backend") or "") == "user_space":
@@ -858,5 +900,29 @@ def run_centralized_episode(
         error=error,
         prompt_hash=dict(prov.get("prompt_hash") or {}),
         prompt_source=dict(prov.get("prompt_source") or {}),
+        memory_mode="latest" if (memory_mode == "latest" and memory is not None) else "none",
     )
+    # Phase 6 planner_ctx="latest": mirror runtime.py's episode-close write
+    # (write_agent -> hub buffer + MEMORY_WRITE event, same payload schema)
+    # so both execution paths stay isomorphic. "none" writes nothing.
+    if memory_mode == "latest" and memory is not None:
+        try:
+            agent_item = memory.write_agent(
+                "planner",
+                {"final_answer": raw.final_answer, "n_messages": len(raw.messages)},
+                memory_scope="shared",
+            )
+            archive.append(
+                ExecutionEvent(
+                    kind=EventKind.MEMORY_WRITE,
+                    payload={
+                        "scope": "agent",
+                        "owner": agent_item.owner,
+                        "id": agent_item.id,
+                        "memory_scope": "shared",
+                    },
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
     return raw

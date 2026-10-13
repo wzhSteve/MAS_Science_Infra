@@ -38,6 +38,13 @@ class LLMBinding(BaseModel):
 class MemorySpec(BaseModel):
     agent: str = "messages"
     system: str = "none"
+    # Phase 6 opt-in planner memory context (MAS_design §5): "latest" injects
+    # the most recent shared-hub memory item into the first planner window of
+    # each episode (with MEMORY_READ / MEMORY_WRITE events mirroring
+    # runtime.py). Default "none" = byte-identical to pre-Phase-6 behaviour
+    # (evaluation-pollution red line: "latest" is for explicit experiments
+    # only). Old YAML without the key parses to "none" (extra=forbid safe).
+    planner_ctx: Literal["none", "latest"] = "none"
 
     model_config = {"extra": "forbid"}
 
