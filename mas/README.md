@@ -86,4 +86,4 @@ PYTHONPATH=. python scripts/check_workflow_deps.py
 PYTHONPATH=. python -m unittest discover -s tests -v
 ```
 
-See `docs/DESIGN.md` §8 and the `workflow/` package.
+See `docs/DESIGN.md` §8 and the `workflow/` package. 结构索引：`docs/CONCEPT_MAP.md`（仓库根）；prompt 解析唯一入口 `workflow/prompts.py`（Phase 4 起），memory 三组件 `workflow/memory/{store,facts,archive}.py`（Phase 2 起）。

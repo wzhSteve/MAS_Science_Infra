@@ -53,6 +53,38 @@ def effective_tier(tier: Optional[str]) -> str:
     return "pro"
 
 
+_logged_tier_mismatches: set = set()
+
+
+def log_effective_tier(tool_id: str, configured_tier: Optional[str]) -> str:
+    """Startup structured log for tier resolution (MAS_design §6.2, Phase 4).
+
+    Emits ONCE per (tool, mismatch) at warning level:
+      {"tool", "configured_tier", "effective_tier", "override_reason"}
+    ``override_reason`` is ``SCIENCE_INFRA_TOOL_KERNEL`` when the kernel-only
+    switch forced a downgrade, else empty (clean resolution stays quiet).
+    """
+    requested = str(configured_tier or "").strip().lower()
+    forced = os.getenv("SCIENCE_INFRA_TOOL_KERNEL", "").strip().lower() in ("1", "true", "yes")
+    resolved = effective_tier(configured_tier)
+    mismatch = requested == "pro" and resolved != "pro"
+    key = (tool_id, requested, resolved)
+    if mismatch and key not in _logged_tier_mismatches:
+        _logged_tier_mismatches.add(key)
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "tool tier downgraded: %s",
+            {
+                "tool": tool_id,
+                "configured_tier": requested or "lite",
+                "effective_tier": resolved,
+                "override_reason": "SCIENCE_INFRA_TOOL_KERNEL" if forced else "",
+            },
+        )
+    return resolved
+
+
 class ToolAgent:
     """Encapsulated tool-agent: LLM-in-tool by default, kernel as fallback."""
 
@@ -94,7 +126,7 @@ class ToolAgent:
         ``prefer_llm`` is ignored so a missing HIVE import cannot exit the process.
         """
         del prefer_llm
-        resolved = effective_tier(tier)
+        resolved = log_effective_tier(self.id, tier)
         payload = args if isinstance(args, dict) else {}
         if resolved == "pro":
             from .pro_tools import run_pro

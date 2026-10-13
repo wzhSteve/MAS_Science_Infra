@@ -224,10 +224,11 @@ def run_centralized_episode(
     planner_node = compiled.agents.get("planner")
     if planner_node is None:
         return EpisodeRaw(messages=[], error="centralized topology requires a planner node")
-    planner_prompt = (
-        planner_node.system_prompt or spec.hub.system_prompt
-        or "Decompose the task into the next step and pick one tool. Output JSON only."
-    )
+    # Phase 4: prompt resolution converges in workflow/prompts.py (single
+    # entry point; byte-identical inline chains migrated from here).
+    from .prompts import candidate_menu, planner_prompt, planner_user_text, verifier_prompt
+
+    planner_prompt = planner_prompt(spec, compiled)
 
     verifier_id = None
     for aid, node in compiled.agents.items():
@@ -235,7 +236,7 @@ def run_centralized_episode(
             verifier_id = aid
             break
     verifier_node = compiled.agents.get(verifier_id) if verifier_id else None
-    verifier_prompt = (verifier_node.system_prompt if verifier_node else "") or ""
+    verifier_prompt = verifier_prompt(compiled)
 
     router_id = compiled.route_out.get("planner")
     router_ids_run = list(compiled.fan_out.get("planner") or [])
@@ -257,6 +258,8 @@ def run_centralized_episode(
                 return EpisodeRaw(messages=[], error=f"router {rid!r} missing from compiled graph")
         if router_id not in compiled.routers:
             router_id = router_ids_run[0]
+    # Candidate menu for the planner user text (prompts.py single builder).
+    all_cands = candidate_menu(router_ids_run, compiled.routers)
 
     blank_ids = {aid for aid, node in compiled.agents.items() if getattr(node, "kind", None) == "blank"}
     allowed_agents = set(compiled.agents)
@@ -281,26 +284,14 @@ def run_centralized_episode(
             error = "用户停止"
             break
         turn += 1
-        # 1. planner window -> plan_step
+        # 1. planner window -> plan_step (user text composed by prompts.py)
         if last_feedback:
-            user = (
-                f"{question}\n\n[Verifier feedback from previous turn]\n{last_feedback}\n"
-                "Decide the next step. Output JSON with keys: next, args, sub_goal, done."
-            )
+            user = planner_user_text(question=question, feedback=last_feedback)
         else:
             if router_ids_run:
-                all_cands = []
-                for rid in router_ids_run:
-                    all_cands.extend(list(compiled.routers[rid].candidates or []))
-                user = (
-                    f"{question}\n\nDecide the next step and pick one tool from "
-                    f"{all_cands}. Output JSON with keys: next, args, sub_goal, done."
-                )
+                user = planner_user_text(question=question, candidates=all_cands)
             else:
-                user = (
-                    f"{question}\n\nDecide the next step. next must be {direct_executor}. "
-                    "Output JSON with keys: next, args, sub_goal, done."
-                )
+                user = planner_user_text(question=question, direct_executor=direct_executor)
         try:
             planner_profile = dict(getattr(planner_node, "profile", None) or {})
             if str(planner_profile.get("backend") or "") == "user_space":
@@ -855,6 +846,8 @@ def run_centralized_episode(
             all_messages.append(fb.model_dump())
             _log_window(archive, verifier_id or "verifier", turn, v_msg, fb, False)
 
+    from .prompts import prompt_provenance
+    prov = prompt_provenance(spec, compiled)
     raw = EpisodeRaw(
         messages=all_messages,
         final_answer=final_answer,
@@ -863,5 +856,7 @@ def run_centralized_episode(
         n_python=n_python,
         window_events=window_events,
         error=error,
+        prompt_hash=dict(prov.get("prompt_hash") or {}),
+        prompt_source=dict(prov.get("prompt_source") or {}),
     )
     return raw

@@ -62,6 +62,10 @@ class EpisodeRaw:
     error_details: Optional[ExecutionFailure] = None
     lc_messages: Any = None
     skill_results: List[Dict[str, Any]] = field(default_factory=list)
+    # Phase 4 prompt provenance (filled by run_* entry points from
+    # workflow/prompts.py; empty for mock episodes).
+    prompt_hash: Dict[str, Any] = field(default_factory=dict)
+    prompt_source: Dict[str, Any] = field(default_factory=dict)
 
 
 def append_events_from_messages(archive: Archive, messages: List[Dict[str, Any]]) -> None:
@@ -259,6 +263,10 @@ def episode_to_trajectory(
             "memory": mem_dump,
             "tools": list(spec_obj.tools),
             "skills": [r.get("skill") for r in raw.skill_results],
+            # Phase 4: prompt provenance audit (prompt_hash/prompt_source
+            # resolution lives in workflow/prompts.py, MAS_design §7.2).
+            "prompt_hash": dict(getattr(raw, "prompt_hash", None) or {}),
+            "prompt_source": dict(getattr(raw, "prompt_source", None) or {}),
         },
     )
     if routes:

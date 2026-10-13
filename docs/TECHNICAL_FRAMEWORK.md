@@ -40,6 +40,8 @@
 
 Reward / TrainSignal 唯一入口：`rl.rewards.outcome` / `rl.loss` + `rl.train_signal` / `rl.hooks.*`（原 `mas/workflow/{rewards,train_signal}.py` 与 `mas/algos/*` 兼容 shim 已于重构 Phase 3 删除）。
 
+Prompt 解析唯一入口：[`mas/workflow/prompts.py`](../mas/workflow/prompts.py)（`planner_prompt` node>hub>default 空串规则 / `verifier_prompt` / `candidate_menu` / `planner_user_text` 三段式；`prompt_hash`+`prompt_source` 写入 `Trajectory.meta`，Phase 4 收口）。概念→文件总索引见 [CONCEPT_MAP.md](CONCEPT_MAP.md)。
+
 ## 2. 三条运行时
 
 画布上的中心化图是 `planner → router → tool-agent pool → verifier`。这张图**不会**在三条路径里被同一套代码重放。
