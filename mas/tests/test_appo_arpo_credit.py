@@ -190,7 +190,14 @@ class TestPresets(unittest.TestCase):
         )
         self.assertEqual(trained["algorithm"]["tir_algo"], "appo")
         self.assertEqual(trained["algorithm"]["tir"]["loss_mode"], "future_kl")
-        self.assertFalse(trained["algorithm"]["tir"]["loss_applied_to_actor"])
+        # RL1 double-write: future_kl now reaches the vendored read side via the
+        # mirrored actor.policy_loss subtree (previously locked OFF via the
+        # deprecated tir.loss_applied_to_actor marker, removed with RL1).
+        self.assertEqual(
+            trained["actor_rollout_ref"]["actor"]["policy_loss"]["loss_mode"], "future_kl"
+        )
+        self.assertEqual(trained["actor_rollout_ref"]["actor"]["policy_loss"]["decay_rate"], 128.0)
+        self.assertNotIn("loss_applied_to_actor", trained["algorithm"]["tir"])
         self.assertEqual(trained["algorithm"]["adv_estimator"], "grpo")
         self.assertIn("appo", BRANCHING_ALGOS)
         self.assertNotIn("grpo", BRANCHING_ALGOS)
