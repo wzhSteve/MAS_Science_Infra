@@ -15,6 +15,7 @@ from .spec import load_spec
 # Phase 3 shim removal (docs/MAS_refactor plan): outcome rewards live in rl/.
 # The workflow→rl dependency pre-existed via the deleted mas/workflow/rewards.py
 # shim; check_workflow_deps guards AGL/VERL/Ray only (not rl).
+from rl.rewards.assembly import RewardSpec
 from rl.rewards.outcome import compute_outcome_reward, parse_alias_field
 from uuid import uuid4
 
@@ -24,7 +25,16 @@ RewardFn = Callable[[Trajectory, Dict[str, Any]], float]
 load_repo_dotenv()
 
 
-def default_reward_fn(traj: Trajectory, task: Dict[str, Any]) -> float:
+def default_reward_fn(traj: Trajectory, task: Dict[str, Any], *, reward_spec: Optional[RewardSpec] = None) -> float:
+    """Status-quo hierarchical outcome; RL4 adds an optional RewardSpec pass-through.
+
+    ``reward_spec=None`` keeps the literal path byte-identical (every existing
+    caller — lit_tir_agent.py:247 passes no spec). When a spec is supplied,
+    compute_outcome_reward routes the frozen hierarchy through per-component
+    switch/weight application. The spec travels in config trees under
+    ``algorithm.reward`` (overlay writes it; RL5's v2 yaml segment is the
+    user-facing authoring surface) — task dicts stay untouched.
+    """
     gold = str(task.get("answer") or "")
     source = str(task.get("source") or "gsm8k")
     aliases = parse_alias_field(task.get("answers"))
@@ -41,6 +51,7 @@ def default_reward_fn(traj: Trajectory, task: Dict[str, Any]) -> float:
         format_ok=format_ok,
         n_search=traj.n_search,
         n_python=traj.n_python,
+        reward_spec=reward_spec,
     )
 
 

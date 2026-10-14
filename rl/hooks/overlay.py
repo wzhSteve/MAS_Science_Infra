@@ -133,6 +133,15 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
         tir["rae_full_tgt"] = bool(tir.get("rae_full_tgt", False))
         tir["rae_dead_end_backprop"] = bool(tir.get("rae_dead_end_backprop", True))
     algo_block["tir"] = tir
+    # RL4: mirror the tir multi_tool_bonus into a structured RewardSpec under
+    # algorithm.reward — the RL5 v2 yaml segment slot. This CONNECTS the
+    # previously-dead DEFAULT_TIR["multi_tool_bonus"] config (overlay.py:29,
+    # never consumed by collector.py's default_reward_fn call chain) to a
+    # live, switchable/weightable component spec. Dual-read window:
+    # algorithm.tir.multi_tool_bonus keeps its legacy read path (nothing
+    # consumes it today besides this mirror), and the spec section below is
+    # the canonical delivery surface going forward.
+    algo_block["reward"] = _reward_section_from_tir(tir, user_tir)
     cfg["algorithm"] = algo_block
     if algo == "flow_grpo":
         # Trajectory outcome is already broadcast onto every turn by the VERL daemon.
@@ -156,6 +165,32 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
         trainer["experiment_name"] = f"{base_name}_{algo}"
     cfg["trainer"] = trainer
     return cfg
+
+
+def _reward_section_from_tir(tir: Dict[str, Any], user_tir: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the ``algorithm.reward`` section (RewardSpec-shaped) from the tir dict.
+
+    The effective multi_tool_bonus magnitude (DEFAULT_TIR 0.1 baseline, user
+    yaml override wins — both live in ``tir`` at this point) becomes the
+    multi_tool_bonus component's weight; weight 0 means disabled. format_penalty
+    and accuracy_reward carry their frozen defaults (on; accuracy not
+    switchable). ``user_tir`` is consulted only to document provenance — an
+    explicit user ``multi_tool_bonus`` key lands in the section's ``meta``
+    for auditability (RL5 resolved_algo will serialize this section).
+    """
+    from rl.rewards.assembly import reward_spec_from_tir
+
+    spec = reward_spec_from_tir(tir)
+    section: Dict[str, Any] = {
+        "outcome": spec.outcome,
+        "components": [
+            {"id": comp.id, "weight": float(comp.weight), "enabled": bool(comp.enabled)}
+            for comp in spec.components
+        ],
+    }
+    if "multi_tool_bonus" in user_tir:
+        section["meta"] = {"multi_tool_bonus_source": "user_tir"}
+    return section
 
 
 def apply_train_signal(config: Dict[str, Any], signal: "TrainSignal") -> Dict[str, Any]:

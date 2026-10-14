@@ -6,9 +6,13 @@ from __future__ import annotations
 import json
 import re
 import string
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:  # RewardSpec lives in the same package (rl.rewards.assembly);
+    # imported lazily to keep outcome.py import-order trivial for hot paths.
+    from rl.rewards.assembly import RewardSpec
 
 _PLACEHOLDERS = {"", "answer", "<answer>", "number", "<number>"}
 
@@ -152,11 +156,45 @@ def compute_outcome_reward(
     n_search: int,
     n_python: int,
     multi_tool_bonus: float = 0.1,
+    reward_spec: Optional["RewardSpec"] = None,
 ) -> float:
     """Hierarchical outcome used by all tir_algo variants.
 
     Format bad → -1; format ok & Acc=0 → 0; Acc>0 → Acc [+ r_M if both tools used].
+
+    RL4: ``reward_spec`` (an optional RewardSpec from rl.rewards.assembly)
+    routes the SAME hierarchy through per-component switch/weight application.
+    ``reward_spec=None`` (the default for every v1 caller) keeps the literal
+    path below byte-identical — no behavioral change for existing callers.
+    When a spec is provided, the ``multi_tool_bonus`` keyword is IGNORED (the
+    spec's multi_tool_bonus component owns the magnitude); format_penalty
+    becomes switchable (off → a format failure falls through to the accuracy
+    layer instead of returning -1); accuracy_reward is not switchable (spec
+    validation enforces enabled=True upstream).
     """
+    if reward_spec is not None:
+        # --- component path (switchable / weightable) --------------------
+        spec = reward_spec
+        # format_penalty: gate BEFORE accuracy unless switched off.
+        if format_ok:
+            gained = accuracy(prediction, gold, source=source, aliases=aliases)
+        else:
+            if not spec.is_enabled("format_penalty"):
+                # switched off: no penalty, still evaluate accuracy on the
+                # raw prediction (the hierarchy's second layer).
+                gained = accuracy(prediction, gold, source=source, aliases=aliases)
+            else:
+                return float(-1.0 * spec.weight_of("format_penalty"))
+        if gained <= 0:
+            return 0.0
+        # cost_penalty: reserved slot — validation guarantees disabled, and
+        # the executor no-ops it even if a future caller hand-builds one.
+        bonus = 0.0
+        if spec.is_enabled("multi_tool_bonus") and (n_search > 0 and n_python > 0):
+            bonus = spec.weight_of("multi_tool_bonus")
+        return float(gained + bonus)
+
+    # --- literal path (v1 default; byte-identical to pre-RL4) -------------
     if not format_ok:
         return -1.0
     acc = accuracy(prediction, gold, source=source, aliases=aliases)
