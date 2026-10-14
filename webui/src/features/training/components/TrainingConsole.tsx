@@ -104,6 +104,11 @@ const RunOutput = memo(function RunOutput({ experimentId, runId, active, picker,
       <strong>{TRAIN_STATE[state?.state || ''] || '读取状态…'}</strong>
       {state?.kind === 'eval' && <span>测试</span>}
       {state?.kind !== 'eval' && info?.algo != null && <span>{String(info.algo).toUpperCase()}</span>}
+      {state?.kind !== 'eval' && info?.resolved_algorithm != null && (
+        <span className="console-resolved-algo" title="resolved 组合摘要（launch.json resolved_algo 的可读形态）">
+          {String(info.resolved_algorithm)}
+        </span>
+      )}
       {info?.cuda_visible_devices != null && <span>GPU {String(info.cuda_visible_devices)}</span>}
       {info?.n_runners != null && <span>Runner {String(info.n_runners)}</span>}
       {info?.group_n != null && <span>n={String(info.group_n)}</span>}

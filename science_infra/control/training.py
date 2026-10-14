@@ -409,6 +409,34 @@ def _resolved_algo_payload(rl: dict[str, Any] | None) -> dict[str, Any] | None:
     return payload
 
 
+def _resolved_algo_summary(payload: dict[str, Any] | None, group_n: int | None) -> str | None:
+    """One-line human-readable resolved summary (RL_design §4.4).
+
+    Rendered by TrainingConsole / TrainingHistory (webui); ``meta.algo`` stays
+    the fallback for legacy runs that predate the resolved_algo field.
+    """
+    if not isinstance(payload, dict):
+        return None
+    advantage = payload.get("advantage") if isinstance(payload.get("advantage"), dict) else {}
+    base = str(advantage.get("base") or "grpo")
+    operators = ",".join(
+        str(op.get("id")) for op in (advantage.get("operators") or []) if isinstance(op, dict)
+    )
+    reward = payload.get("reward") if isinstance(payload.get("reward"), dict) else {}
+    comps = ",".join(
+        f"{comp.get('id')}"
+        + (f"×{comp.get('weight')}" if comp.get("weight") not in (None, 1) else "")
+        + ("" if comp.get("enabled", True) else ":off")
+        for comp in (reward.get("components") or [])
+        if isinstance(comp, dict)
+    )
+    loss_mode = str(payload.get("loss_mode") or "vanilla")
+    summary = f"base={base} + [{operators}], reward=[{comps}], loss={loss_mode}"
+    if group_n is not None:
+        summary += f", n={group_n}"
+    return summary
+
+
 
 def _model_path(rl: dict[str, Any]) -> str:
     return str(
@@ -835,7 +863,13 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
         for raw_site in sites or []:
             site = BranchSite.model_validate(raw_site)
             if site.enabled:
-                status, message = site_capability(site, spec)
+                # Sites belong to the RL algorithm's sampling strategy
+                # (ARPO/APPO adapters declare agent-turn opportunities;
+                # the workflow's default grpo_n does not), so validate
+                # against tir_algo instead of spec.sampling.mode.
+                status, message = site_capability(
+                    site, spec, strategy=str(algorithm or "") or None
+                )
                 record(f"branch_site_{site.id}", f"站点 {site.id}", status, message)
 
     _, missing = _dependency_status()
@@ -1045,6 +1079,9 @@ def _launch_training(
         "request_id": request_id,
         "profile": plan.profile,
         "algo": plan.algorithm,
+        "resolved_algorithm": _resolved_algo_summary(
+            _resolved_algo_payload(plan.rl), plan.group_n
+        ),
         "preflight_revision": plan.revision,
         "training_source": plan.source.public(),
         "cuda_visible_devices": ",".join(str(value) for value in plan.gpu_ids),

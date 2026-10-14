@@ -8,6 +8,7 @@ import { Input } from '../../../shared/ui/input';
 import { Select } from '../../../shared/ui/select';
 import { HYDRA_FIELDS } from '../../rl/model/hydraFields';
 import { RlField } from '../../rl/components/RlField';
+import { ComposedPanel } from '../../rl/components/ComposedPanel';
 import { ModelBinding, type BindingView } from '../../resources/components/ModelBinding';
 import { SamplingSettings } from '../../sampling/components/SamplingSettings';
 import { workflowToFlow } from '../../mas/model/workflowGraph';
@@ -78,8 +79,9 @@ export const TrainingSettings = memo(function TrainingSettings({
     node,
     model: resolveAgentModel(node.data.model, modelOptions, defaultModel),
   })), [agents, defaultModel, modelOptions]);
-  const fields = (items: typeof HYDRA_FIELDS) => <div className="form-grid">{items.map(field =>
-    <RlField key={field.path} field={field} value={field.read(rl)} onPatch={patch} compact />)}</div>;
+  const fields = (items: typeof HYDRA_FIELDS) => <div className="form-grid">{items
+    .filter(field => !field.visible || field.visible(rl))
+    .map(field => <RlField key={field.path} field={field} value={field.read(rl)} onPatch={patch} compact />)}</div>;
 
   return <aside className={`training-parameters${expanded ? ' is-expanded' : collapsed ? ' is-collapsed' : ''}`}
     aria-label="训练配置" hidden={canvasMode === 'sampling'}>
@@ -133,6 +135,9 @@ export const TrainingSettings = memo(function TrainingSettings({
           compact onOpenDesign={() => onCanvasModeChange('sampling')} canvasMode={canvasMode}
           preview={samplingPreview} previewError={samplingPreviewError}
           selectedOpportunityId={selectedSamplingOpportunity} onSelectOpportunity={onSelectSamplingOpportunity} />
+        <details className="parameter-details"><summary>算法组合（base × 算子栈）</summary>
+          <ComposedPanel rl={rl} sampling={workflow.sampling} onPatch={patch} />
+        </details>
         <details className="parameter-details"><summary>训练与优化参数</summary>{fields(OPTIMIZATION)}</details>
       </section>
       <section id="training-environment" className="parameter-group">

@@ -166,5 +166,71 @@ class TestExpandSerializationStability(unittest.TestCase):
         self.assertEqual(a, b)
 
 
+class TestResolvedAlgoSummary(unittest.TestCase):
+    """RL6: the one-line human-readable summary consumed by TrainingConsole /
+    TrainingHistory via run meta (RL_design §4.4). Legacy runs without the
+    field keep falling back to meta.algo — the summary must degrade the same
+    way (None → frontend skips the span)."""
+
+    def _summary(self, rl, group_n=None):
+        from science_infra.control.training import _resolved_algo_summary
+
+        return _resolved_algo_summary(_resolved_algo(rl), group_n)
+
+    def test_summary_renders_appo_base_operators_and_group_n(self):
+        # plan.rl 是 pre-overlay 原始 yaml：appo 未显式写 tir.loss_mode 时
+        # 摘要如实回退 vanilla（名实不符由 overlay 后的 effective 快照与
+        # resolved_algo.launch 字段各管各面——本函数只读 plan 层）。
+        summary = self._summary({"algo": "appo"}, group_n=8)
+        self.assertIn("base=grpo + [appo_credit]", summary)
+        self.assertIn("loss=vanilla", summary)
+        self.assertIn("n=8", summary)
+
+    def test_summary_renders_explicit_future_kl_tir(self):
+        summary = self._summary({
+            "algo": "appo",
+            "algorithm": {"tir": {"loss_mode": "future_kl"}},
+        })
+        self.assertIn("loss=future_kl", summary)
+
+    def test_summary_renders_reward_component_weights(self):
+        rl = {
+            "algo": "grpo",
+            "algorithm": {
+                "tir": {"multi_tool_bonus": 0.1, "format_penalty": -1.0},
+                "reward": {
+                    "components": [
+                        {"id": "outcome", "weight": 1.0, "enabled": True},
+                        {"id": "multi_tool_bonus", "weight": 0.1, "enabled": True},
+                        {"id": "format_penalty", "weight": -1.0, "enabled": True},
+                    ]
+                },
+            },
+        }
+        summary = self._summary(rl)
+        self.assertIn("reward=[outcome,multi_tool_bonus×0.1,format_penalty×-1.0]", summary)
+
+    def test_summary_marks_disabled_components(self):
+        rl = {
+            "algo": "grpo",
+            "algorithm": {
+                "tir": {},
+                "reward": {"components": [{"id": "multi_tool_bonus", "weight": 0.1, "enabled": False}]},
+            },
+        }
+        summary = self._summary(rl)
+        self.assertIn("multi_tool_bonus×0.1:off", summary)
+
+    def test_summary_none_for_unresolvable_rl(self):
+        from science_infra.control.training import _resolved_algo_summary
+
+        self.assertIsNone(_resolved_algo_summary(None, 8))
+        # payload 形态不合法（unknown preset 被 V1 拒绝 → payload None → summary None）
+        from science_infra.control.training import _resolved_algo_payload
+
+        self.assertIsNone(_resolved_algo_payload({"algo": "no_such_preset"}))
+        self.assertIsNone(_resolved_algo_summary(None, 8))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -155,8 +155,29 @@ export interface WorkflowSpec extends Config {
   archive?: Config;
 }
 
+export interface ComposedRewardComponent {
+  id: string;
+  weight?: number;
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
+/** RL5 v2 dual-track schema (RL_design §3.4): explicit composed pipeline.
+ * Type-mirrors AdvantagePipelineSpec / RewardSpec serialization —
+ * `operators[].params`, `reward.components`, `loss.mode`. Mutually exclusive
+ * with the v1 `algo` preset single-select; the exclusion is enforced by
+ * normalizeRlPayload (composed wins per RL_design §4.3 rule 2). */
+export interface ComposedSpec {
+  base?: 'grpo' | 'igpo' | 'gigpo';
+  operators?: Array<{ id: string; params?: Config }>;
+  reward?: { components?: ComposedRewardComponent[]; [key: string]: unknown };
+  loss?: { mode?: 'vanilla' | 'future_kl'; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
 export interface RlConfig extends Config {
   algo?: string;
+  composed?: ComposedSpec;
   profile?: string;
   model_path?: string;
   rollout_per_gpu?: number;
@@ -276,6 +297,9 @@ export interface Palette {
     backend: string;
     llm_required: boolean;
     description?: string;
+    has_tiers?: boolean;
+    tiers?: string[];
+    default_fetch_n?: number;
   }>;
   sampling_modes?: string[];
   gate_types?: string[];

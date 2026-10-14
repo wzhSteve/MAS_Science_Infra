@@ -11,6 +11,7 @@ import { Select } from '../../../shared/ui/select';
 import { HYDRA_FIELDS, HYDRA_GROUPS } from '../model/hydraFields';
 import { algorithmFromSampling } from '../model/normalizeRlPayload';
 import { rolloutPatch } from '../model/rlPrefills';
+import { ComposedPanel } from './ComposedPanel';
 
 type Props = {
   rl: RlConfig;
@@ -65,6 +66,9 @@ export const RlSettingsForm = memo(function RlSettingsForm({
         <Input value={rl.model_path || ''} onChange={(event) => onPatch({ ...rl, model_path: event.target.value })} />
       </FormField>}
     </div>}
+    {!advancedOnly && <div className="form-grid composed-panel-slot">
+      <ComposedPanel rl={rl} sampling={sampling} onPatch={(update) => onPatch(typeof update === 'function' ? update(rl) : update)} />
+    </div>}
     {!advancedOnly && <ActionBar>
       <Button loading={pending === 'recommend'} disabled={pending !== null} onClick={onRecommend}>按当前机器推荐</Button>
       <Button variant="ghost" aria-expanded={showAdvanced} aria-controls={advancedId} onClick={() => setShowAdvanced((current) => !current)}>
@@ -75,9 +79,19 @@ export const RlSettingsForm = memo(function RlSettingsForm({
       {HYDRA_GROUPS.map((group) => <fieldset key={group.id} className="m-0 min-w-0 border-0 p-0">
         <legend className="mb-3 text-sm font-semibold"><HelpLabel help={group.description}>{group.label}</HelpLabel></legend>
         <div className="form-grid">
-          {HYDRA_FIELDS.filter((field) => field.group === group.id).map((field) => <FormField
-            label={<HelpLabel help={field.description}>{field.label}</HelpLabel>} key={field.path}>
-            <Input type={field.type} step={field.type === 'number' ? 'any' : undefined} value={field.read(rl) ?? ''} onChange={(event) => onPatch(field.update(rl, event.target.value))} />
+          {HYDRA_FIELDS.filter((field) => field.group === group.id && (!field.visible || field.visible(rl))).map((field) => <FormField
+            label={<HelpLabel help={field.description}>{field.label}</HelpLabel>} key={field.path}
+            hint={typeof field.hint === 'function' ? field.hint(rl) || undefined : field.hint}>
+            {field.type === 'toggle'
+              ? <input type="checkbox" aria-label={field.label}
+                  checked={field.read(rl) === true}
+                  onChange={(event) => onPatch(field.update(rl, String(event.target.checked)))} />
+              : field.type === 'select'
+                ? <Select value={String(field.read(rl) ?? '')} onChange={(event) => onPatch(field.update(rl, event.target.value))}>
+                    <option value="">继承默认值</option>
+                    {(field.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
+                  </Select>
+                : <Input type={field.type} step={field.type === 'number' ? 'any' : undefined} value={String(field.read(rl) ?? '')} onChange={(event) => onPatch(field.update(rl, event.target.value))} />}
           </FormField>)}
         </div>
       </fieldset>)}

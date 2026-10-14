@@ -43,6 +43,19 @@
 .parameter-details > .ui-button { margin-top: 12px; }
 .parameter-execution-agent { display: flex; align-items: center; gap: 10px; margin-top: 10px; min-width: 0; }
 .parameter-execution-agent > span:nth-child(2) { margin-left: auto; color: var(--text-secondary); overflow-wrap: anywhere; }
+/* RL6 ComposedPanel（算法组合子区）与 resolved 摘要列 */
+.composed-panel { display: grid; gap: 10px; min-width: 0; font-size: 11px; }
+.composed-panel-slot { grid-column: 1 / -1; }
+.composed-panel-hint { margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.7; }
+.composed-panel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
+.composed-operators { display: grid; gap: 6px; align-content: start; }
+.composed-operators-label { color: var(--text-secondary); }
+.composed-operator-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 8px; min-height: 24px; }
+.composed-operator-name { font-weight: 500; }
+.composed-operator-desc { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composed-operators-note { margin: 2px 0 0; color: var(--text-secondary); }
+.console-resolved-algo { color: var(--text-secondary); font-size: 11px; }
+.training-record-resolved { margin: 2px 0 0; color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
 .training-parameters .page-stack { gap: 14px; }
 .training-parameters .ui-section { border: 0; border-radius: 0; box-shadow: none; padding: 0; background: transparent; }
 .training-parameters .section-header { margin-bottom: 12px; }

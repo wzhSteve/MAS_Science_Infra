@@ -83,9 +83,30 @@ class TirAgentModeDaemon(AgentModeDaemon):
         self._enqueued_expansion_parents: set = set()
         self._incremental_branch_total = 0
         self._expansion_enqueue_failures = 0
+        # RL6 D6 (MAS v2 §9.3 有效样本计量): group-level counters.
+        # requested = Σ(n_target × group) over groups seen at fill time (卷面值);
+        # valid = 样本账面总数 (wave1 既有 + 本波成功入队，含分支与全局补齐);
+        # expanded = valid 中来自 runner expansion plans 的分支数;
+        # duplicate = 已入队父级被重复递交的次数 (dedup guard hits);
+        # failed = 递交异常次数 (同 _expansion_enqueue_failures 既有计数器).
+        # 对账关系由 mas/tests/test_daemon_expand.py 组级用例锁定:
+        # requested ≥ valid + 0*failed (缺口 = 采样失败/plan 不足被全局补齐
+        # 掩盖的量, 正是 §9.3 要暴露的信号)。
+        self._group_requested_total = 0
+        self._group_valid_total = 0
+        self._group_expanded_total = 0
+        self._group_duplicate_total = 0
         self._tree_recorder = RolloutTreeRecorder(tree_context) if self.mode == "v1" else None
         if self.mode != "v1" and tree_context:
             logging.getLogger(__name__).warning("RolloutTree recording requires Store v1; mode=%s", self.mode)
+
+    def _bump_group_metric(self, name: str, amount: int) -> None:
+        """RL6 D6 counter bump — tolerant of __new__-constructed daemons
+        (several tests build TirAgentModeDaemon.__new__ and never run
+        __init__; mirrors the getattr-tolerant reads the legacy counters
+        use in get_train_data_batch)."""
+        attr = f"_group_{name}_total"
+        setattr(self, attr, int(getattr(self, attr, 0)) + int(amount))
 
     def _expand_in_runner(self) -> bool:
         return bool(self.tir_config.get("expand_in_runner", True))
@@ -323,6 +344,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
     async def _enqueue_expansion_for_parent(self, parent_rid: str) -> int:
         """Incremental enqueue: materialize one root's plans as soon as it finishes."""
         if parent_rid in self._enqueued_expansion_parents:
+            # RL6 D6: 增量路径的重复递交（波次2 兜底会再走一遍已入队父级）。
+            self._bump_group_metric("duplicate", 1)
             return 0
         expansion = load_local_expansion(parent_rid) or {}
         plans = identify_plans(parent_rid, list(expansion.get("plans") or []))
@@ -397,6 +420,10 @@ class TirAgentModeDaemon(AgentModeDaemon):
         if not requests:
             return 0
         rollouts = await self.store.enqueue_many_rollouts(requests)
+        # RL6 D6: 增量入队账目——valid 全计，expanded 只计 plans 分支
+        # （requests 本路径全部来自 expansion plans，故 expanded == valid here）。
+        self._bump_group_metric("valid", len(rollouts))
+        self._bump_group_metric("expanded", len(rollouts))
         for rollout, sample in zip(rollouts, samples_for_requests):
             packed = dict(sample)
             did = str((rollout.metadata or {}).get("data_id") or packed.get("data_id") or "")
@@ -454,6 +481,12 @@ class TirAgentModeDaemon(AgentModeDaemon):
         for rid, sample in self._task_id_to_original_sample.items():
             by_data.setdefault(str(sample.get("data_id")), []).append(rid)
 
+        # RL6 D6: requested = 卷面组大小 × 组数（每组都应补齐到 n_target）；
+        # valid 先计组内已有样本（wave1 初始 + 上轮增量入队成果），下料成功
+        # 后再累加入队数——期末 valid 即“实际进训练账面的有效样本”。
+        self._bump_group_metric("requested", n_target * len(by_data))
+        self._bump_group_metric("valid", sum(len(rids) for rids in by_data.values()))
+
         requests: List[EnqueueRolloutRequest] = []
         samples_for_requests: List[Dict[str, Any]] = []
 
@@ -487,6 +520,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
 
             for rid in rids:
                 if rid in self._enqueued_expansion_parents:
+                    # RL6 D6: 波次2 遇到已完成增量入队的父级——重复递交计数。
+                    self._bump_group_metric("duplicate", 1)
                     continue
                 expansion = load_local_expansion(rid) or {}
                 plans = identify_plans(rid, list(expansion.get("plans") or []))
@@ -563,6 +598,13 @@ class TirAgentModeDaemon(AgentModeDaemon):
         if not requests:
             return 0
         rollouts = await self.store.enqueue_many_rollouts(requests)
+        # RL6 D6: valid = 本波成功入队的全部 rollout（分支 + 全局补齐）；
+        # expanded = 其中来自 runner expansion plans 的分支数。
+        self._bump_group_metric("valid", len(rollouts))
+        self._bump_group_metric("expanded", sum(
+            1 for _, sample in zip(rollouts, samples_for_requests)
+            if sample.get("is_branch")
+        ))
         for rollout, sample in zip(rollouts, samples_for_requests):
             packed = dict(sample)
             did = str((rollout.metadata or {}).get("data_id") or packed.get("data_id") or "")
@@ -589,6 +631,12 @@ class TirAgentModeDaemon(AgentModeDaemon):
         by_data: Dict[str, List[str]] = {}
         for rid, sample in self._task_id_to_original_sample.items():
             by_data.setdefault(str(sample.get("data_id")), []).append(rid)
+
+        # RL6 D6 (legacy entropy-gate path): same ledger as the runner-expansion
+        # path — requested = n_target × groups, valid starts with the samples
+        # already on the books (wave1) and grows with successful enqueues.
+        self._bump_group_metric("requested", n_target * len(by_data))
+        self._bump_group_metric("valid", sum(len(rids) for rids in by_data.values()))
 
         requests: List[EnqueueRolloutRequest] = []
         samples_for_requests: List[Dict[str, Any]] = []
@@ -669,6 +717,9 @@ class TirAgentModeDaemon(AgentModeDaemon):
         if not requests:
             return 0
         rollouts = await self.store.enqueue_many_rollouts(requests)
+        # RL6 D6: legacy path enqueues are gate-forks + global fills, not
+        # runner plans — valid grows, expanded does not.
+        self._bump_group_metric("valid", len(rollouts))
         for rollout, sample in zip(rollouts, samples_for_requests):
             packed = dict(sample)
             did = str((rollout.metadata or {}).get("data_id") or packed.get("data_id") or "")
@@ -871,6 +922,25 @@ class TirAgentModeDaemon(AgentModeDaemon):
         # due to missing columns; RL3 wires the operators, this stage only
         # reserves the metric so dashboards/backends see a stable key.
         data_metrics["training/pipeline_noop"] = 0.0
+        # RL6 D6 (MAS v2 §9.3 有效样本计量): group-level five-counter —
+        # requested/valid/expanded/duplicate (+failed mirrors the existing
+        # expansion_enqueue_failures above). requested 是卷面值 (n_target × 组数),
+        # valid 是成功入队账面值; requested - valid > 0 即存在 plan 不足/采样失败
+        # 被全局补齐或缺口掩盖的量——正是 §9.3 要求暴露的信号
+        # (test_daemon_expand 组级用例锁定对账关系)。
+        data_metrics["training/group_requested"] = float(
+            getattr(self, "_group_requested_total", 0)
+        )
+        data_metrics["training/group_valid"] = float(getattr(self, "_group_valid_total", 0))
+        data_metrics["training/group_expanded"] = float(
+            getattr(self, "_group_expanded_total", 0)
+        )
+        data_metrics["training/group_duplicate"] = float(
+            getattr(self, "_group_duplicate_total", 0)
+        )
+        data_metrics["training/group_failed"] = float(
+            getattr(self, "_expansion_enqueue_failures", 0)
+        )
         # P3: loss/batch event for real-time harness (marker frame on stdout)
         try:
             emit_rollout_tree_event(
@@ -898,3 +968,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
         self._enqueued_expansion_parents.clear()
         self._incremental_branch_total = 0
         self._expansion_enqueue_failures = 0
+        # RL6 D6: group-level counters reset with the batch (per-wave ledger).
+        self._group_requested_total = 0
+        self._group_valid_total = 0
+        self._group_expanded_total = 0
+        self._group_duplicate_total = 0

@@ -20,7 +20,7 @@ export const TrainingHistory = memo(function TrainingHistory({ experimentId, act
   const history = usePollingResource(`runs:${experimentId}:${offset}:${activity.data?.runId}:${activity.data?.state}`, load, undefined, active);
   const runs = useMemo(() => {
     const term = query.trim().toLowerCase();
-    return history.data?.runs.filter(run => !term || `${run.run_id} ${run.meta?.algo || ''} ${TRAIN_STATE[run.state || ''] || ''}`.toLowerCase().includes(term)) || [];
+    return history.data?.runs.filter(run => !term || `${run.run_id} ${run.meta?.algo || ''} ${String(run.meta?.resolved_algorithm || '')} ${TRAIN_STATE[run.state || ''] || ''}`.toLowerCase().includes(term)) || [];
   }, [history.data, query]);
   return <div className="workspace-document-scroll"><div className="workspace-document training-history-page">
     <div className="workspace-document-heading"><h1>训练记录 <span>{history.data?.total ?? '—'}</span></h1>
@@ -32,6 +32,11 @@ export const TrainingHistory = memo(function TrainingHistory({ experimentId, act
       {runs.map(run => <article key={run.run_id} className="training-record">
         <span className="training-record-icon"><FileText size={18} /></span>
         <div className="training-record-identity"><strong>{String(run.meta?.algo || '训练').toUpperCase()} <code>{run.run_id}</code></strong>
+          {run.meta?.resolved_algorithm != null && (
+            <p className="training-record-resolved" title="resolved 组合摘要（launch.json resolved_algo 的可读形态）">
+              {String(run.meta.resolved_algorithm)}
+            </p>
+          )}
           <span>{run.started_at ? new Date(run.started_at * 1000).toLocaleString() : '等待启动'}{run.meta?.cuda_visible_devices != null ? ` · GPU ${String(run.meta.cuda_visible_devices)}` : ''}</span>
           {run.message && <p>{run.message}</p>}
         </div>
