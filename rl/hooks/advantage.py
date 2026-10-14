@@ -1,9 +1,17 @@
-"""Advantage paths: GRPO (stock), IGPO turn-level return, GiGPO, AEPO entropy reshape."""
+"""Advantage paths: RL3 pipeline (base + ordered operator stack) with frozen legacy dispatch.
+
+The production entry ``apply_tir_advantages`` resolves an AdvantagePipelineSpec
+(base ∈ {grpo, igpo, gigpo} × ordered operators from the five-value registry)
+and executes base-then-operators. The pre-RL3 eight-branch if/return dispatch
+is preserved verbatim as ``legacy_apply_tir_advantages`` — the frozen comparison
+oracle for ``mas/tests/test_preset_equivalence.py`` (kept one version cycle,
+RL3 double-implementation window; do not rewrite).
+"""
 
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import torch
@@ -11,7 +19,17 @@ from verl import DataProto
 from verl.trainer.ppo.ray_trainer import compute_advantage
 
 from .gigpo_core import broadcast_to_response_tokens, compute_gigpo_advantages
+from rl.loss import (
+    ADVANTAGE_BASES,
+    ADVANTAGE_OPERATORS,
+    AdvantageOperatorSpec,
+    AdvantagePipelineSpec,
+)
 from rl.rewards.outcome import discounted_returns, group_zscore
+
+# Process-global no-op degrade counter, drained by the daemon-side
+# training/pipeline_noop metric emitter (key pre-wired in RL2 (c)).
+_PIPELINE_NOOP_REGISTRY: Optional[Dict[str, Any]] = None
 
 
 def _tir_algo(config: Any) -> str:
@@ -54,7 +72,56 @@ def apply_tir_advantages(
     norm_adv_by_std_in_grpo: bool,
     config: Any,
 ) -> DataProto:
-    """Replace or reshape GRPO advantages according to algorithm.tir_algo."""
+    """Replace or reshape GRPO advantages according to algorithm.tir_algo.
+
+    RL3 pipeline implementation: the eight-branch if/return dispatch is frozen
+    below as ``legacy_apply_tir_advantages`` (byte-for-byte, same-release
+    comparison oracle); this single entry now resolves an
+    ``AdvantagePipelineSpec`` (base + ordered operator stack) — v1 callers
+    simply pass ``tir_algo`` and the expansion table (RL_design §3.1.6 /
+    §3.4.4 snapshot table, the authoritative definition) maps it onto the
+    same base × operator composition the legacy branches implemented.
+    """
+    algo = _tir_algo(config)
+    tir = _tir_cfg(config)
+
+    spec = resolve_pipeline_spec(config)
+
+    batch = compute_advantage(
+        batch,
+        adv_estimator=adv_estimator,
+        gamma=gamma,
+        lam=lam,
+        num_repeat=num_repeat,
+        norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+        config=config,
+    )
+
+    base_fn = _BASES[spec.base]
+    batch = base_fn(batch, tir, spec.base_params)
+    for op in spec.operators:
+        op_fn = _OPERATORS[op.id]
+        batch = op_fn(batch, op.params, tir)
+    return batch
+
+
+def legacy_apply_tir_advantages(
+    batch: DataProto,
+    *,
+    adv_estimator: Any,
+    gamma: float,
+    lam: float,
+    num_repeat: int,
+    norm_adv_by_std_in_grpo: bool,
+    config: Any,
+) -> DataProto:
+    """Frozen comparison oracle: the pre-RL3 eight-branch dispatch, verbatim.
+
+    Kept for one version cycle (RL3 double-implementation window) so
+    ``mas/tests/test_preset_equivalence.py`` can assert element-wise equality
+    of the pipeline path against the legacy path for all 8 presets. Do not
+    modify: any change here defeats the equivalence gate.
+    """
     algo = _tir_algo(config)
     tir = _tir_cfg(config)
 
@@ -113,6 +180,363 @@ def apply_tir_advantages(
             mode=str(tir.get("gigpo_mode", "mean_std")),
         )
     return batch
+
+
+# ---------------------------------------------------------------------------
+# RL3 pipeline: spec resolution (v1 tir_algo → expansion table) + validation
+# ---------------------------------------------------------------------------
+
+# RL_design §3.1.6 / §3.4.4 snapshot table — the authoritative preset→pipeline
+# expansion. Every entry is what the matching legacy if-return branch does
+# with today's defaults. Params that the legacy branch read from the tir dict
+# (reward_scale_discount / gamma / step_advantage_w / gigpo_mode ...) keep
+# that same runtime tir-dict read inside the operator/base wrappers below, so
+# user yaml overrides keep flowing through unchanged (param chain preserved).
+_PIPELINE_EXPANSION: Dict[str, List[str]] = {
+    "flow_grpo": [],  # grpo base, operators: [] (KL overlay is config-side)
+    "arpo": [],       # advantage passthrough (difference is sampling-side)
+    "grpo": ["zero_prefix"],
+    "appo": ["appo_credit"],
+    "rae": ["zero_prefix", "rae_verdict"],
+    "aepo": ["aepo_entropy"],
+    "igpo": [],
+    "gigpo": [],
+}
+_PIPELINE_EXPANSION_BASE = {
+    "grpo": "grpo",
+    "flow_grpo": "grpo",
+    "arpo": "grpo",
+    "appo": "grpo",
+    "rae": "grpo",
+    "aepo": "grpo",
+    "igpo": "igpo",
+    "gigpo": "gigpo",
+}
+
+
+def resolve_pipeline_spec(config: Any) -> "AdvantagePipelineSpec":
+    """Resolve a config into an AdvantagePipelineSpec (v1/v2 dual-track).
+
+    v1 (``tir_algo`` single-select, permanent): expand via the snapshot
+    table. v2-ready: if the config carries an ``advantage`` section, its
+    base/operators are validated and used directly (RL5 will wire the
+    ``algorithm.advantage`` yaml segment into this hook; the reader here is
+    intentionally conservative so nothing changes for today's callers).
+    rae's ``rae_full_tgt=True`` tir flag swaps the trailing verdict operator
+    for rae_full_tgt — mirroring the legacy branch at advantage.py:92-99.
+    """
+    algo = _tir_algo(config)
+    tir = _tir_cfg(config)
+
+    section = _advantage_section(config)
+    if section is not None:
+        spec = _spec_from_section(section, tir)
+    else:
+        base_id = _PIPELINE_EXPANSION_BASE.get(algo, "grpo")
+        op_ids = list(_PIPELINE_EXPANSION.get(algo, []))
+        if algo == "rae" and bool(tir.get("rae_full_tgt", False)):
+            # legacy rae fork (advantage.py:92-99, now in legacy_apply_*):
+            # full_tgt replaces the verdict operator, not appended.
+            op_ids = ["zero_prefix", "rae_full_tgt"]
+        spec = AdvantagePipelineSpec(
+            base=base_id,
+            operators=[AdvantageOperatorSpec(id=op) for op in op_ids],
+        )
+    validate_pipeline_spec(spec)
+    return spec
+
+
+def _advantage_section(config: Any) -> Optional[Any]:
+    """Read a v2-style ``advantage'' section off the config, if present."""
+    if config is None:
+        return None
+    if isinstance(config, dict):
+        algo_cfg = config.get("algorithm") or {}
+        if isinstance(algo_cfg, dict):
+            sec = algo_cfg.get("advantage")
+            if isinstance(sec, dict) and sec:
+                return sec
+        sec = config.get("advantage")
+        if isinstance(sec, dict) and sec:
+            return sec
+        return None
+    for attr in ("advantage",):
+        candidate = getattr(config, attr, None)
+        if candidate is not None:
+            try:
+                from omegaconf import OmegaConf
+
+                if OmegaConf.is_config(candidate) and not bool(OmegaConf.is_empty(candidate)):
+                    return candidate
+            except Exception:
+                pass
+            if isinstance(candidate, dict) and candidate:
+                return candidate
+    return None
+
+
+def _spec_from_section(section: Any, tir: Dict[str, Any]) -> "AdvantagePipelineSpec":
+    """Normalize a v2 advantage section into an AdvantagePipelineSpec."""
+    if not isinstance(section, dict):
+        try:
+            from omegaconf import OmegaConf
+
+            section = dict(OmegaConf.to_container(section, resolve=True) or {})
+        except Exception:
+            section = dict(section or {})
+    base = str(section.get("base") or "grpo")
+    raw_ops = section.get("operators") or []
+    ops: List[AdvantageOperatorSpec] = []
+    for op in raw_ops:
+        if isinstance(op, AdvantageOperatorSpec):
+            ops.append(op)
+            continue
+        if isinstance(op, dict):
+            try:
+                from omegaconf import OmegaConf
+
+                op = dict(OmegaConf.to_container(op, resolve=True) or {})
+            except Exception:
+                op = dict(op)
+        op_id = str(op.get("id") or "")
+        params = dict(op.get("params") or {})
+        ops.append(AdvantageOperatorSpec(id=op_id, params=params))
+    return AdvantagePipelineSpec(base=base, operators=ops)
+
+
+def validate_pipeline_spec(spec: "AdvantagePipelineSpec") -> None:
+    """Static composition rules (RL_design §3.1.4 R1/R5 + registry checks).
+
+    Fail-fast: raises ValueError on any illegal composition, so a bad config
+    cannot even start a training run (enforcement point for both the v1
+    expansion table — which can never produce these — and direct v2 specs).
+    """
+    if spec.base not in ADVANTAGE_BASES:
+        raise ValueError(
+            f"advantage pipeline base must be one of {ADVANTAGE_BASES}, got {spec.base!r}"
+        )
+    seen: set = set()
+    for op in spec.operators:
+        if op.id not in ADVANTAGE_OPERATORS:
+            raise ValueError(
+                f"unknown advantage operator {op.id!r}; registry: {ADVANTAGE_OPERATORS}"
+            )
+        if op.id in seen:
+            raise ValueError(f"duplicate advantage operator {op.id!r} in the stack")
+        seen.add(op.id)
+    has_verdict = "rae_verdict" in seen
+    has_full_tgt = "rae_full_tgt" in seen
+    # R1: rae_verdict XOR rae_full_tgt (both consume verdict_list and reshape
+    # rows — stacking them double-counts the adjudication signal).
+    if has_verdict and has_full_tgt:
+        raise ValueError("rae_verdict and rae_full_tgt are mutually exclusive (R1)")
+    # R5: rae_full_tgt writes token-level signal onto branch rows while
+    # appo_credit's semantic is "branch rows leave the actor" — contradictory.
+    if has_full_tgt and "appo_credit" in seen:
+        raise ValueError("rae_full_tgt and appo_credit cannot be stacked (R5)")
+
+
+# ---------------------------------------------------------------------------
+# RL3 pipeline: bases + operator registry (pure DataProto→DataProto)
+# ---------------------------------------------------------------------------
+# Registry contract (RL_design §3.1.2): every base/operator is a pure
+# DataProto→DataProto tensor function; reads non_tensor_batch columns but
+# never writes them; on missing consumed columns it degrades to no-op and
+# bumps the ``training/pipeline_noop`` counter (daemon pre-wired the metric
+# key in RL2) — never raises. Consumed-column declarations are exposed via
+# OPERATOR_CONSUMED_COLUMNS for audits/tests.
+
+
+def _noop_bump(reason: str) -> None:
+    """Count a no-op degrade into the daemon-side training/pipeline_noop metric.
+
+    The daemon pre-wires ``training/pipeline_noop`` = 0.0 in its metrics dict
+    (rl/hooks/daemon.py, RL2 (c)). Operators run inside the trainer process,
+    so the canonical sink is a process-global counter the daemon-side metric
+    emitter can drain; here we only increment it (best-effort, no import of
+    torch/ray machinery).
+    """
+    reg = _noop_registry()
+    reg["count"] = int(reg.get("count", 0)) + 1
+    reg.setdefault("reasons", {}).setdefault(reason, 0)
+    reg["reasons"][reason] = int(reg["reasons"][reason]) + 1
+
+
+def _noop_registry() -> Dict[str, Any]:
+    """Global noop-counter registry (same process as the operator stack)."""
+    global _PIPELINE_NOOP_REGISTRY
+    if _PIPELINE_NOOP_REGISTRY is None:
+        _PIPELINE_NOOP_REGISTRY = {"count": 0, "reasons": {}}
+    return _PIPELINE_NOOP_REGISTRY
+
+
+def reset_pipeline_noop_counter() -> Dict[str, Any]:
+    """Atomically read-and-clear the noop counter (daemon-side drain hook)."""
+    reg = _noop_registry()
+    snap = {"count": int(reg.get("count", 0)), "reasons": dict(reg.get("reasons", {}))}
+    reg["count"] = 0
+    reg["reasons"] = {}
+    return snap
+
+
+def pipeline_noop_count() -> int:
+    return int(_noop_registry().get("count", 0))
+
+
+# --- bases ---------------------------------------------------------------
+
+
+def _base_grpo(batch: DataProto, tir: Dict[str, Any], params: Dict[str, Any]) -> DataProto:
+    """Stock GRPO outcome advantage — nothing beyond the stage-0 compute."""
+    return batch
+
+
+def _base_igpo(batch: DataProto, tir: Dict[str, Any], params: Dict[str, Any]) -> DataProto:
+    # Legacy branch read tir gamma; keep exactly that read (default 1.0).
+    return _apply_igpo(batch, float(tir.get("gamma", 1.0)))
+
+
+def _base_gigpo(batch: DataProto, tir: Dict[str, Any], params: Dict[str, Any]) -> DataProto:
+    return _apply_gigpo(
+        batch,
+        step_w=float(tir.get("step_advantage_w", 1.0)),
+        gamma=float(tir.get("gamma", 1.0)),
+        mode=str(tir.get("gigpo_mode", "mean_std")),
+    )
+
+
+_BASES = {
+    "grpo": _base_grpo,
+    "igpo": _base_igpo,
+    "gigpo": _base_gigpo,
+}
+
+BASE_CONSUMED_COLUMNS = {
+    "grpo": ("token_level_scores",),
+    "igpo": ("ig_logprob_delta", "turn_index_list", "rollout_id_list", "token_level_scores"),
+    "gigpo": ("rollout_id_list", "turn_index_list", "anchor_obs", "token_level_scores"),
+}
+
+
+# --- operators ------------------------------------------------------------
+
+
+def _op_zero_prefix(batch: DataProto, params: Dict[str, Any], tir: Dict[str, Any]) -> DataProto:
+    """R0: zero shared-prefix advantage for child/probe rows.
+
+    Legacy enable flag ``zero_prefix_adv_for_children`` lives in the tir dict
+    (default True); keep the exact same read so grpo preset equivalence and
+    the explicit-False escape hatch behave byte-identically. The try/except
+    mirrors the frozen legacy wrapper (_maybe_zero_prefix): any kernel
+    failure degrades to a counted no-op, never a raise.
+    """
+    if not bool(tir.get("zero_prefix_adv_for_children", True)):
+        return batch
+    try:
+        from .rae_advantage import zero_prefix_advantages_for_children
+
+        return zero_prefix_advantages_for_children(batch)
+    except Exception:
+        _noop_bump("zero_prefix:kernel_noop")
+        return batch
+
+
+def _op_appo_credit(batch: DataProto, params: Dict[str, Any], tir: Dict[str, Any]) -> DataProto:
+    """Branch rows leave the actor; outcome written back onto the parent."""
+    needed = ("advantages",)
+    missing = _missing_batch_keys(batch, tensors=needed)
+    if missing:
+        _noop_bump(f"appo_credit:missing={','.join(missing)}")
+        return batch
+    # Legacy branch read tir reward_scale_discount (default 0.9); params
+    # override the tir read only when the v2 spec carried an explicit value.
+    discount = params.get("discount")
+    if discount is None:
+        discount = tir.get("reward_scale_discount", 0.9)
+    return apply_appo_credit(batch, discount=float(discount))
+
+
+def _op_aepo_entropy(batch: DataProto, params: Dict[str, Any], tir: Dict[str, Any]) -> DataProto:
+    """AEPO-lite entropy reshape Â = Â·(1 + a·z(H)) (scale clamped [0.1, 3.0])."""
+    if "entropys" not in batch.batch and "old_log_probs" not in batch.batch:
+        _noop_bump("aepo_entropy:missing=entropys|old_log_probs")
+        return batch
+    coef = params.get("coef")
+    if coef is None:
+        coef = tir.get("entropy_adv_coef", 0.1)
+    return _apply_entropy_aware(batch, float(coef))
+
+
+def _op_rae_verdict(batch: DataProto, params: Dict[str, Any], tir: Dict[str, Any]) -> DataProto:
+    """R1-lite: scale row advantages by validate/invalidate/abstain verdict."""
+    if "advantages" not in batch.batch:
+        _noop_bump("rae_verdict:missing=advantages")
+        return batch
+    if not _as_list(batch.non_tensor_batch.get("verdict_list")):
+        _noop_bump("rae_verdict:missing=verdict_list")
+        return batch
+    from .rae_advantage import apply_rae_verdict_advantages
+
+    p_plus = params.get("p_plus")
+    if p_plus is None:
+        p_plus = tir.get("rae_p_plus", 0.8)
+    epsilon_f = params.get("epsilon_f")
+    if epsilon_f is None:
+        epsilon_f = tir.get("rae_epsilon_f", 1e-3)
+    return apply_rae_verdict_advantages(
+        batch,
+        p_plus=float(p_plus),
+        epsilon_f=float(epsilon_f),
+    )
+
+
+def _op_rae_full_tgt(batch: DataProto, params: Dict[str, Any], tir: Dict[str, Any]) -> DataProto:
+    """R1-full: A_RAE ≈ log π_tgt − log π_old as response-token bias."""
+    if "advantages" not in batch.batch:
+        _noop_bump("rae_full_tgt:missing=advantages")
+        return batch
+    if not _as_list(batch.non_tensor_batch.get("verdict_list")):
+        _noop_bump("rae_full_tgt:missing=verdict_list")
+        return batch
+    from .rae_advantage import apply_rae_full_tgt_advantages
+
+    epsilon_f = params.get("epsilon_f")
+    if epsilon_f is None:
+        epsilon_f = tir.get("rae_epsilon_f", 1e-3)
+    return apply_rae_full_tgt_advantages(batch, epsilon_f=float(epsilon_f))
+
+
+_OPERATORS = {
+    "zero_prefix": _op_zero_prefix,
+    "appo_credit": _op_appo_credit,
+    "aepo_entropy": _op_aepo_entropy,
+    "rae_verdict": _op_rae_verdict,
+    "rae_full_tgt": _op_rae_full_tgt,
+}
+
+OPERATOR_CONSUMED_COLUMNS = {
+    "zero_prefix": ("rollout_role", "resume_boundary"),
+    "appo_credit": ("rollout_role", "resume_parent_id"),
+    "aepo_entropy": (),
+    "rae_verdict": ("verdict_list",),
+    "rae_full_tgt": ("verdict_list", "action_key_list"),
+}
+
+
+def _missing_batch_keys(
+    batch: DataProto,
+    *,
+    tensors: Sequence[str] = (),
+    ntb: Sequence[str] = (),
+) -> List[str]:
+    missing: List[str] = []
+    for key in tensors:
+        if key not in batch.batch:
+            missing.append(key)
+    for key in ntb:
+        if key not in batch.non_tensor_batch:
+            missing.append(key)
+    return missing
 
 
 def apply_appo_credit(batch: DataProto, *, discount: float = 0.9) -> DataProto:

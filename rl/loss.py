@@ -1,8 +1,8 @@
-"""LossSpec / AdvantageSpec — RL-owned training signal fields (no torch / no AGL)."""
+"""LossSpec / AdvantageSpec / AdvantagePipelineSpec — RL-owned training signal fields (no torch / no AGL)."""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -49,5 +49,53 @@ class CreditAssignmentSpec(BaseModel):
     use_verdict: bool = True  # attach RAE verdicts to nodes when present
     normalize: bool = True  # z-score within same-parent siblings
     extra: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+ADVANTAGE_BASES = ("grpo", "igpo", "gigpo")
+ADVANTAGE_OPERATORS = (
+    "zero_prefix",
+    "appo_credit",
+    "aepo_entropy",
+    "rae_verdict",
+    "rae_full_tgt",
+)
+
+
+class AdvantageOperatorSpec(BaseModel):
+    """One entry of the ordered post-processing operator stack (RL3).
+
+    ``id`` is constrained to the five-value operator registry
+    (zero_prefix/appo_credit/aepo_entropy/rae_verdict/rae_full_tgt);
+    ``params`` carries operator kwargs (e.g. discount / entropy_adv_coef /
+    p_plus / epsilon_f). Redundant registry-level params (e.g. zero_prefix's
+    legacy enable flag, which lives in the tir dict as
+    ``zero_prefix_adv_for_children``) are resolved from the tir config during
+    pipeline resolution, not stored here.
+    """
+
+    id: str
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class AdvantagePipelineSpec(BaseModel):
+    """RL3 advantage pipeline: base estimator + ordered operator stack.
+
+    base ∈ {grpo, igpo, gigpo} (RL_design §3.1.3: the non-grpo presets all
+    start from the GRPO stage-0 group baseline; igpo/gigpo are the two bases
+    that replace the whole group signal). operators is an ordered list — the
+    executor applies them left-to-right after the base. Validation rules
+    R1/R5 of RL_design §3.1.4 (rae_verdict XOR rae_full_tgt; rae_full_tgt vs
+    appo_credit forbidden) are enforced by resolve-time checks in
+    rl/hooks/advantage.py (single enforcement point, used by both the v1
+    expansion table and direct v2 specs).
+    """
+
+    base: str = "grpo"
+    operators: List[Any] = Field(default_factory=list)
+    base_params: Dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}
