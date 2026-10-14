@@ -18,7 +18,7 @@ from .arpo_rollout import (
 )
 from .branch_policy import distribute_root_budgets
 from workflow.active_set import load_local_expansion, resume_boundary_from_messages
-from workflow.archive import load_resume_messages
+from workflow.memory.archive import load_resume_messages
 from workflow.llm_diagnostics import log_model_route
 from rl.hooks.rae_advantage import adjudicate_action_group, apply_dead_end_backprop_verdicts
 from rl.hooks.rollout_tree import RolloutTreeRecorder
@@ -694,12 +694,22 @@ class TirAgentModeDaemon(AgentModeDaemon):
             global_steps=global_steps,
         )
         if self.tir_algo == "grpo":
-            if self._tree_recorder:
-                ids = [str(rid) for rid in data_proto.non_tensor_batch.get("rollout_id_list", [])]
-                self._tree_recorder.batch_judgments(
-                    ids, self._task_id_to_original_sample, [{} for _ in ids], global_steps
-                )
-            return data_proto, data_metrics
+            # RL2 (b): grpo early-return is now conditional. When
+            # zero_prefix_adv_for_children is active (DEFAULT_TIR default True;
+            # disabled only by an explicit tir config False), advantage
+            # dispatch reaches _maybe_zero_prefix (advantage.py:82), which
+            # needs the rollout_role / resume_boundary columns — previously
+            # the early return silently no-opped prefix zeroing for branched
+            # grpo rows. Keep the early return (with the legacy bare
+            # batch_judgments) only when zero-prefix is off; the default
+            # path falls through to the single rich batch_judgments below.
+            if not bool(self.tir_config.get("zero_prefix_adv_for_children", True)):
+                if self._tree_recorder:
+                    ids = [str(rid) for rid in data_proto.non_tensor_batch.get("rollout_id_list", [])]
+                    self._tree_recorder.batch_judgments(
+                        ids, self._task_id_to_original_sample, [{} for _ in ids], global_steps
+                    )
+                return data_proto, data_metrics
 
         def _as_list(key: str) -> List[Any]:
             raw = data_proto.non_tensor_batch.get(key, None)
@@ -821,6 +831,14 @@ class TirAgentModeDaemon(AgentModeDaemon):
             data_proto.non_tensor_batch["verdict_list"] = np.array(verdicts, dtype=object)
             data_proto.non_tensor_batch["resume_boundary"] = np.array(bounds, dtype=object)
             data_proto.non_tensor_batch["action_key_list"] = np.array(action_keys, dtype=object)
+            # RL2 (a): 11th injected column. resume_parent_id previously lived
+            # only in sample dicts / annotations (never in non_tensor_batch),
+            # so apply_appo_credit's ntb.get("resume_parent_id")
+            # (advantage.py:132) always fell back to the (data_id, parent_id)
+            # whole-group fallback grouping (advantage.py:129-170). Injecting
+            # the already-built parent_ids list switches credit to exact
+            # parent-child grouping.
+            data_proto.non_tensor_batch["resume_parent_id"] = np.array(parent_ids, dtype=object)
             if self._tree_recorder:
                 self._tree_recorder.batch_judgments(
                     rollout_ids, self._task_id_to_original_sample, [
@@ -848,6 +866,11 @@ class TirAgentModeDaemon(AgentModeDaemon):
         data_metrics["training/expansion_enqueue_failures"] = float(
             getattr(self, "_expansion_enqueue_failures", 0)
         )
+        # RL2 (c): noop downgrade counter placeholder for the RL3 advantage
+        # pipeline. Operators should bump this when they degrade to no-op
+        # due to missing columns; RL3 wires the operators, this stage only
+        # reserves the metric so dashboards/backends see a stable key.
+        data_metrics["training/pipeline_noop"] = 0.0
         # P3: loss/batch event for real-time harness (marker frame on stdout)
         try:
             emit_rollout_tree_event(

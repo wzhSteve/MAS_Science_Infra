@@ -177,5 +177,112 @@ class TestDaemonExpandEnqueue(unittest.TestCase):
         self.assertTrue(daemon._task_id_to_original_sample["a"]["expand_in_runner"])
 
 
+def _fake_data_proto(rows):
+    """Minimal DataProto-like object with the columns super() would produce."""
+    import numpy as np
+
+    class _Proto:
+        def __init__(self, n):
+            self.non_tensor_batch = {
+                "rollout_id_list": np.array([f"r{i}" for i in range(n)], dtype=object),
+                "turn_index_list": np.array([0] * n, dtype=object),
+            }
+            self.batch = {}
+
+    return _Proto(rows)
+
+
+class TestGetTrainDataBatchColumns(unittest.TestCase):
+    """RL2: column injection + conditional grpo early return (daemon.py:696+)."""
+
+    def _daemon(self, algo, tir_config):
+        from rl.hooks.daemon import TirAgentModeDaemon
+
+        daemon = TirAgentModeDaemon.__new__(TirAgentModeDaemon)
+        daemon.mode = "v1"
+        daemon.tir_algo = algo
+        daemon.tir_config = dict(tir_config)
+        daemon._tree_recorder = None
+        daemon._rollout_meta = {
+            "r0": {"role": "parent", "resume_parent_id": ""},
+            "r1": {"role": "child", "resume_parent_id": "r0", "resume_boundary": 3},
+        }
+        daemon._task_id_to_original_sample = {
+            "r0": {"data_id": "t1"},
+            "r1": {"data_id": "t1"},
+        }
+        daemon._completed_rollouts_v0 = {}
+        daemon.adapter = None
+        daemon._branch_local_count_total = 0
+        daemon._store_enqueue_branch_count = 0
+        daemon._incremental_branch_total = 0
+        daemon._expansion_enqueue_failures = 0
+        return daemon
+
+    def _run_get_batch(self, daemon, n_rows=2):
+        """Call get_train_data_batch with super() and require_training_samples patched."""
+        with _agl_modules_quarantined():
+            import rl.hooks.daemon as daemon_mod
+
+            proto = _fake_data_proto(n_rows)
+
+            def _fake_super_get(self, max_prompt_length, max_response_length, device, global_steps):
+                return proto, {}
+
+            saved_require = daemon_mod.require_training_samples
+            # Patch the parent-class method with an unbound function so the
+            # super() call inside get_train_data_batch gets our fake batch.
+            mro_cls = daemon_mod.TirAgentModeDaemon.__mro__[1]
+            saved_super = mro_cls.get_train_data_batch
+            mro_cls.get_train_data_batch = _fake_super_get
+            daemon_mod.require_training_samples = lambda *a, **k: None
+            try:
+                out_proto, metrics = daemon.get_train_data_batch(
+                    max_prompt_length=16, max_response_length=16, device="cpu", global_steps=3
+                )
+            finally:
+                mro_cls.get_train_data_batch = saved_super
+                daemon_mod.require_training_samples = saved_require
+            return out_proto, metrics
+
+    def test_resume_parent_id_injected_for_branched_algos(self):
+        """RL2 (a): the 11th injected column resume_parent_id reaches
+        non_tensor_batch for branching algos — apply_appo_credit
+        (advantage.py:132) reads ntb.get("resume_parent_id") and previously
+        always fell back to whole-group grouping because the column was
+        never injected."""
+        daemon = self._daemon("appo", {"zero_prefix_adv_for_children": True})
+        proto, _ = self._run_get_batch(daemon)
+        self.assertIn("resume_parent_id", proto.non_tensor_batch)
+        parents = list(proto.non_tensor_batch["resume_parent_id"])
+        self.assertEqual(parents, ["", "r0"])
+
+    def test_grpo_with_zero_prefix_still_injects_rollout_role(self):
+        """RL2 (b): grpo + zero_prefix_adv_for_children active (default True /
+        DEFAULT_TIR) must NOT take the early return — rows now carry
+        rollout_role / resume_boundary / resume_parent_id so
+        _maybe_zero_prefix (advantage.py:82) actually zeroes shared
+        prefixes instead of silently no-opping."""
+        daemon = self._daemon("grpo", {})  # default → zero_prefix on
+        proto, metrics = self._run_get_batch(daemon)
+        self.assertIn("rollout_role", proto.non_tensor_batch)
+        self.assertIn("resume_boundary", proto.non_tensor_batch)
+        self.assertIn("resume_parent_id", proto.non_tensor_batch)
+        self.assertEqual(list(proto.non_tensor_batch["rollout_role"]), ["parent", "child"])
+        # RL2 (c): noop counter placeholder always present in metrics
+        self.assertIn("training/pipeline_noop", metrics)
+        self.assertEqual(metrics["training/pipeline_noop"], 0.0)
+
+    def test_grpo_without_zero_prefix_keeps_early_return(self):
+        """RL2 (b) negative: zero_prefix explicitly off → grpo keeps the exact
+        legacy early-return shape (no column injection, no pipeline_noop key
+        since metrics come from the fake super())."""
+        daemon = self._daemon("grpo", {"zero_prefix_adv_for_children": False})
+        proto, metrics = self._run_get_batch(daemon)
+        self.assertNotIn("rollout_role", proto.non_tensor_batch)
+        self.assertNotIn("resume_parent_id", proto.non_tensor_batch)
+        self.assertNotIn("training/pipeline_noop", metrics)
+
+
 if __name__ == "__main__":
     unittest.main()
