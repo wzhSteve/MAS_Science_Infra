@@ -834,6 +834,8 @@ class AgentModeDaemon:
             # The client should report triplets that contain prompt_ids and response_ids.
             # Example triplet.prompt: {"token_ids": [...], "image_urls": [...]}
             # Example triplet.response: {"token_ids": [...]}
+            # Drop empty token_ids turns: they pad to all-pad + zero attention_mask and
+            # crash Qwen3 remove-padding with a 0-element reshape.
             trace_list = [
                 {
                     "prompt_ids": t.prompt.get("token_ids", []),
@@ -841,7 +843,14 @@ class AgentModeDaemon:
                     "image_urls": t.prompt.get("image_urls", []),
                 }
                 for t in rollout.triplets
+                if t.prompt.get("token_ids") and t.response.get("token_ids")
             ]
+            if not trace_list:
+                finished_id_to_final_reward[rollout_id] = final_reward
+                print(
+                    f"Warning: No non-empty triplets for training rollout {rollout.rollout_id}, skipping."
+                )
+                continue
             info = {
                 "reward": final_reward,
                 "trace_list": trace_list,
@@ -1024,6 +1033,11 @@ class AgentModeDaemon:
             raise ValueError(f"Unknown trace_aggregator level: {self.trace_aggregator.get('level')}")
 
         n_transition = len(input_ids_list)
+        if n_transition == 0:
+            raise RuntimeError(
+                "No non-empty triplets in this training batch (all LLM spans lacked "
+                "prompt/response token_ids). Check AgentFlow token recorder / tracer."
+            )
         batch_input_ids = torch.LongTensor(input_ids_list).to(device)
         input_attention_mask = torch.LongTensor(input_attention_mask_list).to(device)
         batch_response_ids = torch.LongTensor(response_ids_list).to(device)
