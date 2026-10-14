@@ -212,18 +212,33 @@ _PIPELINE_EXPANSION_BASE = {
     "igpo": "igpo",
     "gigpo": "gigpo",
 }
+# NOTE (RL5): _PIPELINE_EXPANSION/_PIPELINE_EXPANSION_BASE above now mirror
+# the authoritative PRESET_EXPANSION_* tables in rl/loss.py (via expand_preset);
+# they are kept as legacy-dispatch documentation + test anchors only.
+
+
+# RL5: the expansion tables above are re-exported through the formal
+# ``expand_preset`` public API in rl/loss.py (single authority: RL_design
+# §3.4.4 snapshot table, post-RL0-errata §2.3 truth table). resolve-time
+# checks (validate_pipeline_spec) and the v2 section reader below live here
+# (advantage-tensor side); expand_preset itself is import-safe with no
+# torch/AGL on the path (rl/loss.py), so the save/preflight layers can call
+# it without touching the tensor module.
+from rl.loss import expand_preset  # noqa: E402  (re-export; formal public API)
 
 
 def resolve_pipeline_spec(config: Any) -> "AdvantagePipelineSpec":
     """Resolve a config into an AdvantagePipelineSpec (v1/v2 dual-track).
 
     v1 (``tir_algo`` single-select, permanent): expand via the snapshot
-    table. v2-ready: if the config carries an ``advantage`` section, its
-    base/operators are validated and used directly (RL5 will wire the
-    ``algorithm.advantage`` yaml segment into this hook; the reader here is
-    intentionally conservative so nothing changes for today's callers).
-    rae's ``rae_full_tgt=True`` tir flag swaps the trailing verdict operator
-    for rae_full_tgt — mirroring the legacy branch at advantage.py:92-99.
+    table. v2 (RL5 wired): if the config carries a non-empty
+    ``algorithm.advantage`` section, its base/operators are validated and
+    used directly. rae's ``rae_full_tgt=True`` tir flag swaps the trailing
+    verdict operator for rae_full_tgt — mirroring the legacy branch at
+    advantage.py:92-99. The legacy ``unknown-tir_algo → grpo passthrough``
+    tolerance of the tensor path is preserved here (byte-level compatibility
+    with the old dispatch tail; the formal expand_preset API is the one
+    that refuses unknown names — hot-path callers keep today's shape).
     """
     algo = _tir_algo(config)
     tir = _tir_cfg(config)
@@ -232,16 +247,24 @@ def resolve_pipeline_spec(config: Any) -> "AdvantagePipelineSpec":
     if section is not None:
         spec = _spec_from_section(section, tir)
     else:
-        base_id = _PIPELINE_EXPANSION_BASE.get(algo, "grpo")
-        op_ids = list(_PIPELINE_EXPANSION.get(algo, []))
+        # v1 expansion consults the formal public API (rl/loss.py
+        # expand_preset) for snapshot fidelity; unknown names keep the
+        # historical grpo passthrough so old configs never break the run.
+        try:
+            spec = expand_preset(algo)
+        except ValueError:
+            spec = AdvantagePipelineSpec(base="grpo", operators=[])
+            spec = AdvantagePipelineSpec(base="grpo", operators=[])
         if algo == "rae" and bool(tir.get("rae_full_tgt", False)):
             # legacy rae fork (advantage.py:92-99, now in legacy_apply_*):
             # full_tgt replaces the verdict operator, not appended.
-            op_ids = ["zero_prefix", "rae_full_tgt"]
-        spec = AdvantagePipelineSpec(
-            base=base_id,
-            operators=[AdvantageOperatorSpec(id=op) for op in op_ids],
-        )
+            spec = AdvantagePipelineSpec(
+                base="grpo",
+                operators=[
+                    AdvantageOperatorSpec(id="zero_prefix"),
+                    AdvantageOperatorSpec(id="rae_full_tgt"),
+                ],
+            )
     validate_pipeline_spec(spec)
     return spec
 

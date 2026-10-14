@@ -35,9 +35,10 @@ dual-read window, no removal this stage).
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 OUTCOME_MODES = ("hierarchical",)
 FORMAT_PENALTY = "format_penalty"
@@ -70,6 +71,21 @@ class RewardComponent(BaseModel):
     enabled: bool = True
 
     model_config = {"extra": "forbid"}
+
+    # RL5 V4 (numeric domain): a component weight must be a real, finite,
+    # non-negative number — negative weights would flip a hierarchy layer's
+    # sign and turn e.g. a format penalty into a format bonus silently.
+    @field_validator("weight")
+    @classmethod
+    def _finite_non_negative(cls, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"V4 类型错误: weight 必须为实数, got {value!r}")
+        fv = float(value)
+        if not math.isfinite(fv) or fv < 0.0:
+            raise ValueError(
+                f"V4 数值域错误: reward 组件 weight 必须为非负有限数 (>=0, finite), got {value!r}"
+            )
+        return fv
 
 
 def default_reward_components() -> List[RewardComponent]:

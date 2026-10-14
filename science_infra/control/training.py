@@ -133,6 +133,283 @@ def _workflow_path() -> None:
         sys.path.insert(0, path)
 
 
+# ---------------------------------------------------------------------------
+# RL5: rl.yaml v2 dual-track contract validation (V1-V6) + resolved_algo audit
+# ---------------------------------------------------------------------------
+# Three enforcement layers (RL_design §5.2, cheapest first):
+#   save   — save_section(rl) raises rl_contract_validation (400) via the
+#            shared ``validate_rl_contract`` before the yaml hits disk;
+#   preflight — build_training_plan records ``rl_contract_validation``
+#            blocking issues (same function, plan-time fail-fast);
+#   launch — the expansion surface itself (apply_algo_overlay pydantic
+#            validators + resolve_pipeline_spec) is the last line, already
+#            wired by RL5's overlay rewrite.
+# This module hosts the *plan-side* reader: it never imports torch/AGL —
+# only rl.loss (declaration layer) does any pydantic work.
+
+# v1 single-select keys (A9: permanent) vs v2 pipeline keys — dual-track
+# classification for V5. tir carrier keys that legitimately live alongside a
+# composed advantage section are sampling/gate/loss-leg keys, not pipeline
+# keys, so they never trip V5.
+_V1_SELECT_KEYS = ("algo",)
+_V2_PIPELINE_SECTION = "advantage"
+
+
+def _rl_contract_violations(rl: dict[str, Any]) -> list[dict[str, str]]:
+    """V1-V6 rule scan of a raw rl config dict (v1 / v2 / dual). Read-only.
+
+    Returns a list of ``{"rule", "field", "detail"}`` diagnostics in launch
+    body shape (RL_design §5.2 error contract); empty list = contract clean.
+    """
+    violations: list[dict[str, str]] = []
+    algorithm = rl.get("algorithm") if isinstance(rl.get("algorithm"), dict) else {}
+    algo = str(rl.get("algo") or algorithm.get("tir_algo") or "grpo").lower().strip()
+
+    from rl.loss import ADVANTAGE_BASES, ADVANTAGE_OPERATORS, expand_preset
+
+    # V1 (required/type) + V2 (enum domain) on the v1 leg: unknown preset
+    # names are rejected here — the permanent CLI/applyWorkflowSampling face
+    # only ever carries the eight freezing names (A9).
+    if rl.get("algo") is not None or algorithm.get("tir_algo") is not None:
+        if algo not in ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae", "flow_grpo"):
+            violations.append(
+                {
+                    "rule": "V2",
+                    "field": "algo" if rl.get("algo") is not None else "algorithm.tir_algo",
+                    "detail": (
+                        f"未知训练算法 {algo!r}；v1 单选合法域: "
+                        "grpo/arpo/appo/aepo/igpo/gigpo/rae/flow_grpo (A9 永久保留)"
+                    ),
+                }
+            )
+        else:
+            try:
+                expand_preset(algo)
+            except ValueError as error:
+                violations.append(
+                    {"rule": "V1", "field": "algo", "detail": str(error)}
+                )
+
+    # v2 advantage section: V1 types + V2 enum + V3 combination (XOR/no-dup/
+    # forbidden stacks) + V4 numeric domain on params, via the declaration
+    # layer's own validators (rl.loss) and the single combination enforcer
+    # (rl.hooks.advantage.validate_pipeline_spec — kept as the one authority
+    # so tensor-side resolution and plan-side preflight share the rule).
+    advantage = algorithm.get(_V2_PIPELINE_SECTION)
+    if isinstance(advantage, dict) and advantage:
+        base = advantage.get("base", "grpo")
+        if base not in ADVANTAGE_BASES:
+            violations.append(
+                {
+                    "rule": "V2",
+                    "field": "algorithm.advantage.base",
+                    "detail": f"base 必须是 {ADVANTAGE_BASES} 之一, got {base!r}",
+                }
+            )
+        seen: set[str] = set()
+        ops_raw = advantage.get("operators") if isinstance(advantage.get("operators"), list) else []
+        for index, op in enumerate(ops_raw):
+            field = f"algorithm.advantage.operators[{index}]"
+            if not isinstance(op, dict):
+                violations.append(
+                    {"rule": "V1", "field": field, "detail": f"算子条目必须是 {{id, params}} 对象, got {op!r}"}
+                )
+                continue
+            op_id = str(op.get("id") or "")
+            if op_id not in ADVANTAGE_OPERATORS:
+                violations.append(
+                    {"rule": "V2", "field": f"{field}.id", "detail": f"未知算子 {op_id!r}; 注册表: {ADVANTAGE_OPERATORS}"}
+                )
+            elif op_id in seen:
+                violations.append(
+                    {"rule": "V2", "field": f"{field}.id", "detail": f"算子 {op_id!r} 在栈内重复声明"}
+                )
+            seen.add(op_id)
+            params = op.get("params")
+            if params is not None and not isinstance(params, dict):
+                violations.append(
+                    {"rule": "V1", "field": f"{field}.params", "detail": f"params 必须是键值对象, got {params!r}"}
+                )
+        if "rae_verdict" in seen and "rae_full_tgt" in seen:
+            violations.append(
+                {
+                    "rule": "V3",
+                    "field": "algorithm.advantage.operators",
+                    "detail": "rae_verdict 与 rae_full_tgt 互斥 (R1: 两者都消费 verdict_list 且改写方式冲突)",
+                }
+            )
+        if "rae_full_tgt" in seen and "appo_credit" in seen:
+            violations.append(
+                {
+                    "rule": "V3",
+                    "field": "algorithm.advantage.operators",
+                    "detail": "rae_full_tgt 与 appo_credit 禁止同栈 (R5: 分支行离场与在场语义冲突)",
+                }
+            )
+
+    # V5 (dual-track mutex): a composed advantage section AND an explicit
+    # fresh v1 select (yaml-authored ``algo``) are two declarations of the
+    # same pipeline. The runtime resolution priority is defined and declared
+    # (composed wins the advantage segment; algo stays as the sampling/gate
+    # carrier — A9), but a silent mix is what the contract forbids: flag it
+    # so the operator must pick a lane at save/preflight time.
+    if isinstance(advantage, dict) and advantage and rl.get("algo") is not None:
+        violations.append(
+            {
+                "rule": "V5",
+                "field": "algorithm.advantage",
+                "detail": (
+                    f"v2 composed 段与 v1 algo={algo!r} 同时声明: advantage 真值取 composed 段、"
+                    "algo 仅承载 sampling/门控语义; 请单轨声明（删除 algo 键或删除 advantage 段）"
+                ),
+            }
+        )
+
+    # V4 (numeric domain): future_kl triple on the tir leg + reward component
+    # weights, mirroring the declaration-layer validators (rl.loss.LossSpec /
+    # rl.rewards.assembly.RewardComponent) for configs that never pass
+    # through a Spec construction on the plan path.
+    import math
+
+    tir = algorithm.get("tir") if isinstance(algorithm.get("tir"), dict) else {}
+    for key in ("future_kl_weight", "decay_rate", "future_kl_clip_ratio"):
+        value = tir.get(key)
+        if isinstance(value, bool) or (value is not None and not isinstance(value, (int, float))):
+            violations.append(
+                {"rule": "V4", "field": f"algorithm.tir.{key}", "detail": f"V4 类型错误: 必须为实数, got {value!r}"}
+            )
+        elif value is not None and (not math.isfinite(float(value)) or float(value) < 0.0):
+            violations.append(
+                {"rule": "V4", "field": f"algorithm.tir.{key}", "detail": f"必须为非负有限数 (>=0, finite), got {value!r}"}
+            )
+    loss_mode = str(tir.get("loss_mode") or algorithm.get("loss_mode") or "vanilla")
+    if loss_mode not in ("vanilla", "future_kl"):
+        violations.append(
+            {
+                "rule": "V2",
+                "field": "algorithm.tir.loss_mode",
+                "detail": f"loss_mode 必须是 vanilla | future_kl, got {loss_mode!r}",
+            }
+        )
+    reward = algorithm.get("reward") if isinstance(algorithm.get("reward"), dict) else {}
+    comps = reward.get("components") if isinstance(reward.get("components"), list) else None
+    for index, comp in enumerate(comps or []):
+        if not isinstance(comp, dict):
+            violations.append(
+                {"rule": "V1", "field": f"algorithm.reward.components[{index}]", "detail": f"组件必须是 {{id, weight, enabled}} 对象, got {comp!r}"}
+            )
+            continue
+        weight = comp.get("weight")
+        if isinstance(weight, bool) or (weight is not None and not isinstance(weight, (int, float))):
+            violations.append(
+                {"rule": "V4", "field": f"algorithm.reward.components[{index}].weight", "detail": f"V4 类型错误: weight 必须为实数, got {weight!r}"}
+            )
+        elif weight is not None and (not math.isfinite(float(weight)) or float(weight) < 0.0):
+            violations.append(
+                {"rule": "V4", "field": f"algorithm.reward.components[{index}].weight", "detail": f"weight 必须为非负有限数 (>=0, finite), got {weight!r}"}
+            )
+
+    # V6 (future_kl connectivity, post-RL1-double-write wording): the write
+    # side mirrors the FIPO keys into actor_rollout_ref.actor.policy_loss, so
+    # a future_kl config is now truly connected. The plan-side check verifies
+    # the mirror keys survive on this config and reports the connected state;
+    # a *vanilla* config with stale mirror keys is the actionable smell.
+    if loss_mode == "future_kl":
+        mirror = (
+            (rl.get("actor_rollout_ref") or {}).get("actor", {}).get("policy_loss")
+            if isinstance((rl.get("actor_rollout_ref") or {}).get("actor"), dict)
+            else None
+        )
+        mirror_mode = str((mirror or {}).get("loss_mode") or loss_mode)
+        if mirror_mode != "future_kl":
+            violations.append(
+                {
+                    "rule": "V6",
+                    "field": "actor.policy_loss.loss_mode",
+                    "detail": (
+                        "V6 future_kl 连通: loss_mode=future_kl 但 actor.policy_loss.loss_mode="
+                        f"{mirror_mode!r}（写侧镜像将在启动时由 apply_train_signal 补写; 若为用户显式"
+                        "覆写导致不一致，请移除覆写或改为 future_kl）"
+                    ),
+                }
+            )
+    return violations
+
+
+def validate_rl_contract(rl: dict[str, Any]) -> list[dict[str, str]]:
+    """Public save-layer entry: raise-free scan used by save_section (400 body)."""
+    if not isinstance(rl, dict):
+        return [
+            {
+                "rule": "V1",
+                "field": "rl",
+                "detail": f"V1 类型错误: rl 配置必须是键值对象, got {type(rl).__name__}",
+            }
+        ]
+    return _rl_contract_violations(rl)
+
+
+def _resolved_algo_payload(rl: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Serialize the resolved_algo audit block (RL_design §3.5.1) off a plan rl dict.
+
+    Expansion happens here — after preflight, before the subprocess — so the
+    signature and effective-rl.yaml are same-source, same-moment (no window
+    where config changed but the signature did not). None when the rl dict
+    cannot yield a pipeline at all (legacy defensive path).
+    """
+    if not isinstance(rl, dict):
+        return None
+    algorithm = rl.get("algorithm") if isinstance(rl.get("algorithm"), dict) else {}
+    algo = str(rl.get("algo") or algorithm.get("tir_algo") or "grpo").lower().strip()
+    try:
+        from rl.loss import expand_preset  # declaration layer only (no torch)
+
+        spec = expand_preset(algo)
+    except ValueError:
+        return None
+    tir = algorithm.get("tir") if isinstance(algorithm.get("tir"), dict) else {}
+    reward = algorithm.get("reward") if isinstance(algorithm.get("reward"), dict) else {}
+    if not reward:
+        # plan.rl is the pre-overlay raw yaml (the overlay runs inside the
+        # training subprocess); derive the same RewardSpec the RL4 mirror
+        # would write so the audit block reflects the delivered spec.
+        try:
+            from rl.rewards.assembly import reward_spec_from_tir
+
+            comps = [
+                {"id": c.id, "weight": c.weight, "enabled": c.enabled}
+                for c in reward_spec_from_tir(dict(tir)).components
+            ]
+        except Exception:
+            comps = []
+    else:
+        comps = [
+            {
+                "id": str(comp.get("id")),
+                "weight": comp.get("weight", 1.0),
+                "enabled": bool(comp.get("enabled", True)),
+            }
+            for comp in (reward.get("components") or [])
+            if isinstance(comp, dict)
+        ]
+    loss_mode = str(tir.get("loss_mode") or "vanilla")
+    payload: dict[str, Any] = {
+        "preset": algo,
+        "advantage": {
+            "base": spec.base,
+            "operators": [{"id": op.id, "params": dict(op.params)} for op in spec.operators],
+        },
+        "loss_mode": loss_mode,
+        "reward": {"components": comps},
+        "v2_composed": bool(
+            isinstance(algorithm.get("advantage"), dict) and algorithm.get("advantage")
+        ),
+        "dual_track_note": "v1 algo 单选永久保留 (A9); v2 段出现时 composed 段为 advantage 真值",
+    }
+    return payload
+
+
+
 def _model_path(rl: dict[str, Any]) -> str:
     return str(
         rl.get("model_path")
@@ -425,6 +702,18 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
         "pass" if algorithm in VALID_ALGOS else "error",
         algorithm.upper() if algorithm in VALID_ALGOS else f"训练算法必须是 {' / '.join(VALID_ALGOS)}。",
     )
+    # RL5: V1-V6 contract scan inlined into preflight (fail-fast layer 2 —
+    # layer 1 is the save path, layer 3 the launch-path validators). The
+    # scan runs on the *effective* rl dict (post sampling-sync / gpu-select)
+    # so it sees exactly what `_launch_training` would serialize.
+    for violation in _rl_contract_violations(rl):
+        record(
+            f"rl_contract_{violation['rule'].lower()}",
+            "RL 合同校验",
+            "error",
+            f"{violation['field']}: {violation['rule']} {violation['detail']}",
+            hint=str(violation),
+        )
     valid_profile = profile in ("fast", "a800", "a800_2gpu")
     record(
         "profile", "运行档位",
@@ -820,6 +1109,7 @@ def _launch_training(
             "preflight_revision": plan.revision,
             "algorithm": plan.algorithm,
             "algorithm_source": plan.algorithm_source,
+            "resolved_algo": _resolved_algo_payload(plan.rl),
             "profile": plan.profile,
             "gpu_ids": plan.gpu_ids,
             "model": plan.source.public(),

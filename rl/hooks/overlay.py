@@ -103,9 +103,133 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
     return cfg
 
 
+def _user_advantage_section(algo_block: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Read a user-authored v2 ``algorithm.advantage`` section, if any.
+
+    Only a non-empty dict counts as a v2 composed declaration (the empty
+    dict is what pass-2 of apply_train_signal re-applying would see right
+    after pass-1 wrote the *expanded* preset — see _is_expanded_advantage;
+    during that window user_tir alone must not trip V5).
+    """
+    section = algo_block.get("advantage")
+    if isinstance(section, dict) and section:
+        return section
+    return None
+
+
+def _is_expanded_advantage(section: Any) -> bool:
+    """Fingerprint of an expand_preset-product section (mirror of itself).
+
+    apply_train_signal re-applies the overlay twice around the user-yaml
+    deep-merge (train_tir_agent.py:370-374): pass-1 writes the expanded
+    ``algorithm.advantage``; the user yaml then deep-merges on top. A
+    pre-existing advantage section that exactly equals one of the eight
+    expanded presets is our own write, not a composed user override —
+    recognized so that V5 does not fire on idempotent re-application and
+    applications of the saved effective yaml.
+    """
+    if not isinstance(section, dict):
+        return False
+    for algo in VALID_ALGOS:
+        preset = _expand_preset(algo)
+        if section == _advantage_section_from_spec(preset):
+            return True
+    return False
+
+
+def _expand_preset(algo: str):
+    """Formal v1 expansion hook — re-export of rl.loss.expand_preset.
+
+    Validation contract: the expanded snapshot passes V1/V2/V3 by
+    construction (registry members, no duplicates, snapshot royalty);
+    the snapshot can never produce an illegal stack, so the expand step
+    itself needs no further checks (exactly the property RL_design §5.2
+    grants the v1 leg). The V5 dual-track check below is what actually
+    gates at the expansion exit.
+    """
+    from rl.loss import expand_preset
+
+    return expand_preset(algo)
+
+
+def _advantage_section_from_spec(spec) -> Dict[str, Any]:
+    """Serialize an AdvantagePipelineSpec into the ``algorithm.advantage`` v2 section."""
+    return {
+        "base": spec.base,
+        "operators": [
+            {"id": op.id, "params": dict(op.params)} for op in spec.operators
+        ],
+    }
+
+
+def _validate_algo_overlay_v_track(
+    *,
+    algo: str,
+    preset,
+    user_algo: Dict[str, Any],
+    user_tir: Dict[str, Any],
+) -> list[dict[str, str]]:
+    """V-track checks at the expansion exit (save-layer core, RL5).
+
+    V5 (dual-track hedging): a user-composed ``algorithm.advantage`` section
+    and the v1 single-select are mutually exclusive declarations of the
+    advantage pipeline. Racing priorities mid-flight would produce silent
+    config drift — the design demands the conflict be *rejected*, and the
+    rewrite below keeps ``tir_algo`` (sampling/gate semantics stay v1, A9
+    permanent) while making the composed section the advantage truth in
+    full. Re-applying this overlay is idempotent (expanded presets are
+    recognized as ours, not user compositions).
+    User-``tir`` operator-relevant keys (loss_mode / reward_scale_discount /
+    zero_prefix_adv_for_children) are NOT blocked: RL_design §3.4.2 lists
+    "v2 与 v1 同键不同值" pairs, but those keys are *loss/sampling-leg* keys
+    in this codebase's split (tir carries sampling+loss, advantage 匹配
+    carries pipeline) — cross-blocking them would reject every existing v1
+    yaml during its own expansion, double-punishing the legacy track. The
+    actual operator-relevanttir key set is empty today; recorded here so
+    the rule can be tightened when D3 fully migrates the tir dict (P2-phase
+    concern, out of RL5 scope).
+    """
+    user_section = _user_advantage_section(user_algo)
+    if user_section is None:
+        violations: list[dict[str, str]] = []
+    elif _is_expanded_advantage(user_section):
+        # Idempotent re-apply of our own expanded write (apply_train_signal
+        # pass-2 / effective-rl.yaml reload): not a user composition.
+        violations = []
+    else:
+        # Composed declaration wins the advantage segment; the preset
+        # expansion result just written is demoted to sampling/gate-only.
+        # Emitted diagnostics tell the maintainer which leg carried what.
+        violations = [
+            {
+                "rule": "V5",
+                "field": "algorithm.advantage",
+                "detail": (
+                    f"v2 composed 段与 v1 algo={algo!r} 同时存在: advantage 真值取"
+                    " composed 段, tir_algo 保留承载 sampling/门控语义 (A9 v1 永久保留)。"
+                    " preset 展开结果不参与 resolution"
+                ),
+            }
+        ]
+    return violations
+
+
 def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
+    """v1/v2 双轨 overlay（RL5 重构）: 「展开 preset → deep-merge 用户覆写」两步。
+
+    v1（algo 单选，永久保留——A9）：``algo`` 合法则查 expand_preset 快照表
+    展开为 AdvantagePipelineSpec，经 V1-V5 校验后写入 ``algorithm.advantage``
+    v2 段（展开结果即 v2 形态——v1→v2 单向无损，RL_design §3.4.2），
+    再按既有 ``tir.update(user_tir)`` 语义合并用户覆写。
+    v2（composed 声明）：yaml 携带 ``algorithm.advantage`` 段时该段为
+    advantage 真值（校验后透传），algo 降级为采样/门控键的载体语义；
+    V5 双轨互斥由 ``_validate_algo_overlay_v_track`` 前置裁决。
+    """
     algo = algo.lower().strip()
-    if algo not in VALID_ALGOS:
+    user_algo = dict(config.get("algorithm") or {})
+    user_tir = dict(user_algo.get("tir") or {})
+    user_advantage = _user_advantage_section(user_algo)
+    if user_advantage is None and algo not in VALID_ALGOS:
         raise ValueError(f"Unknown --algo {algo!r}. Expected one of {VALID_ALGOS}")
     cfg = deepcopy(config)
     algo_block = dict(cfg.get("algorithm") or {})
@@ -115,8 +239,23 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
     if "use_kl_in_reward" not in algo_block:
         algo_block["use_kl_in_reward"] = False
     algo_block["tir_algo"] = algo
-    user_tir = dict(algo_block.get("tir") or {})
     tir = dict(DEFAULT_TIR)
+    # RL5 two-step expansion — the pre-existing ``tir.update(user_tir)`` is
+    # the same deep-merge shape, generalized per RL_design §3.4.2: expand the
+    # preset first, THEN merge user overrides on top so user keys always win.
+    expand_violations: list[dict[str, str]] = []
+    if algo in VALID_ALGOS:
+        preset = _expand_preset(algo)
+        expand_violations = _validate_algo_overlay_v_track(
+            algo=algo, preset=preset, user_algo=algo_block, user_tir=user_tir,
+        )
+        if user_advantage is not None and not _is_expanded_advantage(user_advantage):
+            # v2 composed declaration is the advantage truth (validated in
+            # place by the preflight layer; keep user key order intact) —
+            # do NOT overwrite it with the preset expansion product.
+            algo_block["advantage"] = user_advantage
+        else:
+            algo_block["advantage"] = _advantage_section_from_spec(preset)
     tir.update(user_tir)
     if algo in ("arpo", "appo", "aepo", "rae"):
         n = int(cfg.get("actor_rollout_ref", {}).get("rollout", {}).get("n", 4))

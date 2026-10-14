@@ -376,6 +376,20 @@ def save_section(exp_id: str, section: str, data: Dict[str, Any]) -> Dict[str, A
         _write_yaml(root / meta.refs.get("workflow", "workflow.yaml"), workflow)
     elif section == "rl":
         data = normalize_rl_data_paths(data)
+        # RL5 save layer (V1-V6, cheapest interception): scan the raw rl dict
+        # before it hits disk; violations turn into a 400 rl_contract_validation
+        # body (field path + rule id, RL_design §5.2) via the app-layer handler.
+        from .training import TrainingError, validate_rl_contract
+
+        violations = validate_rl_contract(data)
+        if violations:
+            worst = violations[0]
+            raise TrainingError(
+                "rl_contract_validation",
+                f"rl.yaml 合同校验失败: {worst['field']}: {worst['rule']} {worst['detail']}",
+                status=400,
+                data={"violations": violations},
+            )
         _write_yaml(root / meta.refs.get("rl", "rl.yaml"), data)
     elif section == "harness":
         _write_yaml(root / meta.refs.get("harness", "harness.yaml"), data)

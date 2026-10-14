@@ -58,17 +58,32 @@ class TestIllegalComposition(unittest.TestCase):
             self._resolve(spec)
 
     def test_unknown_operator_id_rejected(self):
-        spec = self._spec("grpo", [("mu_ref_renorm", None)])
-        with self.assertRaises(ValueError, msg="operator not in the five-value registry"):
-            self._resolve(spec)
+        """RL5: unknown operator ids fail at AdvantagePipelineSpec construction
+        (V2 moved to the pydantic layer — save-path fail-fast); the
+        composition enforcer keeps the same stance for spec objects that
+        bypass construction."""
+        from rl.loss import AdvantageOperatorSpec, AdvantagePipelineSpec
+
+        with self.assertRaises(ValueError, msg="V2 at construction layer"):
+            AdvantagePipelineSpec(
+                base="grpo",
+                operators=[AdvantageOperatorSpec(id="mu_ref_renorm")],
+            )
 
     def test_base_outside_enum_rejected(self):
-        spec = self._spec("flow_grpo", [])
-        with self.assertRaises(ValueError, msg="flow_grpo is NOT a base — snapshot not base"):
-            self._resolve(spec)
-        spec = self._spec("Gigantic", [])
+        """RL5: base enum (V1/V2) enforced at construction — 'flow_grpo' is a
+        preset name, not a base; the enforcer stays authoritative for any
+        spec object that skirts construction validation (e.g. model_construct)."""
+        from rl.hooks.advantage import validate_pipeline_spec
+        from rl.loss import AdvantagePipelineSpec
+
+        with self.assertRaises(ValueError, msg="V1/V2 at construction layer"):
+            AdvantagePipelineSpec(base="flow_grpo", operators=[])
         with self.assertRaises(ValueError, msg="base outside {grpo,igpo,gigpo}"):
-            self._resolve(spec)
+            AdvantagePipelineSpec(base="Gigantic", operators=[])
+        stale = AdvantagePipelineSpec.model_construct(base="flow_grpo", operators=[])
+        with self.assertRaises(ValueError, msg="enforcer is the last line of defense"):
+            validate_pipeline_spec(stale)
 
     def test_duplicate_detection_reports_the_offending_id(self):
         from rl.hooks.advantage import validate_pipeline_spec
