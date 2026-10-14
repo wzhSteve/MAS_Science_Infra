@@ -173,12 +173,26 @@ def apply_rae_full_tgt_advantages(
     verdicts = _as_list(_nt_get(ntb, "verdict_list", "verdict"))
     if not verdicts or "advantages" not in batch.batch:
         return batch
-    action_keys = _as_list(_nt_get(ntb, "action_key_list", "action_key") or [])
-    uids = _as_list(_nt_get(ntb, "uid", "data_id") or [])
+    # Latent-bug small fix (RL3 report §5.1): the bare ``or`` here was
+    # truth-value-ambiguous on the daemon-injected np.ndarray shapes
+    # (daemon.py:830-841 inject every non_tensor column as np.ndarray) —
+    # None vs missing is the real fallback semantic, so split it out
+    # explicitly. List semantics preserved (present columns keep their
+    # rows; genuinely absent columns still read as []).
+    raw_action_keys = _nt_get(ntb, "action_key_list", "action_key")
+    action_keys = _as_list([] if raw_action_keys is None else raw_action_keys)
+    raw_uids = _nt_get(ntb, "uid", "data_id")
+    uids = _as_list([] if raw_uids is None else raw_uids)
     adv = batch.batch["advantages"]
     mask = batch.batch.get("response_mask")
     n = adv.shape[0]
-    old_logprobs = batch.batch.get("old_log_probs") or batch.batch.get("old_logprobs")
+    # Same latent-bug fix for this bare ``or``: old_log_probs /
+    # old_logprobs are torch tensors (truth-value-ambiguous, and deprecated
+    # bool casting of a 0-dim tensor would decide the fallback by a
+    # meaningless scalar). None is the only real fallback condition.
+    old_logprobs = batch.batch.get("old_log_probs")
+    if old_logprobs is None:
+        old_logprobs = batch.batch.get("old_logprobs")
 
     groups: Dict[Any, List[int]] = defaultdict(list)
     for i in range(n):

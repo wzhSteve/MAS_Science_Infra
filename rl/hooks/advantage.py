@@ -665,7 +665,13 @@ def _apply_igpo(batch: DataProto, gamma: float) -> DataProto:
     ig_raw = _as_list(ntb.get("ig_logprob_delta"))
     if not ig_raw:
         return batch
-    data_ids = _as_list(ntb.get("data_id_list") or ntb.get("uid"))
+    # Latent-bug small fix (RL3 report §5.1): the bare ``or`` fallback was
+    # truth-value-ambiguous on the twin-tuple ndarray/list shapes DataProto
+    # carries in production (AGL daemon injects data_id_list as np.ndarray,
+    # daemon.py:1143). None-ness is the only real fallback condition —
+    # data_id_list present-and-non-empty must always win over uid.
+    _raw_ids = ntb.get("data_id_list")
+    data_ids = _as_list(ntb.get("uid") if _raw_ids is None else _raw_ids)
     rollout_ids = _as_list(ntb.get("rollout_id_list"))
     turn_indices = _as_list(ntb.get("turn_index_list"))
     outcome = batch.batch["token_level_scores"].sum(-1).detach().cpu().numpy()
@@ -724,7 +730,12 @@ def _apply_igpo(batch: DataProto, gamma: float) -> DataProto:
 
 def _apply_gigpo(batch: DataProto, step_w: float, gamma: float, mode: str) -> DataProto:
     ntb = batch.non_tensor_batch
-    data_ids = _as_list(ntb.get("data_id_list") or ntb.get("uid"))
+    # Latent-bug small fix (RL3 report §5.1): same bare-``or`` ambiguity as
+    # _apply_igpo — the AGL daemon injects data_id_list as np.ndarray
+    # (daemon.py:1143), np.ndarray truthiness is undefined and would raise
+    # here before gigpo_core ever ran. None-ness is the only fallback.
+    _raw_ids = ntb.get("data_id_list")
+    data_ids = _as_list(ntb.get("uid") if _raw_ids is None else _raw_ids)
     rollout_ids = _as_list(ntb.get("rollout_id_list"))
     turn_indices = _as_list(ntb.get("turn_index_list"))
     anchors = _as_list(ntb.get("anchor_obs"))
