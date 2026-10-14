@@ -110,7 +110,10 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
     cfg = deepcopy(config)
     algo_block = dict(cfg.get("algorithm") or {})
     algo_block["adv_estimator"] = "grpo"
-    algo_block["use_kl_in_reward"] = False
+    # Respect an explicit use_kl_in_reward from the rl-yaml; only default to
+    # False when the key is absent (e.g. plain Hydra configs without a yaml).
+    if "use_kl_in_reward" not in algo_block:
+        algo_block["use_kl_in_reward"] = False
     algo_block["tir_algo"] = algo
     user_tir = dict(algo_block.get("tir") or {})
     tir = dict(DEFAULT_TIR)
@@ -134,10 +137,14 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
     if algo == "flow_grpo":
         # Trajectory outcome is already broadcast onto every turn by the VERL daemon.
         # These are AgentFlow's actor defaults; rollout.n stays the group size.
+        # An explicit use_kl_loss=False in the rl-yaml survives the re-apply
+        # (single-GPU memory layouts move KL into use_kl_in_reward instead).
         roll = dict(cfg.get("actor_rollout_ref") or {})
         actor = dict(roll.get("actor") or {})
-        actor["use_kl_loss"] = True
-        actor["kl_loss_coef"] = 0.001
+        explicit_no_kl_loss = actor.get("use_kl_loss") is False
+        if not explicit_no_kl_loss:
+            actor["use_kl_loss"] = True
+            actor["kl_loss_coef"] = 0.001
         actor["entropy_coeff"] = 0.0
         actor["clip_ratio_low"] = 0.2
         actor["clip_ratio_high"] = 0.3
@@ -161,8 +168,11 @@ def apply_train_signal(config: Dict[str, Any], signal: "TrainSignal") -> Dict[st
     actor["entropy_coeff"] = float(signal.loss.entropy_coeff)
     actor["kl_loss_coef"] = float(signal.loss.kl_loss_coef)
     if algo == "flow_grpo":
-        actor["use_kl_loss"] = True
-        if float(signal.loss.kl_loss_coef) == 0.0:
+        # Preserve an explicit use_kl_loss=False from the rl-yaml (see
+        # apply_algo_overlay); the re-apply here must not resurrect the flag.
+        if actor.get("use_kl_loss") is not False:
+            actor["use_kl_loss"] = True
+        if float(signal.loss.kl_loss_coef) == 0.0 and actor.get("use_kl_loss") is True:
             actor["kl_loss_coef"] = 0.001
     roll = dict(cfg.get("actor_rollout_ref") or {})
     roll["actor"] = actor
