@@ -14,7 +14,12 @@ _PLACEHOLDERS = {"", "answer", "<answer>", "number", "<number>"}
 
 
 def strip_thinking(text: str) -> str:
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    out = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Truncation fallback: an unclosed <think> (max_response_length cut mid-
+    # reasoning) means no usable answer text remains; blank it so the caller
+    # falls back to format/accuracy failure instead of scoring the reasoning.
+    out = re.sub(r"<think>.*\Z", "", out, flags=re.DOTALL | re.IGNORECASE)
+    return out.strip()
 
 
 def extract_answer_text(text: str) -> Optional[str]:
@@ -78,15 +83,42 @@ def f1_score(prediction: str, golds: Sequence[str]) -> float:
 
 
 def numeric_match(prediction: str, gold: str) -> bool:
-    pred = prediction.strip().replace(",", "").replace("$", "").replace("%", "").rstrip(".")
+    """Match prediction to a numeric gold.
+
+    The prediction may be a long CoT-wrapped answer such as
+    ``"<answer>Jason has 16 cousins. ... **Answer:** 16</answer>"``; we try the
+    first number, the last number, and the inner ``<answer>...</answer>`` body
+    (in that order) before falling back to a literal comparison.
+    """
+    pred = str(prediction or "").strip().replace(",", "").replace("$", "").replace("%", "").rstrip(".")
     gt = gold.strip().replace(",", "").replace("$", "").replace("%", "").rstrip(".")
-    m = re.match(r"(-?\d+(?:\.\d+)?)", pred)
-    if m:
-        pred = m.group(1)
-    try:
-        return bool(np.isclose(float(pred), float(gt), rtol=1e-5, atol=1e-8))
-    except (TypeError, ValueError):
-        return pred.lower() == gt.lower()
+    candidates: List[str] = [pred]
+    # 1. Try the inner <answer>...</answer> body if any.
+    m_ans = re.search(r"<answer>(.*?)</answer>", pred, flags=re.DOTALL | re.IGNORECASE)
+    if m_ans:
+        candidates.append(m_ans.group(1).strip())
+    # 2. Try the last number anywhere in the prediction (CoT often says
+    #    "Answer: 16" at the very end).
+    nums = re.findall(r"-?\d+(?:\.\d+)?", pred)
+    if nums:
+        candidates.append(nums[-1])
+    # 3. Try the first number for the common "16 cousins" pattern.
+    if nums:
+        candidates.append(nums[0])
+    for cand in candidates:
+        c = cand.strip()
+        if not c:
+            continue
+        m = re.match(r"(-?\d+(?:\.\d+)?)", c)
+        if m:
+            c = m.group(1)
+        try:
+            if bool(np.isclose(float(c), float(gt), rtol=1e-5, atol=1e-8)):
+                return True
+        except (TypeError, ValueError):
+            if c.lower() == gt.lower():
+                return True
+    return False
 
 
 def accuracy(
@@ -139,7 +171,7 @@ def compute_mas_outcome_reward(
     task: Dict[str, Any],
     result: Optional[Dict[str, Any]] = None,
 ) -> float:
-    """Outcome reward for MAS_structagent (no <answer> format penalty).
+    """Outcome reward for the StructAgent stack (legacy/structagent/, no <answer> format penalty).
 
     Empty / missing prediction → 0. gsm8k → numeric 0/1; QA → token F1.
     ``result`` is accepted for future shaping but unused in v1.
