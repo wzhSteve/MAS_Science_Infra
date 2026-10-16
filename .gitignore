@@ -39,6 +39,7 @@ agent-lightning/docs
 # Exclude datasets, runtime screenshots, and model weights
 /data/*.parquet
 /agent-lightning/examples/ARPO/ARPO/rl_datasets/
+/agent-lightning/examples/ARPO/LLaMA-Factory/arpo_train_sft/dataset/
 /agent-lightning/examples/CD_TAA/solver_cache/
 model.safetensors
 
@@ -64,3 +65,13 @@ agentops.log
 /data/search_cache.json.lock
 /data/search_cache.gaps.json
 /data/*.json.lock
+
+# docs/: only publish the design docs + images below
+/docs/*
+!/docs/UI_USER_MANUAL.md
+!/docs/TECHNICAL_FRAMEWORK.md
+!/docs/RL_design.md
+!/docs/MAS_design.md
+!/docs/Harness_design.md
+!/docs/images/
+!/docs/images/**
