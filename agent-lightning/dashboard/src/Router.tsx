@@ -10,6 +10,11 @@ import { SettingsPage } from './pages/Settings.page';
 import { TracesPage } from './pages/Traces.page';
 import { WorkersPage } from './pages/Workers.page';
 
+function dashboardBasename(): string | undefined {
+  const raw = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+  return raw && raw !== '/' ? raw : undefined;
+}
+
 const router = createBrowserRouter([
   {
     path: '/',
@@ -49,7 +54,7 @@ const router = createBrowserRouter([
       },
     ],
   },
-]);
+], { basename: dashboardBasename() });
 
 export function Router() {
   return <RouterProvider router={router} />;

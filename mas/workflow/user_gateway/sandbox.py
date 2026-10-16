@@ -66,6 +66,23 @@ def eval_cancelled() -> bool:
     return bool(event is not None and event.is_set())
 
 
+# Per-episode key for user windows. task_id is the dataset row id and repeats
+# across the G samples of one question, so stateful projects key on this.
+_EPISODE_ID: contextvars.ContextVar[str] = contextvars.ContextVar("science_episode_id", default="")
+
+
+def bind_episode_id(episode_id: str) -> contextvars.Token:
+    return _EPISODE_ID.set(str(episode_id or ""))
+
+
+def reset_episode_id(token: contextvars.Token) -> None:
+    _EPISODE_ID.reset(token)
+
+
+def current_episode_id() -> str:
+    return _EPISODE_ID.get()
+
+
 def reap_search_browsers() -> int:
     """Kill Chrome and ChromeDriver left behind by a hung Google navigation.
 

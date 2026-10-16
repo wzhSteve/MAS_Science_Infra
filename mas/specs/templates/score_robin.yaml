@@ -7,7 +7,7 @@ hub:
   skills: []
 tools:
   - python_coder
-  - think
+  - base_generator
 agents:
   - id: planner
     kind: planner
@@ -15,7 +15,7 @@ agents:
     system_prompt: "把子任务交给专家组或轮询工具。只输出 JSON：next, args, sub_goal, done。"
     tools:
       - python_coder
-      - think
+      - base_generator
     trainable: true
   - id: expert_a
     kind: blank
@@ -32,7 +32,7 @@ agents:
   - id: python_coder
     kind: tool
     trainable: false
-  - id: think
+  - id: base_generator
     kind: tool
     trainable: false
   - id: verifier
@@ -50,7 +50,7 @@ routers:
   - id: route_robin
     candidates:
       - python_coder
-      - think
+      - base_generator
     strategy: round_robin
     output_contract: json
 edges:

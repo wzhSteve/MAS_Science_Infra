@@ -1,0 +1,77 @@
+profile: a800_1gpu
+algo: flow_grpo
+n_runners: 8
+rollout_per_gpu: 4
+devices:
+  ids:
+  - 0
+model_path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+algorithm:
+  adv_estimator: grpo
+  use_kl_in_reward: false  # A800-80G single-card fix: KL-in-reward requires a
+  # resident ref-policy worker (a second full model copy + ref logprob
+  # activations). With actor + colocated vLLM rollout already on the card the
+  # ref worker pushed Adam-step peak allocation to OOM (84.7GiB vs 79.25).
+  # smoke-level KL control is unnecessary; kl_loss_coef stays available if KL
+  # is ever moved into the actor loss channel.
+  tir_algo: flow_grpo
+data:
+  train_files: /root/autodl-tmp/MAS_Science_Infra/data/train.parquet
+  val_files: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet
+  train_batch_size: 2
+  max_prompt_length: 4096
+  max_response_length: 768
+  truncation: left
+actor_rollout_ref:
+  rollout:
+    tensor_model_parallel_size: 1
+    n: 4
+    log_prob_micro_batch_size_per_gpu: 1
+    name: vllm
+    gpu_memory_utilization: 0.12
+    # Gate A fix: release vLLM weights + KV cache during the training phase
+    # (sleep mode). Without this the rollout engine holds ~9GB resident while
+    # FSDP actor + optimizer states need the GPU, causing OOM in
+    # actor_optimizer.step() (see logs/agentflow_4algo_smoke_1gpu/flow_grpo_run8.log).
+    free_cache_engine: true
+    engine_kwargs:
+      vllm:
+        enable_auto_tool_choice: true
+        tool_call_parser: hermes
+        max_model_len: 8192
+  actor:
+    ppo_mini_batch_size: 1
+    ppo_micro_batch_size_per_gpu: 1
+    optim:
+      lr: 1.0e-06
+    use_kl_loss: false
+    kl_loss_coef: 0.001
+    entropy_coeff: 0
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.3
+    fsdp_config:
+      param_offload: true
+      optimizer_offload: true
+  ref:
+    log_prob_micro_batch_size_per_gpu: 1
+    fsdp_config:
+      param_offload: true
+  model:
+    path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+    use_remove_padding: true
+    enable_activation_offload: true
+    enable_gradient_checkpointing: true
+trainer:
+  n_gpus_per_node: 1
+  val_before_train: false
+  critic_warmup: 0
+  logger:
+  - console
+  - tensorboard
+  project_name: AgentLightning
+  experiment_name: agentflow_smoke1gpu_flow_grpo
+  nnodes: 1
+  test_freq: 100
+  total_epochs: 1
+  total_training_steps: 1
+  save_freq: -1

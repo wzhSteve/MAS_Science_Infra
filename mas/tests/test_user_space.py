@@ -254,7 +254,7 @@ class TestIsolationScript(unittest.TestCase):
 
 class TestAssistantJail(UserSpaceTestBase):
     def test_write_tool_rejects_mas(self) -> None:
-        from science_infra.control.assistant import assistant_tools
+        from ai_assistant import assistant_tools
         from workflow.user_gateway.registry import create_project
 
         create_project("jail", title="Jail", mode="io_module")

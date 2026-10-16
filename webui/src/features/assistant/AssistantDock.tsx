@@ -7,7 +7,18 @@ import { assistantApi, workflowSummary, type UserProject } from './api';
 import { useAssistantCanvas } from './context';
 import { MarkdownMessage } from './MarkdownMessage';
 
-const WELCOME = '我可以读仓库、改 user_space/ 里的用户代码，并把适配结果应用到画布。问合同、指文件、或让我封装 HIVE / EPC-AW。';
+const WELCOME = [
+  '我可以读仓库、改 user_space/ 里的用户代码，并把适配结果应用到画布。也可以直接用文字问我：',
+  '- 训练资源：「训练 agentflow 要几张卡？显存怎么分？」',
+  '- 训练诊断：「训练崩了，帮我看看日志」',
+  '- 实验配置：「切换到 ARPO 算法」或「把采样站点改成 planner + verifier」',
+].join('\n');
+
+const LEGACY_WELCOME_PREFIXES = ['我可以读仓库', '我只能改 user_space/'];
+
+function isWelcome(item: ChatItem) {
+  return item.role === 'assistant' && LEGACY_WELCOME_PREFIXES.some((prefix) => item.content.startsWith(prefix));
+}
 
 type ChatItem =
   | { id: string; role: 'user' | 'assistant'; content: string; streaming?: boolean }
@@ -26,7 +37,12 @@ function loadItems(expId: string | null): ChatItem[] {
     const raw = window.localStorage.getItem(storageKey(expId));
     if (!raw) return [{ id: 'welcome', role: 'assistant', content: WELCOME }];
     const parsed = JSON.parse(raw) as ChatItem[];
-    return Array.isArray(parsed) && parsed.length ? parsed : [{ id: 'welcome', role: 'assistant', content: WELCOME }];
+    if (!Array.isArray(parsed) || !parsed.length) return [{ id: 'welcome', role: 'assistant', content: WELCOME }];
+    // 旧欢迎语不含技能提示：替换为最新版本，让老用户也能看到技能示例。
+    if (parsed.length === 1 && isWelcome(parsed[0])) {
+      return [{ id: 'welcome', role: 'assistant', content: WELCOME }];
+    }
+    return parsed;
   } catch {
     return [{ id: 'welcome', role: 'assistant', content: WELCOME }];
   }
@@ -35,9 +51,35 @@ function loadItems(expId: string | null): ChatItem[] {
 function historyForApi(items: ChatItem[]) {
   return items
     .filter((item): item is Extract<ChatItem, { role: 'user' | 'assistant' }> => item.role === 'user' || item.role === 'assistant')
-    .filter((item) => item.content && item.content !== WELCOME && !item.content.startsWith('我只能改 user_space/'))
+    .filter((item) => item.content && !isWelcome(item))
     .slice(-24)
     .map((item) => ({ role: item.role, content: item.content }));
+}
+
+// tool_start 事件的 args 可能是对象，也可能是 JSON 字符串；解析出技能名（load_skill 用）。
+function skillNameFromArgs(args: unknown): string {
+  let parsed: unknown = args;
+  if (typeof args === 'string') {
+    try {
+      parsed = JSON.parse(args);
+    } catch {
+      return '';
+    }
+  }
+  if (parsed && typeof parsed === 'object') {
+    const name = (parsed as Record<string, unknown>).name;
+    if (typeof name === 'string' && name.trim()) return name.trim();
+  }
+  return '';
+}
+
+// 工具条文案：技能类工具（list_skills/load_skill/query_*）显示「技能」措辞，与状态栏一致。
+function toolSummary(item: Extract<ChatItem, { role: 'tool' }>): string {
+  const isSkill = item.name === 'load_skill' || item.name === 'list_skills';
+  const label = isSkill ? `技能 ${item.name}` : item.name;
+  if (item.status === 'running') return `正在使用 ${label}`;
+  if (item.status === 'error') return `${label} 失败`;
+  return `已完成 ${label}`;
 }
 
 export function AssistantDock() {
@@ -46,7 +88,6 @@ export function AssistantDock() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
-  const [mode, setMode] = useState<'io_module' | 'native_mas'>('io_module');
   const [projects, setProjects] = useState<UserProject[]>([]);
   const [projectId, setProjectId] = useState('');
   const [items, setItems] = useState<ChatItem[]>(() => loadItems(null));
@@ -131,7 +172,14 @@ export function AssistantDock() {
             status: 'running',
             detail: JSON.stringify(event.data.args || {}),
           }]);
-          setStatus(`正在 ${name}…`);
+          setStatus(
+            name === 'load_skill'
+              ? (() => {
+                  const skillName = skillNameFromArgs(event.data.args);
+                  return skillName ? `正在使用技能 ${skillName}…` : '正在使用技能…';
+                })()
+              : `正在 ${name}…`,
+          );
         } else if (event.event === 'tool_end') {
           const name = String(event.data.name || 'tool');
           const ok = event.data.ok !== false;
@@ -180,7 +228,7 @@ export function AssistantDock() {
   const upload = async (file: File) => {
     const form = new FormData();
     form.append('title', file.name.replace(/\.[^.]+$/, '') || 'user-agent');
-    form.append('mode', mode);
+    form.append('mode', 'io_module');
     if (canvas.expId) form.append('experiment_id', canvas.expId);
     form.append('file', file);
     setBusy(true);
@@ -207,7 +255,7 @@ export function AssistantDock() {
     }
     setBusy(true);
     try {
-      const result = await assistantApi.apply(projectId, canvas.workflow, mode === 'native_mas');
+      const result = await assistantApi.apply(projectId, canvas.workflow, false);
       canvas.applyWorkflow(result.workflow);
       const n = result.workflow?.agents?.length || 0;
       const wraps = (result.workflow?.agents || []).map((agent) => {
@@ -267,11 +315,7 @@ export function AssistantDock() {
         </div>
       </header>
       <div className="assistant-dock-controls">
-        <Select aria-label="适配模式" value={mode} onChange={(event) => setMode(event.target.value as 'io_module' | 'native_mas')}>
-          <option value="io_module">Mode 1 · I/O 模块</option>
-          <option value="native_mas">Mode 2 · 解析重构</option>
-        </Select>
-        <Select aria-label="用户项目" value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+        <Select aria-label="用户项目" value={projectId} onChange={(event) => setProjectId(event.target.value)} className="assistant-project-select">
           <option value="">未选择项目</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.title} · {project.mode}</option>)}
         </Select>
@@ -286,7 +330,7 @@ export function AssistantDock() {
       <div className="assistant-dock-log" ref={scroller}>
         {items.map((item) => item.role === 'tool' ? (
           <details key={item.id} className={`assistant-tool is-${item.status}`} open={item.status === 'running'}>
-            <summary>{item.status === 'running' ? `正在 ${item.name}` : item.status === 'error' ? `${item.name} 失败` : `已完成 ${item.name}`}</summary>
+            <summary>{toolSummary(item)}</summary>
             {item.detail ? <pre>{item.detail}</pre> : null}
           </details>
         ) : (
@@ -302,7 +346,7 @@ export function AssistantDock() {
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={onComposerKey}
-          placeholder="问画布、读文件、或让我封装用户代码… Enter 发送，Shift+Enter 换行"
+          placeholder="问画布、读文件，或试试「训练 agentflow 要几张卡」… Enter 发送，Shift+Enter 换行"
           disabled={busy}
           aria-label="辅助输入"
           rows={2}

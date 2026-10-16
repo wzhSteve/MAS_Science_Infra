@@ -11,7 +11,7 @@ tools:
   - bing_search
   - web_fetch
   - python_coder
-  - think
+  - base_generator
 agents:
   - id: planner
     kind: planner
@@ -22,7 +22,7 @@ agents:
       - bing_search
       - web_fetch
       - python_coder
-      - think
+      - base_generator
     trainable: true
   - id: wikipedia_search
     kind: tool
@@ -36,7 +36,7 @@ agents:
   - id: python_coder
     kind: tool
     trainable: false
-  - id: think
+  - id: base_generator
     kind: tool
     trainable: false
   - id: verifier
@@ -50,7 +50,7 @@ routers:
       - bing_search
       - web_fetch
       - python_coder
-      - think
+      - base_generator
     strategy: from_plan
     output_contract: json
 edges:

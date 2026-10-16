@@ -263,7 +263,7 @@ class TestPevSearch(unittest.TestCase):
                 ["wikipedia_search", "bing_search", "web_fetch"],
                 [
                     {"query": "wiki-q"},
-                    {"query": "bing-q"},
+                    {"query": "google-q"},
                     {"query": "fetch-q", "url": "https://example.com"},
                 ],
                 done=True,
@@ -284,7 +284,7 @@ class TestPevSearch(unittest.TestCase):
         self.assertEqual(raw.n_search, 3)
         by_name = {name: args for name, args in tracker}
         self.assertEqual(by_name["wikipedia_search"]["query"], "wiki-q")
-        self.assertEqual(by_name["bing_search"]["query"], "bing-q")
+        self.assertEqual(by_name["bing_search"]["query"], "google-q")
         self.assertEqual(by_name["web_fetch"]["url"], "https://example.com")
 
     def test_web_fetch_missing_url_errors_without_kernel(self):
@@ -311,7 +311,7 @@ class TestCentralizedFiveTools(unittest.TestCase):
             ("bing_search", {"query": "q"}),
             ("web_fetch", {"query": "q", "url": "https://example.com"}),
             ("python_coder", {"code": "result=42"}),
-            ("think", {"text": "reason"}),
+            ("base_generator", {"query": "reason"}),
         ]
         planner = [
             _plan(tid, args, done=(i == len(sequence) - 1), sub_goal=tid)
@@ -319,7 +319,7 @@ class TestCentralizedFiveTools(unittest.TestCase):
         ]
         win = MockWindowLLM({
             "planner": planner,
-            "verifier": [VERIFY_OK] * len(sequence),
+            "verifier": [VERIFY_FAIL] * (len(sequence) - 1) + [VERIFY_OK],
         })
         tracker: List = []
         with _mock_tool_invokes(NETWORK_TOOL_IDS, tracker):
@@ -335,7 +335,7 @@ class TestCentralizedFiveTools(unittest.TestCase):
         self.assertEqual(len(_msgs(raw, "verify")), 5)
         self.assertNotIn("tool_calls", kinds)
         mocked = {name for name, _ in tracker}
-        self.assertEqual(mocked, set(SEARCH_IDS) | {"think"})
+        self.assertEqual(mocked, set(SEARCH_IDS))
 
 
 class TestFanoutParallel(unittest.TestCase):
@@ -343,7 +343,7 @@ class TestFanoutParallel(unittest.TestCase):
         spec = _spec("fanout_parallel")
         win = MockWindowLLM({
             "planner": [_plan(
-                ["python_coder", "think"],
+                ["python_coder", "base_generator"],
                 [{"code": "result=1"}, {"text": "reason"}],
                 done=True,
                 sub_goal="parallel",
@@ -356,14 +356,14 @@ class TestFanoutParallel(unittest.TestCase):
         invokes = _msgs(raw, "tool_invoke")
         self.assertEqual(len(invokes), 2)
         dsts = sorted(m["dst"] for m in invokes)
-        self.assertEqual(dsts, ["python_coder", "think"])
+        self.assertEqual(dsts, ["base_generator", "python_coder"])
         results = _msgs(raw, "tool_result")
-        self.assertEqual(sorted(m["src"] for m in results), ["python_coder", "think"])
+        self.assertEqual(sorted(m["src"] for m in results), ["base_generator", "python_coder"])
         ids = _window_ids(raw)
         self.assertIn("route_a", ids)
         self.assertIn("route_b", ids)
         self.assertIn("python_coder", ids)
-        self.assertIn("think", ids)
+        self.assertIn("base_generator", ids)
 
 
 class TestBlankSet(unittest.TestCase):
@@ -380,7 +380,7 @@ class TestBlankSet(unittest.TestCase):
                 _plan("summarizer", {"input": "42"}, done=True, sub_goal="summarize"),
             ],
             "summarizer": [json.dumps({"output": "the answer is 42"})],
-            "verifier": [VERIFY_OK, VERIFY_OK],
+            "verifier": [VERIFY_FAIL, VERIFY_OK],
         })
         raw, _c, _k = _run(spec, win, task_id="blank_set")
         invokes = _msgs(raw, "tool_invoke")
@@ -442,13 +442,13 @@ class TestScoreRobin(unittest.TestCase):
         win = MockWindowLLM({
             "planner": [
                 _plan("python_coder", {"code": "result=1", "text": "t1"}, done=False, sub_goal="r1"),
-                _plan("think", {"code": "result=2", "text": "t2"}, done=True, sub_goal="r2"),
+                _plan("base_generator", {"query": "t2"}, done=True, sub_goal="r2"),
             ],
             "judge": [
                 json.dumps({"score": 0.1}), json.dumps({"score": 0.9}),
                 json.dumps({"score": 0.1}), json.dumps({"score": 0.9}),
             ],
-            "verifier": [VERIFY_OK, VERIFY_OK],
+            "verifier": [VERIFY_FAIL, VERIFY_OK],
         })
         with _mock_tool_invokes(("think",)):
             raw, compiled, _k = _run(spec, win, task_id="robin")
@@ -456,10 +456,10 @@ class TestScoreRobin(unittest.TestCase):
         robin = [e for e in raw.window_events if e.get("agent_id") == "route_robin"]
         self.assertEqual(len(robin), 2)
         self.assertEqual(robin[0]["metrics"]["selected"], ["python_coder"])
-        self.assertEqual(robin[1]["metrics"]["selected"], ["think"])
+        self.assertEqual(robin[1]["metrics"]["selected"], ["base_generator"])
         invoke_dsts = [m["dst"] for m in _msgs(raw, "tool_invoke")]
         self.assertIn("python_coder", invoke_dsts)
-        self.assertIn("think", invoke_dsts)
+        self.assertIn("base_generator", invoke_dsts)
 
 
 if __name__ == "__main__":

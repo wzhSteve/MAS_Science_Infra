@@ -1,0 +1,11 @@
+n: 1
+max_steps: 6          # internal ReAct loop LLM-call budget (search->result turns)
+max_time: 240         # seconds; stays under the gateway's 300s window timeout
+max_tokens: 1024      # per-chunk completion budget, matches RL response budget
+temperature: 0.7       # rollout sampling temperature (agentflow/APPO alignment)
+reply_budget: 800      # <result> injection truncation, chars
+enabled_tools:
+- Wikipedia_Search_Tool
+- Bing_Search_Tool
+- Web_Fetch_Tool
+- Python_Coder_Tool

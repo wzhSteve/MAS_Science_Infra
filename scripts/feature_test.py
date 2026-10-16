@@ -64,8 +64,8 @@ FEATURES: dict[str, tuple[list[str], str]] = {
         "功能合同: workflow/tool/harness/RL/SSE/Studio 产品面",
     ),
     "user-space": (
-        ["test_user_space", "test_hive_wrap", "test_epc_aw_wrap", "test_assistant_chat"],
-        "用户区隔离: 路径监狱/HIVE/EPC-AW 封装/辅助对话",
+        ["test_user_space", "test_epc_aw_wrap", "test_assistant_chat"],
+        "用户区隔离: 路径监狱/EPC-AW 封装/辅助对话",
     ),
     "studio": (
         [
@@ -91,6 +91,56 @@ FEATURES: dict[str, tuple[list[str], str]] = {
         ],
         "pytest: SamplingCore/adapter/execution-tree/rollout-tree 归档",
     ),
+    "rl-algos": (
+        [
+            "test_flow_grpo",
+            "test_window_agent_match",
+            "test_advantage_numerics",
+            "test_expand_preset",
+            "test_operator_composition",
+            "test_preset_equivalence",
+            "test_overlay_kl_semantics",
+            "test_resolved_audit",
+            "test_rl_contract_validation",
+            "test_outcome_hotpot",
+            "test_latent_truthiness_fix",
+        ],
+        "RL 算法: 8 preset 展开/数值等价/KL overlay/Flow-GRPO/合同校验/outcome",
+    ),
+    "user-projects": (
+        [
+            "test_agentflow_official",
+            "test_agentflow_tool_count",
+            "test_epc_aw_tools",
+            "test_epc_aw_profiles",
+            "test_epc_aw_lite_prompts",
+            "test_epc_aw_query_gate",
+            "test_project_flow_doc",
+            "test_single_sppo_parsing",
+            "test_user_gateway_loader",
+        ],
+        "用户项目: AgentFlow 官方 P-E-V / EPC-AW BTS / single-ppo / gateway loader",
+    ),
+    "infra": (
+        [
+            "test_archive_paths",
+            "test_memory_package",
+            "test_prompts_module",
+            "test_legacy_isolation",
+            "test_local_llm_argv",
+            "test_tool_tiers",
+            "test_tool_agent_test_endpoint",
+            "test_search_cache",
+            "test_infra_v1",
+            "test_assistant_memory",
+            "test_assistant_skills",
+        ],
+        "基础设施: archive 路径/memory 包/prompt 单入口/legacy 隔离/工具 tier/搜索缓存/助手",
+    ),
+    "pytest-extra": (
+        ["test_centralized_execution_tree", "test_search_kernels"],
+        "pytest: centralized 执行树/搜索内核",
+    ),
     "frontend": ([], "前端 vitest（webui npm run test:traj）"),
     "smoke": ([], "无 GPU 冒烟: doctor→层依赖→user_zone→mock 采集→diagnose→dashboard"),
 }
@@ -115,7 +165,13 @@ UNIT_FEATURES = [
     "user-space",
     "studio",
     "sampling-runtime",
+    "rl-algos",
+    "user-projects",
+    "infra",
+    "pytest-extra",
 ]
+
+PYTEST_FEATURES = {"sampling-runtime", "pytest-extra"}
 
 
 def run_pytest_suite(modules: list[str]) -> tuple[bool, int, int, float]:
@@ -277,7 +333,7 @@ def main() -> int:
             okflag, n, nf, dt = run_frontend()
         elif feat == "smoke":
             okflag, n, nf, dt = run_smoke()
-        elif feat == "sampling-runtime":
+        elif feat in PYTEST_FEATURES:
             okflag, n, nf, dt = run_pytest_suite(mods)
         else:
             okflag, n, nf, dt = run_python_suite(mods)

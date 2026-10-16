@@ -112,6 +112,104 @@ def append_events_from_messages(archive: Archive, messages: List[Dict[str, Any]]
                 )
 
 
+_OPENAI_ROLES = {"system", "user", "assistant", "tool"}
+
+
+def _agent_text_for_chat(msg: Dict[str, Any]) -> str:
+    """Best-effort textual content for an AgentMessage dump.
+
+    Centralized messages carry structured payloads (``{next, args, sub_goal,
+    done, answer, kind, ...}``) rather than an OpenAI-style ``content`` field.
+    This helper flattens them into a short assistant-turn string so the chat
+    template still emits at least one token per agent step.
+    """
+    if not isinstance(msg, dict):
+        return ""
+    payload = msg.get("payload") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    kind = str(msg.get("kind") or payload.get("kind") or "")
+    src = str(msg.get("src") or payload.get("src") or "agent")
+    if kind == "final_answer":
+        ans = str(payload.get("answer") or "")
+        return f"<answer>{ans}</answer>" if ans else ""
+    if kind == "plan_step":
+        if payload.get("done"):
+            ans = str(payload.get("answer") or payload.get("sub_goal") or "")
+            return f"<answer>{ans}</answer>" if ans else "Plan: done."
+        nxt = payload.get("next") or payload.get("sub_goal") or "executor"
+        sub = str(payload.get("sub_goal") or "")
+        if sub:
+            return f"Plan: hand off to {nxt}. Sub-goal: {sub[:200]}"
+        return f"Plan: hand off to {nxt}."
+    if kind == "tool_invoke":
+        return f"Tool call: {payload.get('tool_name') or 'tool'}({json.dumps(payload.get('args') or {}, default=str)[:200]})"
+    if kind == "tool_result":
+        return f"Tool result: {str(payload.get('content') or payload.get('output') or '')[:200]}"
+    if kind == "verify":
+        ok = payload.get("ok")
+        return f"Verify: ok={ok} reason={payload.get('reason') or ''}"
+    if kind == "feedback":
+        return f"Feedback: {str(payload.get('message') or payload.get('content') or '')[:200]}"
+    if kind == "error":
+        return f"Error: {str(payload.get('error') or '')[:200]}"
+    # Generic: try common content fields, then json-dump the payload.
+    for key in ("content", "text", "message", "output", "answer"):
+        v = payload.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    try:
+        return json.dumps(payload, default=str)[:300]
+    except Exception:
+        return src
+
+
+def _normalise_chat_messages(messages: List[Any], *, question: str) -> List[Dict[str, Any]]:
+    """Rewrite ``AgentMessage`` dumps into OpenAI chat-template friendly dicts.
+
+    The default chat template drops any role outside
+    ``{system, user, assistant, tool}`` and silently ignores tool_calls when
+    ``content`` is missing. We rebuild the list so the actor always sees a
+    non-empty sequence of system / user / assistant turns even for the empty
+    final-answer path that previously crashed Qwen3 with a 0-element reshape.
+    """
+    out: List[Dict[str, Any]] = []
+    # Seed with a minimal system + user pair if the rollout never produced
+    # them, so chat_template can emit at least an empty assistant header.
+    if not any(isinstance(m, dict) and m.get("role") == "user" for m in (messages or [])):
+        if question:
+            out.append({"role": "user", "content": question})
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "")
+        content = m.get("content")
+        if role in _OPENAI_ROLES:
+            if role == "tool":
+                item = {
+                    "role": "tool",
+                    "name": m.get("name") or "",
+                    "content": str(content or "")[:4000],
+                }
+                if m.get("tool_call_id"):
+                    item["tool_call_id"] = m["tool_call_id"]
+                out.append(item)
+            elif role == "assistant" and m.get("tool_calls"):
+                out.append({"role": role, "content": content, "tool_calls": m["tool_calls"]})
+            else:
+                out.append({"role": role, "content": str(content or "")})
+            continue
+        # AgentMessage dump — render as assistant turn.
+        text = _agent_text_for_chat(m)
+        if text:
+            out.append({"role": "assistant", "content": text})
+    # Guarantee a non-empty assistant turn at the end so the actor forward
+    # pass has at least one response token to learn from.
+    if not out or out[-1].get("role") != "assistant":
+        out.append({"role": "assistant", "content": "<answer></answer>"})
+    return out
+
+
 def _select_mock_tool(spec: Optional[MASSpec]) -> str:
     tools = list(spec.tools) if spec else ["python_coder"]
     if "python_coder" in tools:
@@ -247,9 +345,18 @@ def episode_to_trajectory(
             mem_dump.append(sys_latest.model_dump(mode="json"))
     spec_obj = spec or load_spec()
     routes = [r.get("route") for r in raw.skill_results if r.get("route")]
+    # Post-process messages: ``all_messages`` in centralized_runtime is a list
+    # of ``AgentMessage.model_dump()`` dicts whose ``role`` is the agent
+    # sender (e.g. "planner"), not OpenAI's "assistant". VERL's rl_dataset
+    # feeds this list straight into ``tokenizer.apply_chat_template`` which
+    # silently drops anything that isn't system/user/assistant/tool, so the
+    # actor's prompt becomes 0 tokens long and the forward pass reshapes an
+    # empty tensor. Re-label the agent messages here so the chat template
+    # actually emits tokens for the planner/executor/verifier turns.
+    chat_messages = _normalise_chat_messages(raw.messages, question=str(task.get("question") or ""))
     traj = Trajectory(
         task=dict(task),
-        messages=list(raw.messages),
+        messages=chat_messages,
         final_answer=raw.final_answer,
         format_ok=bool(raw.format_ok),
         n_search=int(raw.n_search),

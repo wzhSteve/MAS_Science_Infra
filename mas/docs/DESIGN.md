@@ -1,13 +1,15 @@
 # TIR Agent 设计说明
 
+> 现状（2026-10-15）：原 `mas/algos/*` 已迁入 `rl/`（`rl/hooks/*`、`rl/rewards/*`、`rl/loss.py`），下文路径已改为新位置。预设为 8 个（含 `appo`、`flow_grpo`），总览见 [RL_design.md](../../docs/RL_design.md)。
+
 对照 [math_gsm interview/10](../../math_gsm/docs/interview/10_agent_rl_arpo_aepo_igpo_gigpo.md)。本目录把五套 GRPO 族算法接到 **Agent-lightning 的两处钩子**，不 fork 官方 veRL 仓库，也不改 `examples/math_gsm` 的训练默认。
 
 ## 1. 三层怎么落到文件
 
 ```text
-rollout  →  tir_agent.py (LangGraph) + algos/daemon.py (enqueue / resume)
-reward   →  algos/rewards.py + LitTirAgent.emit_reward / emit_annotation
-loss / Â →  algos/advantage.py + algos/gigpo_core.py（trainer 在 compute_advantage 处替换）
+rollout  →  tir_agent.py (LangGraph) + rl/hooks/daemon.py (enqueue / resume)
+reward   →  rl/rewards/outcome.py + LitTirAgent.emit_reward / emit_annotation
+loss / Â →  rl/hooks/advantage.py + rl/hooks/gigpo_core.py（trainer 在 compute_advantage 处替换）
 ```
 
 入口 [`train_tir_agent.py`](../train_tir_agent.py) 与 math_gsm 同形：
@@ -22,7 +24,7 @@ trainer = agl.Trainer(n_runners=..., algorithm=algorithm)
 trainer.fit(agent, train_dataset, val_dataset)
 ```
 
-`algorithm.adv_estimator` **始终** `"grpo"`，避免 VERL 拉起 Critic。CLI `--algo` 写入 `algorithm.tir_algo` 和 `algorithm.tir.*`（见 `algos/overlay.py`）。
+`algorithm.adv_estimator` **始终** `"grpo"`，避免 VERL 拉起 Critic。CLI `--algo` 写入 `algorithm.tir_algo` 和 `algorithm.tir.*`（见 `rl/hooks/overlay.py`）。
 
 ## 2. 工具为什么要 copy 而不是 import epc_aw
 
@@ -140,7 +142,7 @@ python legacy/structagent/train_mas_agent.py fast
 
 ## 8. Workflow 分层（本目录落地，不改 agentlightning 核心）
 
-在 `workflow/` 增加 **无 RL 可独立运行** 的数据层；训练仍走 `LitTirAgent` + `algos/` + `train_tir_agent.py`。
+在 `workflow/` 增加 **无 RL 可独立运行** 的数据层；训练仍走 `LitTirAgent` + `rl/` + `train_tir_agent.py`。
 
 ```text
 workflow/contracts.py   — Trajectory / BranchPoint / Snapshot
@@ -164,4 +166,4 @@ PYTHONPATH=. python scripts/check_workflow_deps.py
 ### Archive ↔ ARPO
 
 - `lit_tir_agent` 在 dump 时调用 `dump_resume_with_archive`（只写 Archive；`.resume_cache` 仅作读取回退）
-- `algos/daemon.py` 第二波用 `load_resume_messages`；优先 task.`resume_from`（BranchPoint）
+- `rl/hooks/daemon.py` 第二波用 `load_resume_messages`；优先 task.`resume_from`（BranchPoint）

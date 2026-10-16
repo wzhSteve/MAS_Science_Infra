@@ -734,7 +734,18 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
     # layer 1 is the save path, layer 3 the launch-path validators). The
     # scan runs on the *effective* rl dict (post sampling-sync / gpu-select)
     # so it sees exactly what `_launch_training` would serialize.
-    for violation in _rl_contract_violations(rl):
+    # Overlay expansion writes algorithm.advantage next to algo. That pair is
+    # the preset, not a second user pipeline, so it is not a V5 conflict.
+    from rl.hooks.overlay import _is_expanded_advantage
+
+    scan_rl = rl
+    expanded = ((rl.get("algorithm") or {}).get("advantage"))
+    if _is_expanded_advantage(expanded):
+        scan_rl = deepcopy(rl)
+        scan_rl["algorithm"] = {
+            key: value for key, value in (scan_rl.get("algorithm") or {}).items() if key != "advantage"
+        }
+    for violation in _rl_contract_violations(scan_rl):
         record(
             f"rl_contract_{violation['rule'].lower()}",
             "RL 合同校验",
@@ -871,6 +882,35 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
                     site, spec, strategy=str(algorithm or "") or None
                 )
                 record(f"branch_site_{site.id}", f"站点 {site.id}", status, message)
+        from workflow.runtime import agent_window_rollout
+
+        if agent_window_rollout(spec):
+            enabled_sites = [
+                BranchSite.model_validate(raw_site)
+                for raw_site in (sites or [])
+                if isinstance(raw_site, dict) and raw_site.get("enabled", True)
+            ]
+            known_agents = {agent.id for agent in spec.agents}
+            hub_sites = [
+                site.id for site in enabled_sites
+                if site.anchor.agent_id and site.anchor.agent_id not in known_agents
+            ]
+            if hub_sites:
+                record(
+                    "window_branch_anchor", "窗口分支锚点", "error",
+                    "窗口图的分支站点必须落在图里的 agent 上，不能指向 hub：" + "、".join(hub_sites),
+                )
+            planner_site = any(
+                site.anchor.kind == "after_agent_turn" and site.anchor.agent_id == "planner"
+                for site in enabled_sites
+            )
+            if algorithm == "arpo" and not planner_site:
+                record(
+                    "window_planner_site", "Planner 分支", "error",
+                    "AgentFlow 窗口上的 ARPO 需要一个 after_agent_turn / planner 站点，才能从该步续写。",
+                )
+            elif algorithm == "arpo":
+                record("window_planner_site", "Planner 分支", "pass", "planner 回合后可续写。")
 
     _, missing = _dependency_status()
     if missing:

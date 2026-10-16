@@ -42,8 +42,14 @@ DEFAULT_TIR: Dict[str, Any] = {
 }
 
 
-def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]:
-    """Map MAS SamplePolicy onto algorithm.tir / rollout.n (no AGL import)."""
+def apply_sample_policy(config: Dict[str, Any], sampling: Any, algo: str | None = None) -> Dict[str, Any]:
+    """Map MAS SamplePolicy onto algorithm.tir / rollout.n (no AGL import).
+
+    ``algo`` is the rl.yaml's explicit algorithm. When it is a valid algo it
+    wins over ``sampling.mode``: the workflow only tunes group size and branch
+    shape, it never rewrites e.g. ``flow_grpo`` into ``arpo``. Branch sites are
+    dropped for non-branching algorithms so the effective config stays honest.
+    """
     if sampling is None:
         return config
     cfg = deepcopy(config)
@@ -75,7 +81,8 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
         "appo": "appo",
         "rae": "rae",
     }
-    algo = algo_map.get(mode, mode if mode in VALID_ALGOS else "grpo")
+    explicit = str(algo or "").lower().strip()
+    algo = explicit if explicit in VALID_ALGOS else algo_map.get(mode, mode if mode in VALID_ALGOS else "grpo")
     cfg = apply_algo_overlay(cfg, algo)
     from workflow.sampling.registry import sampling_adapters
 
@@ -98,7 +105,10 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any) -> Dict[str, Any]
         tir["max_branch_depth"] = max(1, int(max_depth))
     if expand is not None:
         tir["expand_in_runner"] = bool(expand)
-    tir["sites"] = [site.model_dump(mode="json") for site in policy.resolved_sites()]
+    if algo in BRANCHING_ALGOS:
+        tir["sites"] = [site.model_dump(mode="json") for site in policy.resolved_sites()]
+    else:
+        tir["sites"] = []
     cfg["algorithm"]["tir"] = tir
     return cfg
 
@@ -280,7 +290,9 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
     # algorithm.tir.multi_tool_bonus keeps its legacy read path (nothing
     # consumes it today besides this mirror), and the spec section below is
     # the canonical delivery surface going forward.
+    prior_reward = user_algo.get("reward") if isinstance(user_algo.get("reward"), dict) else {}
     algo_block["reward"] = _reward_section_from_tir(tir, user_tir)
+    _apply_reward_outcome(algo_block["reward"], prior_reward, algo)
     cfg["algorithm"] = algo_block
     if algo == "flow_grpo":
         # Trajectory outcome is already broadcast onto every turn by the VERL daemon.
@@ -304,6 +316,18 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
         trainer["experiment_name"] = f"{base_name}_{algo}"
     cfg["trainer"] = trainer
     return cfg
+
+
+def _apply_reward_outcome(section: Dict[str, Any], prior: Dict[str, Any], algo: str) -> None:
+    """A user-authored ``algorithm.reward.outcome`` survives re-application; otherwise
+    the preset decides (flow_grpo → AgentFlow's 0/1 outcome)."""
+    meta = dict(prior.get("meta") or {})
+    user_outcome = str(prior.get("outcome") or "").strip().lower()
+    if user_outcome and meta.get("outcome_source") != "preset":
+        section["outcome"] = user_outcome
+        return
+    section["outcome"] = "binary" if algo == "flow_grpo" else "hierarchical"
+    section["meta"] = {**dict(section.get("meta") or {}), "outcome_source": "preset"}
 
 
 def _reward_section_from_tir(tir: Dict[str, Any], user_tir: Dict[str, Any]) -> Dict[str, Any]:

@@ -6,7 +6,13 @@ load_dotenv()
 
 from google import genai
 from google.genai import types
-from .local_google_scraper import local_google_search
+from .local_google_scraper import (
+    build_query_variants,
+    http_duckduckgo_search,
+    local_google_search,
+    multi_backend_search,
+    sanitize_google_query,
+)
     
 from MAS.epc_aw.tools.base import BaseTool
 from MAS.epc_aw.engine.factory import create_llm_engine
@@ -33,7 +39,7 @@ BEST_PRACTICES = """
 # -------------------------------------------------------
 # 新增：如果 LOCAL_SEARCH=1，则使用你的本地抓取器
 # -------------------------------------------------------
-USE_LOCAL = True
+USE_LOCAL = os.getenv("LOCAL_SEARCH", "1").strip().lower() not in ("0", "false", "no")
 
 class Google_Search_Tool(BaseTool):
     def __init__(self, model_string=os.getenv("MODEL_Name")):
@@ -89,25 +95,40 @@ class Google_Search_Tool(BaseTool):
     # 新增：本地 Google 抓取执行
     # ------------------------------------------------------
     def _execute_local_search(self, query: str, add_citations_flag: bool = True):
-        # Step 1: 原始 JSON（自然结果）
-        raw_result = local_google_search(query)
+        # multi_backend_search sanitizes the query and falls back through
+        # chrome_google -> chrome_bing -> duckduckgo_http -> wikipedia_api.
+        raw_result = multi_backend_search(query)
         excluded_keywords = ["hugging", "openai", "grok", 'gaia', 'bamboogle']
         # excluded_keywords = ["openai", "grok"]
-        
+
         page_list = [
-            item 
+            item
             for item in raw_result.get("organic", [])
             # 使用 all() 和 generator expression 来确保链接不包含任何一个排除关键词
             if all(keyword not in item.get("link", "").lower() for keyword in excluded_keywords)
-        ]
-        for i in range(len(page_list)):
+        ] or list(raw_result.get("organic", []))
+        if not page_list:
+            raise RuntimeError(
+                f"search returned no organic results for query={query!r} "
+                f"(backend={raw_result.get('backend')})"
+            )
+        # Cap abstract fetches: each Web_Search call is slow; 3 pages is plenty
+        # for the summarizer and keeps execute() latency bounded.
+        max_abstract_pages = int(os.getenv("GOOGLE_SEARCH_MAX_ABSTRACT_PAGES", "3"))
+        for i in range(min(len(page_list), max_abstract_pages)):
             url = page_list[i].get("link", "")
-            abstract = self.web_rag_tool.execute(url=url, query=query)
+            try:
+                abstract = self.web_rag_tool.execute(url=url, query=query)
+            except Exception as e:
+                abstract = f"[abstract_fetch_failed] {e}"
             page_list[i]["abstract"] = abstract
+        # Items without an abstract still keep their SERP snippet.
         raw_result["organic"] = page_list
 
-        # Step 2: 转成 JSON 供 LLM 输入
+        # Step 2: 转成 JSON 供 LLM 输入（截断避免超长 prompt）
         json_text = json.dumps(raw_result, ensure_ascii=False, indent=2)
+        if len(json_text) > 24000:
+            json_text = json_text[:24000] + "\n... [truncated]"
 
         # Step 3: 用 LLM 做总结 + citation
         prompt = f"""
@@ -243,7 +264,12 @@ Now produce the final summarized answer with citations.
         # 最小改动：如果 LOCAL_SEARCH=1，则直接返回本地结果
         # ------------------------------------------------------
         if USE_LOCAL:
-            return self._execute_local_search(query, add_citations_flag)
+            try:
+                return self._execute_local_search(query, add_citations_flag)
+            except Exception as e:
+                msg = (f"Google_Search_Tool failed for query={query!r}: {e}")
+                print(msg)
+                return msg
 
         grounding_tool = types.Tool(google_search=types.GoogleSearch())
         config = types.GenerateContentConfig(tools=[grounding_tool])

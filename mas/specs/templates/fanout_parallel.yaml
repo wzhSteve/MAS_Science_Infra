@@ -7,7 +7,7 @@ hub:
   skills: []
 tools:
   - python_coder
-  - think
+  - base_generator
 agents:
   - id: planner
     kind: planner
@@ -15,12 +15,12 @@ agents:
     system_prompt: "可输出 next 列表以并行子任务。只输出 JSON：next, args, sub_goal, done。"
     tools:
       - python_coder
-      - think
+      - base_generator
     trainable: true
   - id: python_coder
     kind: tool
     trainable: false
-  - id: think
+  - id: base_generator
     kind: tool
     trainable: false
   - id: verifier
@@ -35,7 +35,7 @@ routers:
     output_contract: json
   - id: route_b
     candidates:
-      - think
+      - base_generator
     strategy: from_plan
     output_contract: json
 edges:

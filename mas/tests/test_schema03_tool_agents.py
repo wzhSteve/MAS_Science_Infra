@@ -20,7 +20,7 @@ class TestSchema03Sugar(unittest.TestCase):
     def test_old_yaml_expands_implicit_tool_agents(self):
         from workflow.spec import load_spec
 
-        for yaml_path in ("experiments/arpo_e2e/workflow.yaml", "experiments/demo/workflow.yaml"):
+        for yaml_path in (str(ROOT / "tests" / "fixtures" / "centralized_router.yaml"),):
             spec = load_spec(yaml_path)
             kinds = {a.id: a.kind for a in spec.agents}
             # centralized redesign: planner is the orchestrator (hub removed)
@@ -34,7 +34,7 @@ class TestSchema03Sugar(unittest.TestCase):
         from workflow.compiler import compile_spec, tool_agent_ids, trainable_agents
         from workflow.spec import load_spec
 
-        spec = load_spec("experiments/arpo_e2e/workflow.yaml")
+        spec = load_spec(str(ROOT / "tests" / "fixtures" / "centralized_router.yaml"))
         c = compile_spec(spec)
         self.assertTrue(c.ok, c.reason)
         self.assertEqual(sorted(tool_agent_ids(spec)), sorted(spec.tools))

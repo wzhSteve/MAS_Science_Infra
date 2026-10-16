@@ -97,6 +97,8 @@ class TestTrainCollectSplit(unittest.TestCase):
         self.assertTrue(compiled.multi_agent)
         source = (ROOT / "lit_tir_agent.py").read_text(encoding="utf-8")
         rollout = source.split("def rollout(", 1)[1].split("\n    def ", 1)[0]
+        self.assertIn("_rollout_with_bound_llm(", rollout)
+        rollout += source.split("def _rollout_with_bound_llm(", 1)[1].split("\n    def ", 1)[0]
         self.assertIn("run_episode(", rollout)
         self.assertIn("run_compiled_episode(", rollout)
         self.assertIn("agent_window_rollout", rollout)

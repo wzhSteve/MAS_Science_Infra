@@ -15,4 +15,4 @@ writable_root:
 - contracts
 - artifacts
 wraps: AgentFlow.PEV
-source: /root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow
+source: upload/AgentFlow-main/agentflow

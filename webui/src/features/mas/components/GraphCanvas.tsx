@@ -3,7 +3,7 @@ import {
   ReactFlow, Background, BackgroundVariant, ConnectionMode, MiniMap, Panel,
   useNodesInitialized, useReactFlow, useViewport, type ReactFlowProps, type XYPosition,
 } from '@xyflow/react';
-import { FlaskConical, GitBranch, Map, Maximize, Minus, Plus, Workflow } from 'lucide-react';
+import { FlaskConical, GitBranch, Map, Maximize, Minus, Plus, Workflow, BookOpen, Wrench } from 'lucide-react';
 import type { CanvasMode, GraphNode, GraphEdge, GraphNodePreset } from '../types';
 import { Button } from '../../../shared/ui/button';
 import AgentNode from './AgentNode';
@@ -28,10 +28,13 @@ type Props = Pick<ReactFlowProps<GraphNode, GraphEdge>,
   onModeChange: (mode: CanvasMode) => void;
   onDebug: () => void;
   debugOpen: boolean;
+  onFlowDoc: () => void;
+  flowDocOpen: boolean;
+  onToolTest: () => void;
 };
 
 export const GraphCanvas = memo(function GraphCanvas({
-  active, mode, onModeChange, onDebug, debugOpen, onAdd, onOpenLibrary, onError, ...flowProps
+  active, mode, onModeChange, onDebug, debugOpen, onFlowDoc, flowDocOpen, onToolTest, onAdd, onOpenLibrary, onError, ...flowProps
 }: Props) {
   const flow = useReactFlow<GraphNode, GraphEdge>();
   const { zoom } = useViewport();
@@ -107,6 +110,10 @@ export const GraphCanvas = memo(function GraphCanvas({
             <CanvasToolButton label={mode === 'workflow' ? '单题调试' : '切换到 Workflow 后进行单题调试'}
               disabled={mode !== 'workflow'} aria-pressed={debugOpen}
               onClick={onDebug}><FlaskConical size={18} /></CanvasToolButton>
+            <CanvasToolButton label="项目流程文档"
+              aria-pressed={flowDocOpen}
+              onClick={onFlowDoc}><BookOpen size={18} /></CanvasToolButton>
+            <CanvasToolButton label="测试 Tool Agent" onClick={onToolTest}><Wrench size={18} /></CanvasToolButton>
           </CanvasToolbarGroup>
         </CanvasToolbar>
       </Panel>

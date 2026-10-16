@@ -1,0 +1,6 @@
+kind: local
+model: Qwen3-4B
+base_url: http://127.0.0.1:8000/v1
+port: 8000
+model_path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+gpu_memory_utilization: 0.45

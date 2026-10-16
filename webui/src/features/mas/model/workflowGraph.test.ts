@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SamplingSpec, WorkflowSpec } from '../../../shared/api/types';
+import { DEFAULT_PLANNER_PROMPT, DEFAULT_VERIFIER_PROMPT } from './defaultPrompts';
 import { createEdgeRules } from './edgeRules';
 import { executableInfo, flowToWorkflow, workflowToFlow } from './workflowGraph';
 
@@ -288,5 +289,24 @@ describe('workflowGraph schema 0.3', () => {
       backend: 'llm',
       tier: 'pro',
     });
+  });
+
+  it('shows the default prompt when a saved planner or verifier prompt is empty', () => {
+    const workflow: WorkflowSpec = {
+      schema_version: '0.3',
+      topology: 'centralized',
+      entry_agent: 'planner',
+      hub: { role: 'planner', skills: [], system_prompt: '' },
+      tools: [],
+      agents: [
+        { id: 'planner', kind: 'planner', system_prompt: '' },
+        { id: 'verifier', kind: 'verifier', system_prompt: '  ' },
+        { id: 'base_generator', kind: 'tool', system_prompt: 'keep tool' },
+      ],
+      edges: [],
+    };
+    const graph = workflowToFlow(workflow);
+    expect(graph.nodes.find((node) => node.data.kind === 'planner')?.data.system_prompt).toBe(DEFAULT_PLANNER_PROMPT);
+    expect(graph.nodes.find((node) => node.data.kind === 'verifier')?.data.system_prompt).toBe(DEFAULT_VERIFIER_PROMPT);
   });
 });

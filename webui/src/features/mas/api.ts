@@ -12,13 +12,67 @@ export interface SampleDataResponse {
   tasks?: Array<{ id: string; question: string; source: string }>;
 }
 
-export interface EpcAwRuntimeConfig {
+export interface UserProjectRuntimeConfig {
   n?: number;
   max_steps?: number;
   max_time?: number;
   max_tokens?: number;
   temperature?: number;
   enabled_tools?: string[];
+  /** Read-only catalog from GET/PUT runtime; not persisted to yaml. */
+  allowed_tools?: string[];
+}
+
+/** Canonical executor tools (no Google). Used when API omits allowed_tools. */
+export const CANONICAL_ALLOWED_TOOLS = [
+  'Base_Generator_Tool',
+  'Python_Coder_Tool',
+  'Wikipedia_Search_Tool',
+  'Bing_Search_Tool',
+  'Web_Fetch_Tool',
+] as const;
+
+export function isBlockedRuntimeTool(tool: string): boolean {
+  return /google/i.test(tool);
+}
+
+/** Checkbox catalog: API allowed_tools, else the 5 canonical tools. Never Google. */
+export function resolveAllowedTools(allowed?: string[] | null): string[] {
+  const filtered = (allowed || []).filter((tool) => Boolean(tool) && !isBlockedRuntimeTool(tool));
+  return filtered.length ? filtered : [...CANONICAL_ALLOWED_TOOLS];
+}
+
+/** Checked tools: drop Google; empty list falls back to the catalog. */
+export function resolveEnabledTools(enabled?: string[] | null, allowed?: string[] | null): string[] {
+  const filtered = (enabled || []).filter((tool) => Boolean(tool) && !isBlockedRuntimeTool(tool));
+  return filtered.length ? filtered : resolveAllowedTools(allowed);
+}
+
+export interface UserProjectFlowDoc {
+  project_id: string;
+  title: string;
+  source_root: string;
+  agents: Array<{ id: string; label: string }>;
+  steps: Array<{ seq: number; agent: string; method: string; prompt?: string; desc: string; runtime_active?: boolean }>;
+  prompts: Array<{ agent: string; name: string; path: string; content: string; error?: string }>;
+}
+
+/** @deprecated Use UserProjectRuntimeConfig */
+export type EpcAwRuntimeConfig = UserProjectRuntimeConfig;
+
+export interface ToolAgentTestRequest {
+  agent_id: string;
+  tier: string;
+  args: Record<string, unknown>;
+  fetch_top_n?: number;
+}
+
+export interface ToolAgentTestResponse {
+  requested_tier: string;
+  resolved_tier: string;
+  output: string;
+  elapsed_ms: number;
+  ok: boolean;
 }
 
 export const masApi = {
@@ -46,6 +100,10 @@ export const masApi = {
   sampleData: (body: { parquet?: string; data_n?: number; source?: string }, signal?: AbortSignal) =>
     request<SampleDataResponse>(
       '/api/mas/sample-data', { method: 'POST', body: JSON.stringify(body), signal }),
+  toolAgentTest: (body: ToolAgentTestRequest, signal?: AbortSignal) =>
+    request<ToolAgentTestResponse>('/api/mas/tool-agents/test', {
+      method: 'POST', body: JSON.stringify(body), signal,
+    }),
   evalSources: (id: string, signal?: AbortSignal) =>
     request<EvalSources>(`/api/mas/eval-sources?${experimentQuery(id)}`, { signal }),
   evalRun: (id: string, body: { path: string; limit: number }) =>
@@ -56,12 +114,14 @@ export const masApi = {
       { method: 'POST' },
     ),
   userProjectRuntime: (projectId: string, signal?: AbortSignal) =>
-    request<EpcAwRuntimeConfig>(`/api/mas/user-projects/${encodeURIComponent(projectId)}/runtime`, { signal }),
-  putUserProjectRuntime: (projectId: string, body: EpcAwRuntimeConfig) =>
-    request<EpcAwRuntimeConfig>(`/api/mas/user-projects/${encodeURIComponent(projectId)}/runtime`, {
+    request<UserProjectRuntimeConfig>(`/api/mas/user-projects/${encodeURIComponent(projectId)}/runtime`, { signal }),
+  putUserProjectRuntime: (projectId: string, body: UserProjectRuntimeConfig) =>
+    request<UserProjectRuntimeConfig>(`/api/mas/user-projects/${encodeURIComponent(projectId)}/runtime`, {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
+  userProjectFlowDoc: (projectId: string, signal?: AbortSignal) =>
+    request<UserProjectFlowDoc>(`/api/mas/user-projects/${encodeURIComponent(projectId)}/flow-doc`, { signal }),
 };
 
 export interface EvalSources {

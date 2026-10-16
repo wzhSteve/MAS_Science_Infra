@@ -17,13 +17,14 @@ EXECUTOR_LOCAL = "executor"
 CONTEXT_PY = r'''"""Shared EPC-AW episode context. One SystemMemory for planner/executor/diagnoser.
 
 Lives in user_space. May import MAS.epc_aw after putting the uploaded or
-ref_Rep/EPC-AW tree on sys.path. Collect / eval / sampling call run_window only.
+upload/ EPC-AW tree on sys.path. Collect / eval / sampling call run_window only.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -55,7 +56,7 @@ def _text(*vals: Any) -> str:
 
 
 def _use_mock() -> bool:
-    flag = os.environ.get("SCIENCE_EPC_AW_MOCK") or os.environ.get("SCIENCE_HIVE_MOCK") or ""
+    flag = os.environ.get("SCIENCE_EPC_AW_MOCK") or ""
     return flag.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -64,7 +65,7 @@ DEFAULT_RUNTIME: Dict[str, Any] = {
     "max_steps": 20,
     "max_time": 3000,
     "max_tokens": 4000,
-    "temperature": 0.0,
+    "temperature": 0.7,
     "enabled_tools": [
         "Base_Generator_Tool",
         "Python_Coder_Tool",
@@ -97,14 +98,13 @@ _SEARCH_FALLBACK = (
     "Wikipedia_Search_Tool",
     "Bing_Search_Tool",
     "Web_Search_Tool",
-    "Google_Search_Tool",
 )
 
 
 def _is_transport_failure(output: Any) -> bool:
     """Search host did not answer. Distinct from a Python snippet timeout."""
     text = str(output or "")
-    if text.startswith("Wikipedia unreachable:") or text.startswith("Bing unreachable:"):
+    if text.startswith("Wikipedia unreachable:"):
         return True
     return any(marker in text for marker in _TRANSPORT_MARKERS)
 
@@ -216,11 +216,6 @@ def _import_root() -> Optional[Path]:
             mas = solver.parent.parent
             if mas.name == "MAS":
                 return mas.parent
-    for start in (here, Path.cwd()):
-        for parent in [start, *start.parents]:
-            cand = parent / "ref_Rep" / "EPC-AW"
-            if (cand / "MAS" / "epc_aw" / "solver.py").is_file():
-                return cand
     return None
 
 
@@ -290,6 +285,9 @@ def _map_llm_env() -> None:
     os.environ["OPENAI_API_KEY"] = key
 
 
+_NO_THINK_SUFFIX = "\n/no_think"
+
+
 def _merge_no_think(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     extra = dict(kwargs.get("extra_body") or {})
     extra["enable_thinking"] = False
@@ -301,6 +299,28 @@ def _merge_no_think(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     extra["reasoning"]["enabled"] = False
     out = dict(kwargs)
     out["extra_body"] = extra
+    # Belt and braces: vLLM's OpenAI layer drops unknown fields like
+    # ``enable_thinking``, and the LiteLLM proxy may strip ``extra_body``
+    # entirely. Qwen3's chat template also honors the soft ``/no_think``
+    # switch inside the message content, so inject it into the last user
+    # message as well. Idempotent: never append twice.
+    messages = out.get("messages")
+    if isinstance(messages, list) and messages:
+        for item in reversed(messages):
+            if not isinstance(item, dict) or item.get("role") != "user":
+                continue
+            content = item.get("content")
+            if isinstance(content, str):
+                if not content.rstrip().endswith("/no_think"):
+                    item["content"] = content.rstrip() + _NO_THINK_SUFFIX
+            elif isinstance(content, list):
+                for part in reversed(content):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text = str(part.get("text") or "")
+                        if not text.rstrip().endswith("/no_think"):
+                            part["text"] = text.rstrip() + _NO_THINK_SUFFIX
+                        break
+            break
     return out
 
 
@@ -350,6 +370,7 @@ def _patch_one_engine(eng: Any) -> None:
                 pass
     _disable_engine_thinking(eng)
     _wrap_engine_completion_budget(eng)
+    _wrap_engine_llm_recorder(eng)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -400,6 +421,83 @@ def _budget_wrapper(orig: Any) -> Any:
 
     wrapped._science_budget = True  # type: ignore[attr-defined]
     return wrapped
+
+
+# --- Fix E: LLM call recording (prompt head / model / n / response head) ----
+_LLM_CALL_LOG: List[Dict[str, Any]] = []
+_LLM_CALL_LOG_CAP = 64
+
+
+def _prompt_head(prompt: Any, limit: int = 500) -> str:
+    if isinstance(prompt, list):
+        text = " ".join(str(x) for x in prompt if not isinstance(x, (bytes, bytearray)))
+    else:
+        text = str(prompt if prompt is not None else "")
+    text = " ".join(text.split())
+    return text[:limit]
+
+
+def _response_head(response: Any, limit: int = 300) -> str:
+    if isinstance(response, list):
+        text = " ".join(str(x) for x in response if not isinstance(x, (bytes, bytearray)))
+    else:
+        text = str(response if response is not None else "")
+    text = " ".join(text.split())
+    return text[:limit]
+
+
+def record_llm_call(entry: Dict[str, Any]) -> None:
+    """Append one _generate_text record to the episode-level ring buffer."""
+    _LLM_CALL_LOG.append(dict(entry))
+    if len(_LLM_CALL_LOG) > _LLM_CALL_LOG_CAP:
+        del _LLM_CALL_LOG[: len(_LLM_CALL_LOG) - _LLM_CALL_LOG_CAP]
+
+
+def drain_llm_calls() -> List[Dict[str, Any]]:
+    """Return and clear records logged since the last drain."""
+    out = list(_LLM_CALL_LOG)
+    _LLM_CALL_LOG.clear()
+    return out
+
+
+def _wrap_engine_llm_recorder(eng: Any) -> None:
+    """Wrap eng._generate_text (already budget-wrapped) so each call is logged."""
+    fn = getattr(eng, "_generate_text", None)
+    if fn is None or getattr(fn, "_science_llm_log", False):
+        return
+    orig = getattr(fn, "__func__", fn)
+
+    def wrapped(self: Any, prompt: Any, *args: Any, **kwargs: Any) -> Any:
+        model = str(getattr(self, "model_string", "") or "")
+        n = kwargs.get("n") if isinstance(kwargs.get("n"), int) else 1
+        try:
+            resp = orig(self, prompt, *args, **kwargs)
+        except Exception as exc:
+            record_llm_call(
+                {
+                    "model": model,
+                    "n": n,
+                    "prompt_head": _prompt_head(prompt),
+                    "response_head": f"{type(exc).__name__}: {exc}"[:300],
+                }
+            )
+            raise
+        response_head = resp
+        if isinstance(resp, list) and resp:
+            response_head = resp[0]
+        record_llm_call(
+            {
+                "model": model,
+                "n": n,
+                "prompt_head": _prompt_head(prompt),
+                "response_head": _response_head(response_head),
+            }
+        )
+        return resp
+
+    wrapped._science_llm_log = True  # type: ignore[attr-defined]
+    wrapped._science_budget = True  # type: ignore[attr-defined]
+    eng._generate_text = wrapped.__get__(eng, type(eng))  # type: ignore[method-assign]
 
 
 def _wrap_engine_completion_budget(eng: Any) -> None:
@@ -1024,94 +1122,22 @@ def _google_navigate(driver: Any, raw_get: Any, url: str, timeout_s: float, args
 
 
 def _patch_google_chrome_or_demote(enabled_tools: List[str]) -> List[str]:
-    """Inject Chrome binary into scraper, or drop Google_Search_Tool when missing."""
-    tools = [str(item) for item in (enabled_tools or []) if str(item).strip()]
-    chrome = _find_chrome_binary()
-    if chrome:
-        os.environ.setdefault("CHROME_BINARY", chrome)
-        try:
-            from tools.google_search import local_google_scraper as scraper_mod  # type: ignore
-        except Exception:
-            scraper_mod = None
-        if scraper_mod is not None and not getattr(scraper_mod.get_stealth_driver, "_science_chrome_bin", False):
-            major = _chrome_major(chrome)
-
-            def get_stealth_driver(*args: Any, **kwargs: Any) -> Any:
-                import undetected_chromedriver as uc  # type: ignore
-
-                options = uc.ChromeOptions()
-                options.page_load_strategy = "eager"
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--disable-gpu")
-                options.add_argument("--window-size=1366,768")
-                options.add_argument("--headless=new")
-                options.add_argument("--disable-blink-features=AutomationControlled")
-                profile_path = os.path.abspath(f"./chrome_profile/{int(__import__('time').time())}")
-                os.makedirs(profile_path, exist_ok=True)
-                options.add_argument(f"--user-data-dir={profile_path}")
-                launch: Dict[str, Any] = {
-                    "options": options,
-                    "browser_executable_path": chrome,
-                    "headless": True,
-                }
-                if major:
-                    launch["version_main"] = major
-                driver = uc.Chrome(**launch)
-                try:
-                    driver.set_page_load_timeout(20)
-                except Exception:
-                    pass
-                raw_get = driver.get
-
-                def get(url: str = "", *args: Any, **kwargs: Any) -> Any:
-                    return _google_navigate(driver, raw_get, url, 20.0, args, kwargs, profile_path)
-
-                driver.get = get  # type: ignore[method-assign]
-                try:
-                    driver.execute_cdp_cmd(
-                        "Page.addScriptToEvaluateOnNewDocument",
-                        {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
-                    )
-                except Exception:
-                    pass
-                return driver, profile_path
-
-            get_stealth_driver._science_chrome_bin = True  # type: ignore[attr-defined]
-            scraper_mod.get_stealth_driver = get_stealth_driver  # type: ignore[method-assign]
-        return tools
-    if "Google_Search_Tool" in tools:
-        tools = [name for name in tools if name != "Google_Search_Tool"]
-        _progress("skip Google_Search_Tool: Chrome binary not found")
-    return tools
+    """Google search is removed. Drop the name if an old list still contains it."""
+    return [
+        str(item) for item in (enabled_tools or [])
+        if str(item).strip() and str(item) != "Google_Search_Tool"
+    ]
 
 
 def _patch_google_search_model_string() -> None:
-    """ref_Rep Google tool uses self.model_string in USE_LOCAL path but never sets it."""
-    try:
-        from tools.google_search.tool import Google_Search_Tool  # type: ignore
-    except Exception:
-        return
-    if getattr(Google_Search_Tool.__init__, "_science_model_fix", False):
-        return
-    orig = Google_Search_Tool.__init__
+    """Google search is removed. Kept as a no-op for existing call sites."""
+    return None
 
-    def _init(self: Any, model_string: Any = None, *args: Any, **kwargs: Any) -> None:
-        model = model_string or os.environ.get("MODEL_Name") or os.environ.get("MODEL_NAME") or os.environ.get("OPENAI_MODEL")
-        orig(self, model, *args, **kwargs)
-        if getattr(self, "model_string", None) is None:
-            try:
-                self.model_string = model
-            except Exception:
-                pass
-        if getattr(self, "search_model", None) is None:
-            try:
-                self.search_model = model
-            except Exception:
-                pass
 
-    _init._science_model_fix = True  # type: ignore[attr-defined]
-    Google_Search_Tool.__init__ = _init  # type: ignore[method-assign]
+def _fix_google_model_string(_cls: Any) -> None:
+    return None
+
+
 
 
 _FAST_TIMEOUT = (3, 8)
@@ -1184,34 +1210,19 @@ def _html_to_text(html: str) -> str:
     return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
 
 
-_BING_SKIP = ("bing.com", "microsoft.com", "msn.com", "live.com", "microsoftonline")
 _DISPATCH_TOOLS = {
     "Bing_Search_Tool": "bing",
-    "Google_Search_Tool": "bing",
     "Wikipedia_Search_Tool": "wiki",
     "Web_Fetch_Tool": "fetch",
     "Web_Search_Tool": "fetch",
 }
 _DISPATCH_META: Dict[str, Dict[str, Any]] = {
-    "Bing_Search_Tool": {
-        "tool_name": "Bing_Search_Tool",
-        "tool_description": (
-            "Search Bing and return up to 5 hits with title, url, and snippet. "
-            "Does not open those pages. If a snippet is not enough, call Web_Fetch_Tool "
-            "with one of the urls on the next step."
-        ),
-        "tool_version": "1.0.0",
-        "input_types": {"query": "str - the search query."},
-        "output_type": "str - numbered hits, each with title, url, and snippet.",
-        "demo_commands": [{"command": 'execution = tool.execute(query="Citibank founded")', "description": "Search Bing."}],
-        "require_llm_engine": False,
-    },
     "Web_Fetch_Tool": {
         "tool_name": "Web_Fetch_Tool",
         "tool_description": (
-            "Open exactly one url copied from an earlier Bing or Wikipedia hit. "
-            "HTML returns text plus image urls. An image response returns type and size only. "
-            "PDF returns its text layer. Requires url. This tool does not search."
+            "Input is a URL. Opens exactly that page and extracts its readable text content "
+            "(HTML text, image metadata, or PDF text layer). This tool does not search; "
+            "get a url from Bing_Search_Tool or Wikipedia_Search_Tool first."
         ),
         "tool_version": "1.0.0",
         "input_types": {
@@ -1228,25 +1239,30 @@ _DISPATCH_META: Dict[str, Dict[str, Any]] = {
     "Wikipedia_Search_Tool": {
         "tool_name": "Wikipedia_Search_Tool",
         "tool_description": (
-            "Search Wikipedia titles only. Returns title, url, and snippet. "
-            "Does not open the page. Call Web_Fetch_Tool with one url on a later step if the snippet is not enough."
+            "Wikipedia search. Returns up to 10 entries, each with a title, its URL, "
+            "and a short truncated description. Does not open pages. "
+            "Call Web_Fetch_Tool with one url on a later step to read a page."
         ),
         "tool_version": "1.0.0",
         "input_types": {"query": "str - the search query."},
-        "output_type": "str - numbered hits, each with title, url, and snippet.",
+        "output_type": "str - numbered entries with title, URL, and truncated description.",
         "demo_commands": [{"command": 'execution = tool.execute(query="Citibank")', "description": "Search Wikipedia."}],
         "require_llm_engine": False,
     },
+    "Bing_Search_Tool": {
+        "tool_name": "Bing_Search_Tool",
+        "tool_description": (
+            "Bing web search. Returns up to 10 entries, each with a title, its URL, "
+            "and a short truncated description. Does not open pages. "
+            "If a title is promising, call Web_Fetch_Tool with that url on the next step."
+        ),
+        "tool_version": "1.0.0",
+        "input_types": {"query": "str - the search query."},
+        "output_type": "str - numbered entries with title, URL, and truncated description.",
+        "demo_commands": [{"command": 'execution = tool.execute(query="Citibank founded")', "description": "Search the web with Bing."}],
+        "require_llm_engine": False,
+    },
 }
-
-
-def _format_hits(hits: List[Dict[str, str]]) -> str:
-    lines: List[str] = []
-    for index, hit in enumerate(hits, start=1):
-        lines.append(f"{index}. title: {hit.get('title') or ''}")
-        lines.append(f"   url: {hit.get('url') or ''}")
-        lines.append(f"   snippet: {hit.get('snippet') or ''}")
-    return "\n".join(lines)
 
 
 def _strip_tags(text: str) -> str:
@@ -1257,64 +1273,49 @@ def _strip_tags(text: str) -> str:
     return " ".join(html_lib.unescape(plain).split())
 
 
-def _parse_bing_html(html: str, limit: int = 5) -> List[Dict[str, str]]:
-    import re
-
-    pattern = re.compile(
-        r'<h2[^>]*>\s*<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>\s*</h2>\s*<div class="b_caption"[^>]*>\s*<p[^>]*>(.*?)</p>',
-        re.S | re.I,
-    )
-    hits: List[Dict[str, str]] = []
-    for url, title, snippet in pattern.findall(html or ""):
-        if any(host in url for host in _BING_SKIP):
-            continue
-        title_text = _strip_tags(title)
-        snippet_text = _strip_tags(snippet)
-        if not title_text:
-            continue
-        hits.append({"title": title_text, "url": url, "snippet": snippet_text})
-        if len(hits) >= limit:
-            break
-    return hits
-
-
 def _bing_hits(query: str) -> str:
-    """Bing result cards only. Does not open the result URLs."""
+    """Bing web search: top-10 (title, url) pairs. Does not open the URLs.
+
+    Delegates to the mas.tools.search Bing kernel (same 7890 proxy chain as
+    _fast_get's environment) so both projects share one SERP implementation.
+    No Wikipedia fallback: a Bing failure is an explicit failure.
+    """
     q = str(query or "").strip()
     if not q:
         return "Bing_Search_Tool requires a query"
     try:
-        resp = _fast_get("https://cn.bing.com/search", {"q": q, "count": "5"})
-        resp.raise_for_status()
-        hits = _parse_bing_html(getattr(resp, "text", "") or "")
-        return _format_hits(hits) or f"No Bing results for {q}"
+        from mas.tools.search import bing_search
+
+        return str(bing_search(q, 10) or "")
     except Exception as exc:
         return f"Bing unreachable: {exc}"
 
 
 def _wikipedia_hits(query: str) -> str:
-    """One MediaWiki search. Returns titles, urls, and snippets. Does not open pages."""
+    """One MediaWiki search. Title, URL, and truncated snippet. Does not open pages."""
     q = str(query or "").strip()
     if not q:
         return "Wikipedia_Search_Tool requires a query"
     try:
+        from mas.tools.search import truncate_description
+
         search = _fast_get(
             "https://en.wikipedia.org/w/api.php",
-            {"action": "query", "list": "search", "srsearch": q, "srlimit": "5", "format": "json"},
+            {"action": "query", "list": "search", "srsearch": q, "srlimit": "10", "format": "json"},
         )
         search.raise_for_status()
-        raw = ((search.json().get("query") or {}).get("search") or [])[:5]
-        hits: List[Dict[str, str]] = []
-        for item in raw:
+        raw = ((search.json().get("query") or {}).get("search") or [])[:10]
+        lines = [f"wikipedia results for: {q}"]
+        for i, item in enumerate(raw, 1):
             title = str(item.get("title") or "").strip()
             if not title:
                 continue
-            hits.append({
-                "title": title,
-                "url": "https://en.wikipedia.org/wiki/" + title.replace(" ", "_"),
-                "snippet": _strip_tags(str(item.get("snippet") or "")),
-            })
-        return _format_hits(hits) or f"No Wikipedia results for {q}"
+            lines.append(f"{i}. {title}")
+            lines.append("   URL: https://en.wikipedia.org/wiki/" + title.replace(" ", "_"))
+            desc = truncate_description(str(item.get("snippet") or ""))
+            if desc:
+                lines.append(f"   {desc}")
+        return "\n".join(lines) or f"No Wikipedia results for {q}"
     except Exception as exc:
         return f"Wikipedia unreachable: {exc}"
 
@@ -1387,17 +1388,30 @@ def _web_fetch(query: str, url: str) -> str:
     target = str(url or "").strip()
     if not target:
         return "Web_Fetch_Tool requires a url"
+    resp: Any = None
     try:
         import requests
-
-        resp = requests.get(
-            target,
-            timeout=_FAST_TIMEOUT,
-            headers={"User-Agent": "MAS-Science-Infra/1.0"},
-            stream=True,
-        )
     except Exception as exc:
         return f"Web fetch failed: {exc}"
+    # Same proxy-chain fallback as _fast_get (SSH RemoteForward / local
+    # Clash first, direct last): bare direct egress is blocked on this
+    # host, so try every candidate before giving up.
+    errors: List[str] = []
+    for proxies in _proxy_candidates():
+        label = (proxies or {}).get("http") or "direct"
+        try:
+            resp = requests.get(
+                target,
+                timeout=_FAST_TIMEOUT,
+                headers={"User-Agent": "MAS-Science-Infra/1.0"},
+                stream=True,
+                proxies=proxies,
+            )
+            break
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+    if resp is None:
+        return f"Web fetch failed: {'; '.join(errors[-4:]) if errors else 'no route'}"
     try:
         status = int(getattr(resp, "status_code", 0) or 0)
         if status >= 400:
@@ -1479,19 +1493,116 @@ def _call_args(command: str, fallback_query: str, context: str) -> Tuple[str, st
     return query, url
 
 
+# --- Query sanitizing (mirrors agentflow/adapted/context.py) ---------------
+# Dataset prompts append instruction tails ("?When ready, output the final
+# answer...") and planners prepend imperatives ("Search the web for: ...").
+# Both pollute SERP queries; strip them before any search.
+_QUERY_TAIL_RE = re.compile(
+    r"(?i)\??\s*when\s+ready\s*,?\s*output\s+the\s+final\s+answer.*$"
+    r"|\?\s*when\s+ready\b.*$"
+    r"|do\s+not\s+generate\s+any\s+content\b.*$",
+    re.S,
+)
+_QUERY_PREFIX_RE = re.compile(
+    r"(?i)^\s*(?:please\s+)?"
+    r"(?:search\s+(?:the\s+web|wikipedia|the\s+internet|online)?\s*for"
+    r"|look\s*up"
+    r"|find\s+(?:information\s+)?(?:about|on)"
+    r"|fetch\s+(?:the\s+)?(?:url|page|website)"
+    r"|compute"
+    r"|calculate"
+    r")\s*[:：]?\s*"
+)
+_QUERY_STOPWORDS = {
+    "the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or",
+    "is", "was", "are", "were", "be", "been", "his", "her", "its", "their",
+    "before", "after", "answering", "please", "prefer",
+    "search", "web", "internet", "online", "look", "up", "find", "about",
+    "when", "ready", "output", "final", "answer", "generate", "any",
+    "content", "tag", "tags", "enclosed", "do", "not", "did",
+    "what", "which", "who", "where", "whom", "whose", "how",
+}
+
+
+def _condense_query(query: str) -> str:
+    """Strip instruction tails / imperative prefixes, cut at the first "?",
+    and keep an entity-first keyword window for SERP queries."""
+    q = str(query or "").strip()
+    if not q:
+        return q
+    text = _QUERY_TAIL_RE.sub("", q)
+    text = _QUERY_PREFIX_RE.sub("", text).strip()
+    if len(text) <= 48 and "?" not in text:
+        return text
+    text = text.split("?", 1)[0]
+    text = re.sub(r"(?i)^(what|which|who|where|when|whom|whose|how)\s+(is|was|are|were|did|does|do|has|have|had)\b", " ", text)
+    text = re.sub(r"(?i)\b(the actor who|the actress who|the person who|who played|that appeared in|which appeared in|use (wikipedia|web|google)[^.]*\.?)", " ", text)
+    text = re.sub(r"[?.!]+$", " ", text)
+    text = re.sub(r"^(?:What|Which|Who|Where|When|Whom|Whose|How)\s+", "", text, flags=re.I)
+    words = text.split()
+    keep: List[str] = []
+    for w in words:
+        lowered = w.lower().strip(".,;:!?\"'()")
+        if lowered in _QUERY_STOPWORDS:
+            continue
+        is_entity = bool(re.match(r"^[A-Z0-9]", w)) or w.isdigit()
+        is_year = bool(re.match(r"^\d{4}$", w))
+        if is_entity and not is_year:
+            keep.append(w)
+        elif is_year and keep:
+            keep.append(w)
+        elif keep and len(keep) <= 5 and w not in ("played", "role", "title"):
+            continue
+    keep2 = [w for w in (keep or words) if w.lower().strip(".,;:!?\"'()") not in _QUERY_STOPWORDS]
+    if len(keep2) > 8:
+        keep2 = keep2[:8]
+    return " ".join(keep2).strip() or q
+
+
+# SERP-list detector shared by the verify stop-gate below.
+_SERP_LIST_PREFIXES = (
+    "bing results for:",
+    "wikipedia results for:",
+)
+
+
+def _looks_like_serp_list(text: str) -> bool:
+    head = str(text or "").lstrip()[:120].lower()
+    return any(head.startswith(p.lower()) for p in _SERP_LIST_PREFIXES)
+
+
+def _serp_first_url(text: str) -> str:
+    """First http(s) URL from a SERP list body (title+URL lines). Empty if none."""
+    import re
+
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Only lines that carry a URL payload (SERP entries or "   URL: ...").
+        if "http://" not in stripped and "https://" not in stripped:
+            continue
+        match = re.search(r"https?://[^\s'\"<>)]+", stripped)
+        if match:
+            return match.group(0).rstrip(".,)")
+    return ""
+
+
 def _run_dispatch(tool_name: str, query: str, url: str) -> str:
+    if tool_name == "Google_Search_Tool":
+        return "No result was generated because the tool was not found: Google_Search_Tool"
     kind = _DISPATCH_TOOLS.get(tool_name)
     if kind == "bing":
-        return _bing_hits(query)
+        return _bing_hits(_condense_query(query))
     if kind == "wiki":
-        return _wikipedia_hits(query)
+        return _wikipedia_hits(_condense_query(query))
     if kind == "fetch":
         return _web_fetch(query, url)
     return f"No result was generated because the tool was not found: {tool_name}"
 
 
 def _register_dispatch_tools(solver: Any, enabled: Optional[List[str]] = None) -> None:
-    """Expose Bing and Web_Fetch without a ref_Rep package.
+    """Expose Google/Wikipedia search and Web_Fetch without the upstream tool package.
 
     Only names listed in the runtime enabled_tools are added. An imported
     Web_Search_Tool is not promoted just because Wikipedia was loaded.
@@ -1518,8 +1629,9 @@ def _register_dispatch_tools(solver: Any, enabled: Optional[List[str]] = None) -
     if isinstance(wiki, dict):
         wiki = dict(wiki)
         wiki["tool_description"] = (
-            "Search Wikipedia titles only. Returns title, url, and snippet. "
-            "Does not open the page. Call Web_Fetch_Tool with one url on a later step if the snippet is not enough."
+            "Wikipedia search. Returns up to 10 entries, each with a title, its URL, "
+            "and a short truncated description. Does not open pages. "
+            "Call Web_Fetch_Tool with one url on a later step to read a page."
         )
         wiki["demo_commands"] = [{"command": 'execution = tool.execute(query="Citibank")', "description": "Search Wikipedia."}]
         meta["Wikipedia_Search_Tool"] = wiki
@@ -1572,7 +1684,7 @@ def _guard_wikipedia_sys_exit() -> None:
 def _build_real() -> Dict[str, Any]:
     root = _import_root()
     if root is None:
-        raise ImportError("EPC-AW MAS not found in upload/ or ref_Rep/EPC-AW")
+        raise ImportError("EPC-AW MAS not found in upload/ (set SCIENCE_EPC_AW_DIR or upload EPC-AW-main)")
     _ensure_import_paths(root)
     _map_llm_env()
     os.environ.setdefault("ENABLE_THINKING", "0")
@@ -1703,6 +1815,7 @@ class EpcAwEpisodeContext:
         self.json_data = {}
         self.last_trace = {}
         self._active_question = ""
+        drain_llm_calls()
         memory = self.system_memory
         if hasattr(memory, "obtained_information") and isinstance(getattr(memory, "obtained_information", None), list):
             memory.obtained_information.clear()
@@ -1946,6 +2059,20 @@ class EpcAwEpisodeContext:
         except Exception:
             pass
 
+    def _drain_llm_calls(self) -> Dict[str, Any]:
+        """Fix E: collect _generate_text records for this window's trace."""
+        calls = drain_llm_calls()
+        summaries = [
+            {
+                "model": str(c.get("model") or ""),
+                "n": int(c.get("n") or 1),
+                "prompt_head": str(c.get("prompt_head") or "")[:500],
+                "response_head": str(c.get("response_head") or "")[:300],
+            }
+            for c in calls
+        ]
+        return {"count": len(summaries), "calls": summaries}
+
     def plan_window(self, message: Any) -> Dict[str, Any]:
         self.last_trace = {}
         self.hydrate_from_message(message)
@@ -1961,6 +2088,59 @@ class EpcAwEpisodeContext:
             self._active_question = question
         self.question = question
         self.step_count += 1
+        # --- Fix D: search→fetch hard constraint state machine -----------------
+        # If the previous round ran a search tool and its output is still a raw
+        # SERP list (titles+URLs) that no fetch/generator has digested yet, this
+        # round is forced to Web_Fetch_Tool on the first SERP URL — the LLM does
+        # not get to pick (mirrors agentflow/adapted/context.py).
+        forced_fetch_url = ""
+        prev_output = str(self.last_tool_output or "")
+        if (
+            self.step_count > 1
+            and str(self.last_tool_name or "") in ("Wikipedia_Search_Tool", "Web_Search_Tool", "Bing_Search_Tool")
+            and _looks_like_serp_list(prev_output)
+            and "Web_Fetch_Tool" in self._available_tools()
+            and "Web_Fetch_Tool" not in self.failed_tools
+            and not _is_transport_failure(prev_output)
+        ):
+            forced_fetch_url = _serp_first_url(prev_output)
+        if forced_fetch_url:
+            prev_search_tool = str(self.last_tool_name or "")
+            self.last_trace["forced_fetch"] = {"url": forced_fetch_url, "from": prev_search_tool}
+            self.last_context = str(self.last_context or question)
+            self.last_sub_goal = f"Fetch {forced_fetch_url} and extract the facts needed to answer the current step"
+            self.last_tool_name = "Web_Fetch_Tool"
+            self.tool_available = True
+            self.last_trace.update(
+                {
+                    "outline": self.system_memory.get_outline() if hasattr(self.system_memory, "get_outline") else {},
+                    "tool": "Web_Fetch_Tool",
+                    "context": self.last_context,
+                    "sub_goal": self.last_sub_goal,
+                    "tool_available": True,
+                    "forced_fetch": {"url": forced_fetch_url, "from": prev_search_tool},
+                }
+            )
+            self.last_trace["llm_calls"] = self._drain_llm_calls()
+            return {
+                "kind": "plan_step",
+                "payload": {
+                    "next": EXECUTOR_ID,
+                    "args": {
+                        "question": question,
+                        "context": self.last_context,
+                        "sub_goal": self.last_sub_goal,
+                        "tool_name": "Web_Fetch_Tool",
+                        "tool_available": True,
+                        "query": "",
+                        "url": forced_fetch_url,
+                    },
+                    "sub_goal": self.last_sub_goal,
+                    "done": False,
+                    "trace": dict(self.last_trace),
+                },
+            }
+        # --- End Fix D state machine -------------------------------------------
         _progress("正在生成下一步")
         self._analyze_once(question)
         target = _first_outline_target(self.system_memory)
@@ -2036,6 +2216,7 @@ class EpcAwEpisodeContext:
         )
         if "bts" not in self.last_trace:
             self.last_trace["bts"] = {"n": _plan_n() if not isinstance(plan, list) else max(1, len(plan)), "selected": "0"}
+        self.last_trace["llm_calls"] = self._drain_llm_calls()
         return {
             "kind": "plan_step",
             "payload": {
@@ -2077,6 +2258,7 @@ class EpcAwEpisodeContext:
                 "command": self.last_command,
                 "output": output,
                 "analysis": "skipped execute_tool_command",
+                "llm_calls": self._drain_llm_calls(),
             }
             return {
                 "kind": "tool_result",
@@ -2103,6 +2285,7 @@ class EpcAwEpisodeContext:
         if _is_llm_error(command_blob):
             self.last_trace["llm_error"] = command_blob
             output = f"llm error: {_llm_error_text(command_blob)}"
+            self.last_trace["llm_calls"] = self._drain_llm_calls()
             return {
                 "kind": "tool_result",
                 "payload": {
@@ -2154,6 +2337,7 @@ class EpcAwEpisodeContext:
             "analysis": self.last_analysis,
             "explanation": self.last_explanation,
             "failed_tools": list(self.failed_tools),
+            "llm_calls": self._drain_llm_calls(),
         }
         return {
             "kind": "tool_result",
@@ -2202,6 +2386,19 @@ class EpcAwEpisodeContext:
         if new_flag and new_info and hasattr(self.system_memory, "add_obtained_information"):
             self.system_memory.add_obtained_information(new_info)
         ready = str(conclusion).strip().upper() == "STOP" and bool(new_flag) and self.step_count > 1
+        # Stop-gate: a bare SERP list is titles+URLs, not a digested answer.
+        # Reject STOP while steps remain and no generator/digested evidence
+        # exists (mirrors agentflow/adapted/context.py).
+        if ready and _looks_like_serp_list(self.last_tool_output or "") and self.step_count < int(self.max_steps or _max_steps()):
+            got_answer = False
+            for item in (self._obtained() or []):
+                chunk = str(item or "")
+                if chunk.strip() and not _looks_like_serp_list(chunk):
+                    got_answer = True
+                    break
+            if not got_answer:
+                ready = False
+                self.last_trace["stop_gate"] = "serp_only_evidence"
         updated_outline = outline
         if not ready:
             epc_aw_analysis = ""
@@ -2275,6 +2472,21 @@ class EpcAwEpisodeContext:
             except Exception as exc:
                 self.last_trace["llm_error"] = str(exc)
                 answer = ""
+            # The direct_output prompt mandates "1. Process Summary ... 2. Answer: X".
+            # Keep only the Answer section so the grader sees the answer itself,
+            # not a process narrative that buries (and truncates) it.
+            m = re.search(
+                r"(?is)(?:^|\n)[ \t]*(?:2?[.\-:]?\s*)?(?:\*\*)?\s*Answer\s*(?:\*\*)?\s*[.:：]\s*(.*?)(?:\n\s*\n|\Z)",
+                answer,
+            )
+            if m and m.group(1).strip():
+                answer = m.group(1).strip().strip("*").strip()
+            elif re.search(r"(?i)process summary", answer):
+                # Malformed two-section output with no explicit Answer line:
+                # fall back to the last non-empty line, usually the answer.
+                tail = [ln.strip(" -*") for ln in answer.strip().splitlines() if ln.strip()]
+                if tail:
+                    answer = tail[-1]
         self.last_trace.update(
             {
                 "analysis": analysis,
@@ -2283,6 +2495,7 @@ class EpcAwEpisodeContext:
                 "outline": outline,
                 "outline_updated": updated_outline,
                 "ready_to_stop": ready,
+                "llm_calls": self._drain_llm_calls(),
             }
         )
         stop_now = bool(ready) or hit_limit
@@ -2372,7 +2585,7 @@ UPLOAD_README = """# EPC-AW 按 PEV 窗口封装
 - `adapted/context.py`：共享 Planner / Executor / Diagnoser / SystemMemory
 - `adapted/entry.py`：按窗口分发 `run_window`
 
-不要改 `ref_Rep/EPC-AW`。不要把 `Solver.solve` 当作 Collect / 训练 / 采样入口。
+不要改 `upload/` 里的 EPC-AW 源码。不要把 `Solver.solve` 当作 Collect / 训练 / 采样入口。
 """
 
 
@@ -2504,7 +2717,7 @@ def scaffold_epc_aw_pev(project_id: str, *, title: Optional[str] = None) -> Dict
                 "max_steps": 20,
                 "max_time": 3000,
                 "max_tokens": 4000,
-                "temperature": 0.0,
+                "temperature": 0.7,
                 "enabled_tools": [
                     "Base_Generator_Tool",
                     "Python_Coder_Tool",

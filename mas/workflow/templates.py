@@ -26,7 +26,7 @@ TEMPLATE_LABELS = {
     "tir_five_tools": "单策略五工具（APPO / ARPO）",
     "centralized": "中心化 PEV + Router",
     "pev_python": "最小 PEV（python_coder）",
-    "pev_search": "检索 PEV（wiki / google / web）",
+    "pev_search": "检索 PEV（wiki / bing / web）",
     "fanout_parallel": "双 Router 并行 fan-out",
     "blank_set": "Router 候选含空白 Agent",
     "score_robin": "score 专家组 + round_robin",

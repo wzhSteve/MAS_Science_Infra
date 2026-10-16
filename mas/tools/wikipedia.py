@@ -1,4 +1,4 @@
-"""Wikipedia REST/API lookup without an in-tool LLM filter."""
+"""Wikipedia REST/API lookup. Titles + urls only, no page content."""
 
 from __future__ import annotations
 
@@ -8,24 +8,59 @@ from urllib.parse import quote
 
 import requests
 
-from .search import proxy_candidates
+from .search import _UA_HEADERS, _cache_query_key, proxy_candidates, truncate_description
+from .search_cache import GAP_SENTINEL, cache_lookup, cache_store
 
-_MAX_CHARS = int(os.getenv("TIR_WIKI_MAX_CHARS", "2000"))
-_TOP_K = int(os.getenv("TIR_WIKI_TOP_K", "3"))
+_TOP_K = int(os.getenv("TIR_WIKI_TOP_K", "10"))
+
+
+def _cache_consume_query(query: str) -> Optional[str]:
+    """Cache-first lookup mirroring search.py's three-branch pattern.
+
+    hit -> cached text verbatim; gap -> clean sentinel WITHOUT a network
+    retry (the producer already recorded this query as network-failed);
+    miss -> None (existing network logic runs).
+    """
+    try:
+        if not os.getenv("MAS_SEARCH_CACHE", "").strip():
+            return None
+        text, hit_type = cache_lookup("query", _cache_query_key(query))
+        if hit_type == "hit":
+            return text
+        if hit_type == "gap":
+            return f"search_unavailable: {GAP_SENTINEL}"
+        return None
+    except Exception:
+        return None
+
+
+def _cache_store_query(query: str, value: str) -> None:
+    try:
+        if not os.getenv("MAS_SEARCH_CACHE", "").strip():
+            return
+        cache_store("query", _cache_query_key(query), value)
+    except Exception:
+        pass
 
 
 def wikipedia_search(query: str, top_k: int = _TOP_K) -> str:
-    """Return Wikipedia search hits plus short extracts."""
+    """Return top-k Wikipedia hits as numbered title + URL entries.
+
+    Does NOT fetch page content. Call fetch_page(url) for that.
+    """
     query = (query or "").strip()
     if not query:
         return "Error: empty wikipedia query."
     if os.getenv("TIR_OFFLINE_SEARCH", "").strip().lower() in ("1", "true", "yes"):
         return "search_unavailable: TIR_OFFLINE_SEARCH=1"
 
-    headers = {"User-Agent": "tir-agent/1.0 (agent-lightning; educational)"}
+    cached = _cache_consume_query(query)
+    if cached is not None:
+        return cached
+
+    headers = {"User-Agent": _UA_HEADERS["User-Agent"]}
     last_err = "no proxy candidate"
     hits: List[Dict[str, Any]] = []
-    used_proxies: Optional[Dict[str, str]] = None
     for proxies in proxy_candidates():
         label = (proxies or {}).get("http") or "direct"
         try:
@@ -46,7 +81,6 @@ def wikipedia_search(query: str, top_k: int = _TOP_K) -> str:
                 last_err = f"{label}: HTTP {search_resp.status_code}"
                 continue
             hits = search_resp.json().get("query", {}).get("search", [])
-            used_proxies = proxies
             if hits:
                 break
             last_err = f"{label}: 0 hits"
@@ -57,27 +91,19 @@ def wikipedia_search(query: str, top_k: int = _TOP_K) -> str:
     if not hits:
         return f"search_unavailable: {last_err}"
 
-    parts: List[str] = []
+    lines: List[str] = [f"wikipedia results for: {query}"]
     for i, hit in enumerate(hits[:top_k], 1):
-        title = str(hit.get("title") or "")
-        snippet = str(hit.get("snippet") or "").replace("<span class=\"searchmatch\">", "").replace("</span>", "")
-        extract = ""
-        try:
-            sum_resp = requests.get(
-                f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(title)}",
-                headers=headers,
-                timeout=15,
-                proxies=used_proxies,
-            )
-            if sum_resp.status_code < 400:
-                extract = str(sum_resp.json().get("extract") or "")
-        except Exception:
-            extract = ""
-        body = extract or snippet
+        title = str(hit.get("title") or "").strip()
+        if not title:
+            continue
         page = f"https://en.wikipedia.org/wiki/{quote(title.replace(' ', '_'))}"
-        parts.append(f"{i}. {title}\n{page}\n{body}")
-
-    text = "\n\n".join(parts)
-    if len(text) > _MAX_CHARS:
-        text = text[:_MAX_CHARS] + "\n...[truncated]"
-    return text
+        lines.append(f"{i}. {title}")
+        lines.append(f"   URL: {page}")
+        desc = truncate_description(str(hit.get("snippet") or ""))
+        if desc:
+            lines.append(f"   {desc}")
+    if len(lines) <= 1:
+        return f"search_unavailable: {label}: 0 hits"
+    out = "\n".join(lines)
+    _cache_store_query(query, out)
+    return out

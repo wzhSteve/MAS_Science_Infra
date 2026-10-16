@@ -71,13 +71,13 @@ flowchart LR
 | Sampling 编排 | 在 planner、verifier、router 或边上放分支站点。不按 tool 展开 |
 | 单题调试 | 仅 Workflow 模式下可用。live 或 mock 跑一题，走 `POST /api/mas/rollout-runs` |
 
-左侧节点库有模板、内置五工具、用户项目。用户区节点的代码在 `user_space/projects/<id>/`，只能由 Assistant 改。
+左侧节点库有模板、内置五工具、用户项目。五工具是 `base_generator`、`python_coder`、`bing_search`、`wikipedia_search`、`web_fetch`。用户区节点的代码在 `user_space/projects/<id>/`，只能由 Assistant 改。
 
 ### 左侧训练配置
 
 四段：训练对象、数据与奖励、训练策略（含采样摘要）、执行资源。点采样摘要会切到 Sampling 画布。推理连接在设置区 `inference`；诊断插件在 `diagnostics`。
 
-训练算法下拉以 `/api/meta` 的 `algos` 为准：`grpo` / `arpo` / `aepo` / `igpo` / `gigpo` / `rae`。Sampling 模式里仍有 APPO，保存时映射成 ARPO。
+训练算法下拉包括 `grpo` / `flow_grpo` / `arpo` / `appo` / `aepo` / `igpo` / `gigpo` / `rae`。`flow_grpo` 只训 planner，奖励是 0 或 1，不画分支边。`appo` 与 `arpo` 都画分支；`appo` 额外走 future-KL 损失。
 
 ### 底部控制台
 
@@ -108,7 +108,7 @@ CLI 等价：`science-infra collect --mock --n 1`。Collect **不**产生训练�
 3. 「开始训练」。日志在控制台。
 4. 训练记录 → 采样结果，看该 run 的树。Monitor 看实验级 reward 曲线。
 
-真分支只在 `tir_algo` 为 `arpo` / `aepo` / `rae` 的训练里。站点写在非 tool agent 结束之后，以及 router 结束之后。verifier 用 `after_verifier`，其余用 `after_agent_turn`。
+真分支在 `arpo` / `appo` / `aepo` / `rae`。`grpo` 和 `flow_grpo` 的采样结果是独立回答，图上没有连线。站点写在 planner、verifier、router 或边上，不按工具展开。AgentFlow 窗口图的 ARPO 要有一个 `after_agent_turn` / planner 站点；预检会拒绝指向图里不存在的节点。
 
 ## 6. 采样站点
 
@@ -116,7 +116,7 @@ Sampling 画布高亮可放站点的节点和边。设计期预览走 `POST /api
 
 | 锚点 | 放在哪 | 常用门控 |
 |------|--------|----------|
-| `after_agent_turn` | planner、blank、router | `entropy_delta` |
+| `after_agent_turn` | planner、blank、router、AgentFlow 的 executor | Token 熵（`entropy_delta`，填写 Branch Probability 与 Entropy Weight）。`always` 可作对照 |
 | `after_verifier` | verifier | `verifier_fail` |
 | `on_edge` | route / message / feedback 边 | 按边 |
 
@@ -128,7 +128,9 @@ Sampling 画布高亮可放站点的节点和边。设计期预览走 `POST /api
 
 ![采样结果](images/samples.png)
 
-Monitor 只有两块：实验级 AGL reward 曲线，以及当前 run 的 stdout。Collect 曲线、轨迹表、Harness 假设表不在这里。诊断仍在「更多功能 → 诊断工具」，对已有 `collect.json` 跑插件。
+分支图只在子轨迹 `origin=branch` 且前缀确认后连线，边上的字是站点 id。前缀对不上时节点仍在，但没有父子边。Flow-GRPO 的节点奖励只应是 0 或 1。
+
+Monitor 只有两块：实验级 AGL reward 曲线，以及当前 run 的 stdout。Collect 曲线、轨迹表、Harness 假设表不在这里。诊断仍在「更多功能 → 诊断工具」，对已有 `collect.json` 跑插件。控制台里的 Ray / vLLM / AgentOps warning 不是训练失败；解析失败时 AgentFlow 会跳过该步的工具调用，轨迹仍可能带 reward 结束。
 
 ![Monitor](images/monitor.png)
 

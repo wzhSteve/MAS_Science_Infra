@@ -38,7 +38,7 @@ class TestEvalParquetPaths(unittest.TestCase):
         self.assertFalse(paths["test_exists"])
 
     def test_explicit_test_files_override_sibling(self):
-        chosen = REPO / "ref_Rep" / "HIVE" / "test" / "gaia" / "data" / "data.json"
+        chosen = REPO / "user_space" / "projects" / "epc-aw-main" / "upload" / "EPC-AW-main" / "test" / "gaia" / "data" / "data.json"
         paths = eval_parquet_paths({"rl": {"data": {
             "val_files": "/tmp/does-not-exist-mas-eval/val.parquet",
             "test_files": str(chosen),

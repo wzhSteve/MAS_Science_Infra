@@ -47,6 +47,7 @@ class TestDaemonExpandEnqueue(unittest.TestCase):
 
             import workflow.active_set as active_set
 
+            self.addCleanup(setattr, active_set, "EXPANSION_DIR", active_set.EXPANSION_DIR)
             active_set.EXPANSION_DIR = td
 
             daemon = TirAgentModeDaemon.__new__(TirAgentModeDaemon)
@@ -152,6 +153,7 @@ class TestDaemonExpandEnqueue(unittest.TestCase):
 
             import workflow.active_set as active_set
 
+            self.addCleanup(setattr, active_set, "EXPANSION_DIR", active_set.EXPANSION_DIR)
             active_set.EXPANSION_DIR = td
 
             daemon = TirAgentModeDaemon.__new__(TirAgentModeDaemon)

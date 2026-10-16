@@ -441,6 +441,8 @@ export interface AglHealth {
   error?: string;
   ui_path?: string;
   origin?: string;
+  dashboard_built?: boolean;
+  status_code?: number;
 }
 
 export interface RunSummary {
@@ -461,6 +463,12 @@ export interface RunSummary {
 export interface RunDetail extends RunSummary { log_tail?: string }
 export interface Hypothesis { plugin: string; event_id?: string; message: string; [key: string]: unknown }
 export interface RewardPoint { index: number; reward: number }
+export interface LossPoint {
+  index: number;
+  pg_loss?: number;
+  entropy_loss?: number;
+  kl_loss?: number;
+}
 export interface Trajectory {
   trajectory_id: string;
   reward?: number;
@@ -475,6 +483,7 @@ export interface TrainSignal {
   meta?: Config;
 }
 export interface MonitorResponse {
+  experiment_id?: string;
   empty?: boolean;
   n?: number;
   mean_reward?: number | null;
@@ -484,8 +493,12 @@ export interface MonitorResponse {
   rewards?: RewardPoint[];
   train_rewards?: RewardPoint[];
   step_rewards?: RewardPoint[];
+  val_rewards?: RewardPoint[];
+  step_losses?: LossPoint[];
+  metrics_path?: string | null;
   train_signal?: TrainSignal;
   agl_online?: boolean;
+  agl_source?: string | null;
 }
 export type RolloutExecution = 'mock' | 'live';
 export interface RolloutRunRequest {

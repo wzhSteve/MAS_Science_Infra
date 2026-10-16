@@ -1,0 +1,58 @@
+@layer components {
+  /* Fix F-2: user project flow-doc panel */
+  .flowdoc-panel { width: min(560px, calc(100vw - 48px)); }
+  .flowdoc-scroll { padding: 16px 18px; display: flex; flex-direction: column; gap: 18px; }
+  .flowdoc-scroll h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .flowdoc-project-select { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); }
+  .flowdoc-project-select select { padding: 3px 6px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface); color: var(--text-primary); font-size: 12px; }
+  /* agent tabs */
+  .flowdoc-tabs { display: flex; gap: 6px; padding: 4px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-subtle); }
+  .flowdoc-tab { display: inline-flex; align-items: center; gap: 6px; flex: 1; justify-content: center; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
+  .flowdoc-tab:hover { color: var(--text-primary); }
+  .flowdoc-tab.is-active { background: var(--surface); color: var(--text-primary); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border-subtle); }
+  .flowdoc-tab-count { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--warning-subtle); color: var(--warning); font-size: 10px; font-weight: 600; }
+  .flowdoc-loop-section { margin-top: -6px; }
+  /* runtime-inactive step: 灰显 + 徽标（数据一次拉全量，本地按 agent tab 过滤聚合） */
+  .flowdoc-step--inactive { opacity: 0.55; background: var(--surface-subtle); border-style: dashed; }
+  .flowdoc-step--inactive .flowdoc-step-head code { text-decoration: line-through; text-decoration-thickness: 1px; }
+  .flowdoc-step-badge { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 4px; background: var(--warning-subtle); color: var(--warning); font-size: 10px; white-space: nowrap; cursor: help; }
+  .flowdoc-agents { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .flowdoc-agent { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); font-size: 12px; }
+  .flowdoc-agent strong { display: block; font-size: 12px; }
+  .flowdoc-agent small { display: block; color: var(--text-secondary); font-size: 11px; }
+  .flowdoc-agent-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-subtle); color: var(--accent); font-size: 11px; font-weight: 600; }
+  .flowdoc-agents-loop { flex-basis: 100%; margin: 2px 0 0; color: var(--text-secondary); font-size: 11px; display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+  .flowdoc-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .flowdoc-step { display: flex; gap: 10px; padding: 8px 10px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); }
+  .flowdoc-step-seq { flex: none; color: var(--text-secondary); font-size: 11px; line-height: 20px; }
+  .flowdoc-step-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .flowdoc-step-head { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .flowdoc-step-head code { font-size: 11px; color: var(--text-primary); overflow-wrap: anywhere; }
+  .flowdoc-step-agent { padding: 1px 7px; border-radius: 4px; font-size: 10px; white-space: nowrap; background: var(--surface-subtle); color: var(--text-secondary); }
+  .flowdoc-step-agent--planner { background: var(--accent-subtle); color: var(--accent); }
+  .flowdoc-step-agent--executor { background: var(--success-subtle); color: var(--success); }
+  .flowdoc-step-agent--diagnoser { background: var(--warning-subtle); color: var(--warning); }
+  .flowdoc-step-desc { margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
+  .flowdoc-step-prompt { margin: 0; font-size: 10px; color: var(--text-secondary); }
+  .flowdoc-step-prompt code { font-size: 10px; }
+  .flowdoc-prompts { display: flex; flex-direction: column; gap: 6px; }
+  .flowdoc-prompt { border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); overflow: hidden; }
+  .flowdoc-prompt > summary { display: flex; align-items: center; gap: 6px; padding: 8px 12px; cursor: pointer; font-size: 12px; color: var(--text-primary); }
+  .flowdoc-prompt > summary::-webkit-details-marker { display: none; }
+  .flowdoc-prompt[open] > summary .lucide-chevron-down { transform: rotate(90deg); }
+  .flowdoc-prompt > summary code { overflow-wrap: anywhere; }
+  .flowdoc-prompt-error { margin-left: auto; color: var(--danger); font-size: 10px; }
+  .flowdoc-prompt pre { margin: 0; padding: 10px 12px; max-height: 320px; overflow: auto; border-top: 1px solid var(--border-subtle); background: var(--surface-subtle); font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .flowdoc-prompt-empty { margin: 0; padding: 8px 12px; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 11px; }
+}
+
+@layer components {
+  /* NodeInspector 流程简述卡（任务1 步骤3） */
+  .mas-flow-summary { display: flex; flex-direction: column; gap: 8px; }
+  .mas-flow-summary-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+  .mas-flow-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--border-subtle); border-radius: 999px; background: var(--surface); color: var(--text-primary); font-size: 11px; font-family: var(--font-mono, monospace); }
+  .mas-flow-chip::after { content: '→'; color: var(--text-secondary); font-size: 10px; }
+  .mas-flow-chip:last-child::after { content: ''; }
+  .mas-flow-summary-note { margin: 0; color: var(--text-secondary); font-size: 11px; }
+  .mas-flow-summary .button { align-self: flex-start; }
+}

@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { AglMetricsLink } from '../../../app/layout/MetricsLink';
 import { ActionBar } from '../../../shared/components/ActionBar';
 import { Section } from '../../../shared/components/Section';
 import { StatusBadge } from '../../../shared/components/StatusBadge';
@@ -25,9 +26,8 @@ export const RlTrainingActions = memo(function RlTrainingActions({ trainRunId, t
     <ActionBar>
       <Button variant="primary" loading={pending === 'start'} disabled={trainRunning || pending !== null} onClick={onStart}>保存训练配置并确认启动</Button>
       <Button variant="danger" loading={stop.pending !== null} onClick={() => { void stop.run('stop', onStop); }}>停止训练</Button>
-      {aglOnline ? <a className="ui-button ui-button--secondary ui-button--md" href="/agl/metrics" target="_blank" rel="noreferrer">打开 AGL Metrics</a> :
-        <Button disabled aria-describedby="rl-metrics-unavailable">Metrics 未就绪</Button>}
+      <AglMetricsLink />
     </ActionBar>
-    {!aglOnline && <p id="rl-metrics-unavailable" className="field-hint">训练进程拉起 LightningStore 后可用（同源 /agl/metrics）。</p>}
+    {!aglOnline && <p className="field-hint">LightningStore 未在线时，AGL Metrics 打开磁盘上的历史曲线。</p>}
   </Section>;
 });

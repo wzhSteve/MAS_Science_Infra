@@ -1,22 +1,10 @@
 import { memo } from 'react';
+import { AglMetricsLink } from '../../../app/layout/MetricsLink';
 import { Button } from '../../../shared/ui/button';
 import { LogPanel } from '../../../shared/components/LogPanel';
 import { StatusBadge } from '../../../shared/components/StatusBadge';
 
-export const MetricsLink = memo(function MetricsLink({ online }: { online: boolean }) {
-  return online ? (
-    <a
-      className="ui-button ui-button--secondary ui-button--md"
-      href="/agl/metrics"
-      target="_blank"
-      rel="noreferrer"
-    >
-      AGL Metrics
-    </a>
-  ) : (
-    <Button disabled title="训练进程拉起 LightningStore 后可用">Metrics 未就绪</Button>
-  );
-});
+export const MetricsLink = AglMetricsLink;
 
 interface TrainingLogProps {
   trainRunId: string | null;
@@ -30,7 +18,6 @@ export const TrainingLog = memo(function TrainingLog({
   trainRunId,
   trainRunning,
   trainLog,
-  aglOnline,
   onRefreshLog,
 }: TrainingLogProps) {
   return (
@@ -43,7 +30,7 @@ export const TrainingLog = memo(function TrainingLog({
           </StatusBadge>
           {trainRunId ? <span className="mono break-all text-xs">run={trainRunId}</span> : null}
           <Button onClick={onRefreshLog}>刷新日志</Button>
-          <MetricsLink online={aglOnline} />
+          <AglMetricsLink />
         </div>
       }
       empty={

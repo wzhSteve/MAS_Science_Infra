@@ -77,6 +77,12 @@ export const metricsApi = rolloutsApi.injectEndpoints({
         if (typeof stepLimit === 'number') {
           searchParams.set('step_limit', String(stepLimit));
         }
+        if (typeof window !== 'undefined') {
+          const experiment = new URLSearchParams(window.location.search).get('experiment');
+          if (experiment) {
+            searchParams.set('experiment', experiment);
+          }
+        }
         const qs = searchParams.toString();
         return {
           url: qs.length > 0 ? `v1/agl/metrics?${qs}` : 'v1/agl/metrics',

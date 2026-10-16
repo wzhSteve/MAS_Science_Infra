@@ -94,7 +94,7 @@ def default_workflow() -> Dict[str, Any]:
         "schema_version": "0.1.0",
         "topology": "centralized",
         "hub": {"role": "planner", "skills": []},
-        "tools": ["wikipedia_search", "bing_search", "web_fetch", "python_coder", "think"],
+        "tools": ["base_generator", "python_coder", "bing_search", "wikipedia_search", "web_fetch"],
         "llm": {"kind": "api", "model": "", "base_url": ""},
         "memory": {"agent": "messages", "system": "none"},
         "archive": {"window": "post_first_tool"},
@@ -495,10 +495,16 @@ def recommend_rl(gpu_count: int) -> Dict[str, Any]:
     ids = list(range(min(n, 2)))
     return {
         "profile": "a800_2gpu" if n >= 2 else "a800",
-        "n_runners": 4 if n >= 2 else 2,
+        "n_runners": 8 if n >= 2 else 2,
         "rollout_per_gpu": 4,
         "devices": {"ids": ids},
+        "actor_rollout_ref.rollout.n": 4,
+        "actor_rollout_ref.rollout.gpu_memory_utilization": 0.35,
+        "data.train_batch_size": 8,
+        "actor_rollout_ref.actor.ppo_mini_batch_size": 8,
         "trainer.n_gpus_per_node": len(ids),
+        "trainer.val_before_train": False,
+        "trainer.save_freq": -1,
     }
 
 

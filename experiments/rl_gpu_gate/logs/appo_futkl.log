@@ -1,0 +1,1680 @@
+/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/langgraph/cache/base/__init__.py:8: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+20:40:10 - LiteLLM:WARNING: get_model_cost_map.py:454 - LiteLLM: Failed to fetch remote model cost map from https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json: _ssl.c:999: The handshake operation timed out. Falling back to local backup.
+WARNING: Using 1x A800 fallback. For full hyperparams without forced batch/mem downscaling, add a second A800 and run `a800_2gpu`.
+Merged rl yaml: /root/autodl-tmp/MAS_Science_Infra/experiments/rl_gpu_gate/appo_futkl/rl.yaml
+CUDA_VISIBLE_DEVICES=0 → trainer.n_gpus_per_node=1
+appo budget check: rollout.n=4 initial_rollouts=2 → sampling_budget=2
+trainer horizon: total_epochs=3 total_training_steps=3
+Starting training with 'a800' / algo=appo ...
+Trainable agents from workflow: ['planner']
+TIR context budget: max_model_len=5120 (prompt=4096+response=1024) max_tokens=1024
+Workflow spec: /root/autodl-tmp/MAS_Science_Infra/experiments/rl_gpu_gate/appo_futkl/workflow.yaml
+tir_algo=appo (Hydra adv_estimator stays grpo)
+AGL_METRICS_JSONL=/root/autodl-tmp/MAS_Science_Infra/checkpoints/rl_gpu_gate/appo_futkl_1p7b_3step_appo/metrics.jsonl
+TENSORBOARD_DIR=/root/autodl-tmp/MAS_Science_Infra/checkpoints/rl_gpu_gate/appo_futkl_1p7b_3step_appo/tensorboard
+Adapter: skip_empty_token_spans=True (agent_match='^(?:agent__planner)$' unused for AgentFlow; agents=['planner'])
+Train samples: 20, Val samples: 5
+Model: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-1.7B
+GPUs per node: 1
+train_batch_size: 2
+gpu_memory_utilization: 0.2
+[10/14/26 20:40:16] INFO     Starting client-server         client_server.py:357
+                             execution with 2 runner(s)                         
+                             [role=both,                                        
+                             main_process=algorithm]                            
+                    INFO     Spawning runner processes...   client_server.py:392
+                    INFO     [Worker 0] Setting up AgentOps       agentops.py:71
+                             tracer...                                          
+                    INFO     Running algorithm...           client_server.py:395
+                    INFO     Starting LightningStore server client_server.py:132
+                             on localhost:4747                                  
+                    INFO     Patched newer version of agentops   agentops.py:151
+                             using handle_chat_attributes                       
+                    INFO     [Worker 1] Setting up AgentOps       agentops.py:71
+                             tracer...                                          
+                    INFO     [Worker 0] Instrumentation applied.  agentops.py:75
+                    WARNING  No access host provided,     server_launcher.py:790
+                             using the host provided.                           
+                    INFO     Patched newer version of agentops   agentops.py:151
+                             using handle_chat_attributes                       
+                    INFO     [Worker 1] Instrumentation applied.  agentops.py:75
+                    INFO     Agent-lightning dashboard     client_server.py:1073
+                             will be available at                               
+                             http://localhost:4747                              
+                    INFO     Serving the lightning store at client_server.py:418
+                             http://localhost:4747,                             
+                             accessible at                                      
+                             http://localhost:4747                              
+                    INFO     Starting server              server_launcher.py:687
+                             fastapi.applications:app...                        
+                    INFO     Starting uvicorn thread      server_launcher.py:851
+                             server...                                          
+                    INFO     No serve_context provided,   server_launcher.py:811
+                             using noop_context.                                
+INFO:     Started server process [491461]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://localhost:4747 (Press CTRL+C to quit)
+                    INFO     Server started up in 0.10    server_launcher.py:168
+                             seconds.                                           
+                    INFO     Probing health endpoint      server_launcher.py:172
+                             http://localhost:4747/v1/agl                       
+                             /health...                                         
+                    INFO     Server is healthy at         server_launcher.py:178
+                             http://localhost:4747/v1/agl                       
+                             /health in 0.16 seconds.                           
+[10/14/26 20:40:17] INFO     Threaded server started      server_launcher.py:890
+                             successfully.                                      
+                    INFO     Server                       server_launcher.py:697
+                             fastapi.applications:app                           
+                             started at                                         
+                             http://localhost:4747                              
+                    INFO     Lightning store server started client_server.py:425
+                             in 0.19 seconds                                    
+🖇 AgentOps: [OPENAI INSTRUMENTOR] Error setting up OpenAI streaming wrappers: No module named 'openai.resources.beta.chat'
+🖇 AgentOps: [OPENAI INSTRUMENTOR] Error setting up OpenAI streaming wrappers: No module named 'openai.resources.beta.chat'
+[10/14/26 20:40:17] INFO     [Worker 0] AgentOps client           agentops.py:81
+                             initialized.                                       
+                    INFO     [Worker 0] Started async rollouts      agent.py:754
+                             (max: unlimited).                                  
+[10/14/26 20:40:17] INFO     [Worker 1] AgentOps client           agentops.py:81
+                             initialized.                                       
+                    INFO     [Worker 1] Started async rollouts      agent.py:754
+                             (max: unlimited).                                  
+2026-10-14 20:40:18,595	WARNING utils.py:473 -- Detecting docker specified CPUs. In previous versions of Ray, CPU detection in containers was incorrect. Please ensure that Ray has enough CPUs allocated. As a temporary workaround to revert to the prior behavior, set `RAY_USE_MULTIPROCESSING_CPU_COUNT=1` as an env var before starting Ray. Set the env var: `RAY_DISABLE_DOCKER_CPU_WARNING=1` to mute this warning.
+2026-10-14 20:40:20,901	INFO worker.py:2015 -- Started a local Ray instance. View the dashboard at [1m[32mhttp://127.0.0.1:8265 [39m[22m
+[36m(pid=493519)[0m 20:40:45 - LiteLLM:WARNING: get_model_cost_map.py:454 - LiteLLM: Failed to fetch remote model cost map from https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json: [Errno 101] Network is unreachable. Falling back to local backup.
+[36m(pid=493519)[0m WARNING:2026-10-14 20:40:45,722:LiteLLM: Failed to fetch remote model cost map from https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json: [Errno 101] Network is unreachable. Falling back to local backup.
+Store is set. Assuming v1 execution mode.
+[36m(TaskRunner pid=493519)[0m {'actor_rollout_ref': {'actor': {'checkpoint': {'contents': ['model',
+[36m(TaskRunner pid=493519)[0m                                                              'optimizer',
+[36m(TaskRunner pid=493519)[0m                                                              'extra']},
+[36m(TaskRunner pid=493519)[0m                                  'clip_ratio': 0.2,
+[36m(TaskRunner pid=493519)[0m                                  'clip_ratio_c': 3.0,
+[36m(TaskRunner pid=493519)[0m                                  'clip_ratio_high': 0.3,
+[36m(TaskRunner pid=493519)[0m                                  'clip_ratio_low': 0.2,
+[36m(TaskRunner pid=493519)[0m                                  'entropy_coeff': 0.0,
+[36m(TaskRunner pid=493519)[0m                                  'fsdp_config': {'fsdp_size': -1,
+[36m(TaskRunner pid=493519)[0m                                                  'offload_policy': False,
+[36m(TaskRunner pid=493519)[0m                                                  'optimizer_offload': True,
+[36m(TaskRunner pid=493519)[0m                                                  'param_offload': True,
+[36m(TaskRunner pid=493519)[0m                                                  'reshard_after_forward': True,
+[36m(TaskRunner pid=493519)[0m                                                  'wrap_policy': {'min_num_params': 0}},
+[36m(TaskRunner pid=493519)[0m                                  'grad_clip': 1.0,
+[36m(TaskRunner pid=493519)[0m                                  'kl_loss_coef': 0.0,
+[36m(TaskRunner pid=493519)[0m                                  'kl_loss_type': 'low_var_kl',
+[36m(TaskRunner pid=493519)[0m                                  'loss_agg_mode': 'token-mean',
+[36m(TaskRunner pid=493519)[0m                                  'optim': {'lr': 1e-06,
+[36m(TaskRunner pid=493519)[0m                                            'lr_warmup_steps': -1,
+[36m(TaskRunner pid=493519)[0m                                            'lr_warmup_steps_ratio': 0.0,
+[36m(TaskRunner pid=493519)[0m                                            'min_lr_ratio': 0.0,
+[36m(TaskRunner pid=493519)[0m                                            'num_cycles': 0.5,
+[36m(TaskRunner pid=493519)[0m                                            'total_training_steps': -1,
+[36m(TaskRunner pid=493519)[0m                                            'warmup_style': 'constant',
+[36m(TaskRunner pid=493519)[0m                                            'weight_decay': 0.01},
+[36m(TaskRunner pid=493519)[0m                                  'policy_loss': {'decay_rate': 128.0,
+[36m(TaskRunner pid=493519)[0m                                                  'future_kl_clip_ratio': 0.2,
+[36m(TaskRunner pid=493519)[0m                                                  'future_kl_weight': 1.0,
+[36m(TaskRunner pid=493519)[0m                                                  'loss_mode': 'future_kl'},
+[36m(TaskRunner pid=493519)[0m                                  'ppo_epochs': 1,
+[36m(TaskRunner pid=493519)[0m                                  'ppo_max_token_len_per_gpu': 16384,
+[36m(TaskRunner pid=493519)[0m                                  'ppo_micro_batch_size': None,
+[36m(TaskRunner pid=493519)[0m                                  'ppo_micro_batch_size_per_gpu': 1,
+[36m(TaskRunner pid=493519)[0m                                  'ppo_mini_batch_size': 2,
+[36m(TaskRunner pid=493519)[0m                                  'shuffle': False,
+[36m(TaskRunner pid=493519)[0m                                  'strategy': 'fsdp',
+[36m(TaskRunner pid=493519)[0m                                  'ulysses_sequence_parallel_size': 1,
+[36m(TaskRunner pid=493519)[0m                                  'use_dynamic_bsz': False,
+[36m(TaskRunner pid=493519)[0m                                  'use_kl_loss': False,
+[36m(TaskRunner pid=493519)[0m                                  'use_torch_compile': True},
+[36m(TaskRunner pid=493519)[0m                        'hybrid_engine': True,
+[36m(TaskRunner pid=493519)[0m                        'model': {'enable_activation_offload': False,
+[36m(TaskRunner pid=493519)[0m                                  'enable_gradient_checkpointing': True,
+[36m(TaskRunner pid=493519)[0m                                  'external_lib': None,
+[36m(TaskRunner pid=493519)[0m                                  'lora_alpha': 16,
+[36m(TaskRunner pid=493519)[0m                                  'lora_rank': 0,
+[36m(TaskRunner pid=493519)[0m                                  'override_config': {},
+[36m(TaskRunner pid=493519)[0m                                  'path': '/root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-1.7B',
+[36m(TaskRunner pid=493519)[0m                                  'target_modules': 'all-linear',
+[36m(TaskRunner pid=493519)[0m                                  'trust_remote_code': False,
+[36m(TaskRunner pid=493519)[0m                                  'use_fused_kernels': False,
+[36m(TaskRunner pid=493519)[0m                                  'use_liger': False,
+[36m(TaskRunner pid=493519)[0m                                  'use_remove_padding': True,
+[36m(TaskRunner pid=493519)[0m                                  'use_shm': False},
+[36m(TaskRunner pid=493519)[0m                        'ref': {'fsdp_config': {'param_offload': True,
+[36m(TaskRunner pid=493519)[0m                                                'reshard_after_forward': True,
+[36m(TaskRunner pid=493519)[0m                                                'wrap_policy': {'min_num_params': 0}},
+[36m(TaskRunner pid=493519)[0m                                'log_prob_max_token_len_per_gpu': 16384,
+[36m(TaskRunner pid=493519)[0m                                'log_prob_micro_batch_size': None,
+[36m(TaskRunner pid=493519)[0m                                'log_prob_micro_batch_size_per_gpu': 1,
+[36m(TaskRunner pid=493519)[0m                                'log_prob_use_dynamic_bsz': False,
+[36m(TaskRunner pid=493519)[0m                                'strategy': 'fsdp',
+[36m(TaskRunner pid=493519)[0m                                'ulysses_sequence_parallel_size': 1,
+[36m(TaskRunner pid=493519)[0m                                'use_torch_compile': True},
+[36m(TaskRunner pid=493519)[0m                        'rollout': {'agent': {'custom_async_server': {'name': 'PatchedvLLMServer',
+[36m(TaskRunner pid=493519)[0m                                                                      'path': 'pkg://agentlightning.verl.async_server'}},
+[36m(TaskRunner pid=493519)[0m                                    'chat_scheduler': None,
+[36m(TaskRunner pid=493519)[0m                                    'disable_log_stats': True,
+[36m(TaskRunner pid=493519)[0m                                    'do_sample': True,
+[36m(TaskRunner pid=493519)[0m                                    'dtype': 'bfloat16',
+[36m(TaskRunner pid=493519)[0m                                    'enable_chunked_prefill': True,
+[36m(TaskRunner pid=493519)[0m                                    'enforce_eager': True,
+[36m(TaskRunner pid=493519)[0m                                    'engine_kwargs': {'sglang': {'attention_backend': None},
+[36m(TaskRunner pid=493519)[0m                                                      'vllm': {'enable_auto_tool_choice': True,
+[36m(TaskRunner pid=493519)[0m                                                               'max_model_len': 8192,
+[36m(TaskRunner pid=493519)[0m                                                               'swap_space': None,
+[36m(TaskRunner pid=493519)[0m                                                               'tool_call_parser': 'hermes'}},
+[36m(TaskRunner pid=493519)[0m                                    'free_cache_engine': True,
+[36m(TaskRunner pid=493519)[0m                                    'gpu_memory_utilization': 0.2,
+[36m(TaskRunner pid=493519)[0m                                    'ignore_eos': False,
+[36m(TaskRunner pid=493519)[0m                                    'layered_summon': False,
+[36m(TaskRunner pid=493519)[0m                                    'load_format': 'dummy_dtensor',
+[36m(TaskRunner pid=493519)[0m                                    'log_prob_max_token_len_per_gpu': 16384,
+[36m(TaskRunner pid=493519)[0m                                    'log_prob_micro_batch_size': None,
+[36m(TaskRunner pid=493519)[0m                                    'log_prob_micro_batch_size_per_gpu': 1,
+[36m(TaskRunner pid=493519)[0m                                    'log_prob_use_dynamic_bsz': False,
+[36m(TaskRunner pid=493519)[0m                                    'max_model_len': None,
+[36m(TaskRunner pid=493519)[0m                                    'max_num_batched_tokens': 8192,
+[36m(TaskRunner pid=493519)[0m                                    'max_num_seqs': 1024,
+[36m(TaskRunner pid=493519)[0m                                    'mode': 'async',
+[36m(TaskRunner pid=493519)[0m                                    'multi_turn': {'enable': False,
+[36m(TaskRunner pid=493519)[0m                                                   'format': 'hermes',
+[36m(TaskRunner pid=493519)[0m                                                   'max_turns': None,
+[36m(TaskRunner pid=493519)[0m                                                   'tool_config_path': None},
+[36m(TaskRunner pid=493519)[0m                                    'n': 4,
+[36m(TaskRunner pid=493519)[0m                                    'name': 'vllm',
+[36m(TaskRunner pid=493519)[0m                                    'prompt_length': 4096,
+[36m(TaskRunner pid=493519)[0m                                    'response_length': 1024,
+[36m(TaskRunner pid=493519)[0m                                    'temperature': 1.0,
+[36m(TaskRunner pid=493519)[0m                                    'tensor_model_parallel_size': 1,
+[36m(TaskRunner pid=493519)[0m                                    'top_k': -1,
+[36m(TaskRunner pid=493519)[0m                                    'top_p': 1,
+[36m(TaskRunner pid=493519)[0m                                    'use_fire_sampling': False,
+[36m(TaskRunner pid=493519)[0m                                    'val_kwargs': {'do_sample': False,
+[36m(TaskRunner pid=493519)[0m                                                   'n': 1,
+[36m(TaskRunner pid=493519)[0m                                                   'temperature': 0,
+[36m(TaskRunner pid=493519)[0m                                                   'top_k': -1,
+[36m(TaskRunner pid=493519)[0m                                                   'top_p': 1.0}}},
+[36m(TaskRunner pid=493519)[0m  'agentlightning': {'port': 9999,
+[36m(TaskRunner pid=493519)[0m                     'trace_aggregator': {'debug': False,
+[36m(TaskRunner pid=493519)[0m                                          'level': 'transition',
+[36m(TaskRunner pid=493519)[0m                                          'mismatch_log_dir': './mismatch_cases',
+[36m(TaskRunner pid=493519)[0m                                          'trajectory_max_prompt_length': 2048,
+[36m(TaskRunner pid=493519)[0m                                          'trajectory_max_response_length': 8192}},
+[36m(TaskRunner pid=493519)[0m  'algorithm': {'adv_estimator': 'grpo',
+[36m(TaskRunner pid=493519)[0m                'advantage': {'base': 'grpo',
+[36m(TaskRunner pid=493519)[0m                              'operators': [{'id': 'appo_credit',
+[36m(TaskRunner pid=493519)[0m                                             'params': {}}]},
+[36m(TaskRunner pid=493519)[0m                'gamma': 1.0,
+[36m(TaskRunner pid=493519)[0m                'kl_ctrl': {'horizon': 10000,
+[36m(TaskRunner pid=493519)[0m                            'kl_coef': 0.001,
+[36m(TaskRunner pid=493519)[0m                            'target_kl': 0.1,
+[36m(TaskRunner pid=493519)[0m                            'type': 'fixed'},
+[36m(TaskRunner pid=493519)[0m                'kl_penalty': 'kl',
+[36m(TaskRunner pid=493519)[0m                'lam': 1.0,
+[36m(TaskRunner pid=493519)[0m                'norm_adv_by_std_in_grpo': True,
+[36m(TaskRunner pid=493519)[0m                'pf_ppo': {'reweight_method': 'pow', 'weight_pow': 2.0},
+[36m(TaskRunner pid=493519)[0m                'reward': {'components': [{'enabled': True,
+[36m(TaskRunner pid=493519)[0m                                           'id': 'format_penalty',
+[36m(TaskRunner pid=493519)[0m                                           'weight': 1.0},
+[36m(TaskRunner pid=493519)[0m                                          {'enabled': True,
+[36m(TaskRunner pid=493519)[0m                                           'id': 'accuracy_reward',
+[36m(TaskRunner pid=493519)[0m                                           'weight': 1.0},
+[36m(TaskRunner pid=493519)[0m                                          {'enabled': True,
+[36m(TaskRunner pid=493519)[0m                                           'id': 'multi_tool_bonus',
+[36m(TaskRunner pid=493519)[0m                                           'weight': 0.1},
+[36m(TaskRunner pid=493519)[0m                                          {'enabled': False,
+[36m(TaskRunner pid=493519)[0m                                           'id': 'cost_penalty',
+[36m(TaskRunner pid=493519)[0m                                           'weight': 0.0}],
+[36m(TaskRunner pid=493519)[0m                           'meta': {'multi_tool_bonus_source': 'user_tir'},
+[36m(TaskRunner pid=493519)[0m                           'outcome': 'hierarchical'},
+[36m(TaskRunner pid=493519)[0m                'tir': {'aepo_beta': 1.0,
+[36m(TaskRunner pid=493519)[0m                        'beam_size': 2,
+[36m(TaskRunner pid=493519)[0m                        'branch_penalty_slope': 0.25,
+[36m(TaskRunner pid=493519)[0m                        'branch_probability': 0.5,
+[36m(TaskRunner pid=493519)[0m                        'decay_rate': 128.0,
+[36m(TaskRunner pid=493519)[0m                        'entropy_adv_coef': 0.1,
+[36m(TaskRunner pid=493519)[0m                        'entropy_threshold': 0.15,
+[36m(TaskRunner pid=493519)[0m                        'entropy_tokens': 8,
+[36m(TaskRunner pid=493519)[0m                        'entropy_weight': 0.5,
+[36m(TaskRunner pid=493519)[0m                        'expand_in_runner': True,
+[36m(TaskRunner pid=493519)[0m                        'future_kl_clip_ratio': 0.2,
+[36m(TaskRunner pid=493519)[0m                        'future_kl_weight': 1.0,
+[36m(TaskRunner pid=493519)[0m                        'gamma': 1.0,
+[36m(TaskRunner pid=493519)[0m                        'gigpo_mode': 'mean_std',
+[36m(TaskRunner pid=493519)[0m                        'info_gain_type': 'log_prob_diff',
+[36m(TaskRunner pid=493519)[0m                        'initial_rollouts': 2,
+[36m(TaskRunner pid=493519)[0m                        'loss_mode': 'future_kl',
+[36m(TaskRunner pid=493519)[0m                        'max_branch_depth': 2,
+[36m(TaskRunner pid=493519)[0m                        'multi_tool_bonus': 0.1,
+[36m(TaskRunner pid=493519)[0m                        'rae_dead_end_backprop': True,
+[36m(TaskRunner pid=493519)[0m                        'rae_dead_end_depth': 1,
+[36m(TaskRunner pid=493519)[0m                        'rae_epsilon_f': 0.001,
+[36m(TaskRunner pid=493519)[0m                        'rae_full_tgt': False,
+[36m(TaskRunner pid=493519)[0m                        'rae_k_min': 2,
+[36m(TaskRunner pid=493519)[0m                        'rae_p_plus': 0.8,
+[36m(TaskRunner pid=493519)[0m                        'ready_batch': False,
+[36m(TaskRunner pid=493519)[0m                        'reward_scale_discount': 0.9,
+[36m(TaskRunner pid=493519)[0m                        'sites': None,
+[36m(TaskRunner pid=493519)[0m                        'step_advantage_w': 1.0,
+[36m(TaskRunner pid=493519)[0m                        'use_official_arpo_gate': True,
+[36m(TaskRunner pid=493519)[0m                        'zero_prefix_adv_for_children': True},
+[36m(TaskRunner pid=493519)[0m                'tir_algo': 'appo',
+[36m(TaskRunner pid=493519)[0m                'use_kl_in_reward': False,
+[36m(TaskRunner pid=493519)[0m                'use_pf_ppo': False},
+[36m(TaskRunner pid=493519)[0m  'critic': {'checkpoint': {'contents': ['model', 'optimizer', 'extra']},
+[36m(TaskRunner pid=493519)[0m             'cliprange_value': 0.5,
+[36m(TaskRunner pid=493519)[0m             'forward_max_token_len_per_gpu': 32768,
+[36m(TaskRunner pid=493519)[0m             'forward_micro_batch_size': None,
+[36m(TaskRunner pid=493519)[0m             'forward_micro_batch_size_per_gpu': None,
+[36m(TaskRunner pid=493519)[0m             'grad_clip': 1.0,
+[36m(TaskRunner pid=493519)[0m             'loss_agg_mode': 'token-mean',
+[36m(TaskRunner pid=493519)[0m             'model': {'enable_activation_offload': False,
+[36m(TaskRunner pid=493519)[0m                       'enable_gradient_checkpointing': True,
+[36m(TaskRunner pid=493519)[0m                       'external_lib': None,
+[36m(TaskRunner pid=493519)[0m                       'fsdp_config': {'fsdp_size': -1,
+[36m(TaskRunner pid=493519)[0m                                       'offload_policy': False,
+[36m(TaskRunner pid=493519)[0m                                       'optimizer_offload': False,
+[36m(TaskRunner pid=493519)[0m                                       'param_offload': False,
+[36m(TaskRunner pid=493519)[0m                                       'reshard_after_forward': True,
+[36m(TaskRunner pid=493519)[0m                                       'wrap_policy': {'min_num_params': 0}},
+[36m(TaskRunner pid=493519)[0m                       'lora_alpha': 16,
+[36m(TaskRunner pid=493519)[0m                       'lora_rank': 0,
+[36m(TaskRunner pid=493519)[0m                       'override_config': {},
+[36m(TaskRunner pid=493519)[0m                       'path': '~/models/deepseek-llm-7b-chat',
+[36m(TaskRunner pid=493519)[0m                       'target_modules': 'all-linear',
+[36m(TaskRunner pid=493519)[0m                       'tokenizer_path': '/root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-1.7B',
+[36m(TaskRunner pid=493519)[0m                       'trust_remote_code': False,
+[36m(TaskRunner pid=493519)[0m                       'use_remove_padding': False,
+[36m(TaskRunner pid=493519)[0m                       'use_shm': False},
+[36m(TaskRunner pid=493519)[0m             'optim': {'lr': 1e-05,
+[36m(TaskRunner pid=493519)[0m                       'lr_warmup_steps_ratio': 0.0,
+[36m(TaskRunner pid=493519)[0m                       'min_lr_ratio': None,
+[36m(TaskRunner pid=493519)[0m                       'total_training_steps': -1,
+[36m(TaskRunner pid=493519)[0m                       'warmup_style': 'constant',
+[36m(TaskRunner pid=493519)[0m                       'weight_decay': 0.01},
+[36m(TaskRunner pid=493519)[0m             'ppo_epochs': 1,
+[36m(TaskRunner pid=493519)[0m             'ppo_max_token_len_per_gpu': 32768,
+[36m(TaskRunner pid=493519)[0m             'ppo_micro_batch_size': None,
+[36m(TaskRunner pid=493519)[0m             'ppo_micro_batch_size_per_gpu': None,
+[36m(TaskRunner pid=493519)[0m             'ppo_mini_batch_size': 2,
+[36m(TaskRunner pid=493519)[0m             'rollout_n': 4,
+[36m(TaskRunner pid=493519)[0m             'shuffle': False,
+[36m(TaskRunner pid=493519)[0m             'strategy': 'fsdp',
+[36m(TaskRunner pid=493519)[0m             'ulysses_sequence_parallel_size': 1,
+[36m(TaskRunner pid=493519)[0m             'use_dynamic_bsz': False},
+[36m(TaskRunner pid=493519)[0m  'custom_reward_function': {'name': 'compute_score', 'path': None},
+[36m(TaskRunner pid=493519)[0m  'data': {'custom_cls': {'name': None, 'path': None},
+[36m(TaskRunner pid=493519)[0m           'filter_overlong_prompts': False,
+[36m(TaskRunner pid=493519)[0m           'filter_overlong_prompts_workers': 1,
+[36m(TaskRunner pid=493519)[0m           'image_key': 'images',
+[36m(TaskRunner pid=493519)[0m           'max_prompt_length': 4096,
+[36m(TaskRunner pid=493519)[0m           'max_response_length': 1024,
+[36m(TaskRunner pid=493519)[0m           'prompt_key': 'prompt',
+[36m(TaskRunner pid=493519)[0m           'return_full_prompt': False,
+[36m(TaskRunner pid=493519)[0m           'return_raw_chat': False,
+[36m(TaskRunner pid=493519)[0m           'return_raw_input_ids': False,
+[36m(TaskRunner pid=493519)[0m           'reward_fn_key': 'data_source',
+[36m(TaskRunner pid=493519)[0m           'shuffle': True,
+[36m(TaskRunner pid=493519)[0m           'tokenizer': None,
+[36m(TaskRunner pid=493519)[0m           'train_batch_size': 2,
+[36m(TaskRunner pid=493519)[0m           'train_files': '/root/autodl-tmp/MAS_Science_Infra/data/train.parquet',
+[36m(TaskRunner pid=493519)[0m           'truncation': 'left',
+[36m(TaskRunner pid=493519)[0m           'trust_remote_code': False,
+[36m(TaskRunner pid=493519)[0m           'use_shm': False,
+[36m(TaskRunner pid=493519)[0m           'val_batch_size': None,
+[36m(TaskRunner pid=493519)[0m           'val_files': '/root/autodl-tmp/MAS_Science_Infra/data/val.parquet',
+[36m(TaskRunner pid=493519)[0m           'video_key': 'videos'},
+[36m(TaskRunner pid=493519)[0m  'ray_init': {'num_cpus': None},
+[36m(TaskRunner pid=493519)[0m  'reward_model': {'enable': False,
+[36m(TaskRunner pid=493519)[0m                   'forward_max_token_len_per_gpu': 32768,
+[36m(TaskRunner pid=493519)[0m                   'launch_reward_fn_async': False,
+[36m(TaskRunner pid=493519)[0m                   'max_length': None,
+[36m(TaskRunner pid=493519)[0m                   'micro_batch_size': None,
+[36m(TaskRunner pid=493519)[0m                   'micro_batch_size_per_gpu': None,
+[36m(TaskRunner pid=493519)[0m                   'model': {'external_lib': None,
+[36m(TaskRunner pid=493519)[0m                             'fsdp_config': {'fsdp_size': -1,
+[36m(TaskRunner pid=493519)[0m                                             'param_offload': False,
+[36m(TaskRunner pid=493519)[0m                                             'reshard_after_forward': True,
+[36m(TaskRunner pid=493519)[0m                                             'wrap_policy': {'min_num_params': 0}},
+[36m(TaskRunner pid=493519)[0m                             'input_tokenizer': '/root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-1.7B',
+[36m(TaskRunner pid=493519)[0m                             'path': '~/models/FsfairX-LLaMA3-RM-v0.1',
+[36m(TaskRunner pid=493519)[0m                             'trust_remote_code': False,
+[36m(TaskRunner pid=493519)[0m                             'use_fused_kernels': False,
+[36m(TaskRunner pid=493519)[0m                             'use_remove_padding': False,
+[36m(TaskRunner pid=493519)[0m                             'use_shm': False},
+[36m(TaskRunner pid=493519)[0m                   'reward_manager': 'naive',
+[36m(TaskRunner pid=493519)[0m                   'sandbox_fusion': {'max_concurrent': 64, 'url': None},
+[36m(TaskRunner pid=493519)[0m                   'strategy': 'fsdp',
+[36m(TaskRunner pid=493519)[0m                   'ulysses_sequence_parallel_size': 1,
+[36m(TaskRunner pid=493519)[0m                   'use_dynamic_bsz': False},
+[36m(TaskRunner pid=493519)[0m  'trainer': {'balance_batch': True,
+[36m(TaskRunner pid=493519)[0m              'critic_warmup': 0,
+[36m(TaskRunner pid=493519)[0m              'default_hdfs_dir': None,
+[36m(TaskRunner pid=493519)[0m              'default_local_dir': 'checkpoints/rl_gpu_gate/appo_futkl_1p7b_3step_appo',
+[36m(TaskRunner pid=493519)[0m              'del_local_ckpt_after_load': False,
+[36m(TaskRunner pid=493519)[0m              'device': 'cuda',
+[36m(TaskRunner pid=493519)[0m              'experiment_name': 'appo_futkl_1p7b_3step_appo',
+[36m(TaskRunner pid=493519)[0m              'log_val_generations': 0,
+[36m(TaskRunner pid=493519)[0m              'logger': ['console', 'tensorboard'],
+[36m(TaskRunner pid=493519)[0m              'max_actor_ckpt_to_keep': None,
+[36m(TaskRunner pid=493519)[0m              'max_critic_ckpt_to_keep': None,
+[36m(TaskRunner pid=493519)[0m              'n_gpus_per_node': 1,
+[36m(TaskRunner pid=493519)[0m              'nnodes': 1,
+[36m(TaskRunner pid=493519)[0m              'project_name': 'rl_gpu_gate',
+[36m(TaskRunner pid=493519)[0m              'ray_wait_register_center_timeout': 300,[36m(TaskRunner pid=493519)[0m DeprecationWarning: `ray.state.available_resources_per_node` is a private attribute and access will be removed in a future Ray version.
+[36m(TaskRunner pid=493519)[0m WARNING:2026-10-14 20:40:52,016:Waiting for register center actor B5Bir0_register_center to be ready. Elapsed time: 0 seconds out of 300 seconds.
+[36m(WorkerDict pid=493885)[0m Flash Attention 2.0 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3ForCausalLM is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `torch_dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", torch_dtype=torch.float16)`
+[36m(WorkerDict pid=493885)[0m You are attempting to use Flash Attention 2.0 with a model not initialized on GPU. Make sure to move the model to GPU after initializing it on CPU with `model.to('cuda')`.
+[36m(WorkerDict pid=493885)[0m Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]
+[36m(WorkerDict pid=493885)[0m Loading checkpoint shards:  50%|█████     | 1/2 [00:00<00:00,  2.16it/s]
+[36m(WorkerDict pid=493885)[0m Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00,  3.72it/s]
+[36m(WorkerDict pid=493885)[0m /root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/torch/distributed/fsdp/_init_utils.py:430: UserWarning: FSDP is switching to use `NO_SHARD` instead of ShardingStrategy.FULL_SHARD since the world size is 1.
+[36m(WorkerDict pid=493885)[0m   warnings.warn(
+[36m(WorkerDict pid=493885)[0m /root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/torch/distributed/fsdp/fully_sharded_data_parallel.py:680: FutureWarning: FSDP.state_dict_type() and FSDP.set_state_dict_type() are being deprecated. Please use APIs, get_state_dict() and set_state_dict(), which can support different parallelisms, FSDP1, FSDP2, DDP. API doc: https://pytorch.org/docs/stable/distributed.checkpoint.html#torch.distributed.checkpoint.state_dict.get_state_dict .Tutorial: https://pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html .
+[36m(WorkerDict pid=493885)[0m   warnings.warn(
+[36m(pid=494355)[0m 20:41:38 - LiteLLM:WARNING: get_model_cost_map.py:454 - LiteLLM: Failed to fetch remote model cost map from https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json: [Errno 101] Network is unreachable. Falling back to local backup.
+[36m(pid=494355)[0m WARNING:2026-10-14 20:41:38,483:LiteLLM: Failed to fetch remote model cost map from https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json: [Errno 101] Network is unreachable. Falling back to local backup.
+[36m(PatchedvLLMServer pid=494355)[0m 2026-10-14 20:41:55,400	INFO worker.py:1683 -- Using address 172.17.0.4:33305 set in the environment variable RAY_ADDRESS
+[36m(PatchedvLLMServer pid=494355)[0m 2026-10-14 20:41:55,405	INFO worker.py:1833 -- Connecting to existing Ray cluster at address: 172.17.0.4:33305...
+[36m(PatchedvLLMServer pid=494355)[0m 2026-10-14 20:41:55,422	INFO worker.py:2015 -- Connected to Ray cluster. View the dashboard at [1m[32mhttp://127.0.0.1:8265 [39m[22m
+[36m(WorkerDict pid=493885)[0m Loading safetensors checkpoint shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+[36m(WorkerDict pid=493885)[0m Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:00<00:00,  3.78it/s]
+[36m(WorkerDict pid=493885)[0m Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:00<00:00,  3.78it/s]
+[36m(WorkerDict pid=493885)[0m 
+[36m(TaskRunner pid=493519)[0m WARNING:2026-10-14 20:41:59,912:No host provided, using 0.0.0.0.
+[36m(TaskRunner pid=493519)[0m WARNING:2026-10-14 20:41:59,912:No access host provided, using default outbound IPv4 address for this machine.
+[36m(TaskRunner pid=493519)[0m Training Progress:   0%|          | 0/3 [00:00<?, ?it/s]
+
+[36m(TaskRunner pid=493519)[0m              'resume_from_path': None,
+[36m(TaskRunner pid=493519)[0m              'resume_mode': 'auto',
+[36m(TaskRunner pid=493519)[0m              'rollout_data_dir': None,
+[36m(TaskRunner pid=493519)[0m              'save_freq': -1,
+[36m(TaskRunner pid=493519)[0m              'test_freq': -1,
+[36m(TaskRunner pid=493519)[0m              'total_epochs': 3,
+[36m(TaskRunner pid=493519)[0m              'total_training_steps': 3,
+[36m(TaskRunner pid=493519)[0m              'val_before_train': False,
+[36m(TaskRunner pid=493519)[0m              'validation_data_dir': None}}
+[36m(TaskRunner pid=493519)[0m [validate_config] All configuration checks passed successfully!
+[36m(TaskRunner pid=493519)[0m Size of train dataloader: 10, Size of val dataloader: 1
+[36m(TaskRunner pid=493519)[0m Total training steps: 3
+[36m(TaskRunner pid=493519)[0m colocated worker base class <class 'verl.single_controller.base.worker.Worker'>
+[36m(TaskRunner pid=493519)[0m bind role actor_rollout method execute_method to class <class 'verl.single_controller.ray.base.create_colocated_worker_cls.<locals>.WorkerDict'>
+[36m(TaskRunner pid=493519)[0m bind role actor_rollout method offload to class <class 'verl.single_controller.ray.base.create_colocated_worker_cls.<locals>.WorkerDict'>
+[36m(TaskRunner pid=493519)[0m bind role actor_rollout method resume to class <class 'verl.single_controller.ray.base.create_colocated_worker_cls.<locals>.WorkerDict'>
+[36m(WorkerDict pid=493885)[0m Model config after override: Qwen3Config {
+[36m(WorkerDict pid=493885)[0m   "architectures": [
+[36m(WorkerDict pid=493885)[0m     "Qwen3ForCausalLM"
+[36m(WorkerDict pid=493885)[0m   ],
+[36m(WorkerDict pid=493885)[0m   "attention_bias": false,
+[36m(WorkerDict pid=493885)[0m   "attention_dropout": 0.0,
+[36m(WorkerDict pid=493885)[0m   "eos_token_id": 151645,
+[36m(WorkerDict pid=493885)[0m   "head_dim": 128,
+[36m(WorkerDict pid=493885)[0m   "hidden_act": "silu",
+[36m(WorkerDict pid=493885)[0m   "hidden_size": 2048,
+[36m(WorkerDict pid=493885)[0m   "initializer_range": 0.02,
+[36m(WorkerDict pid=493885)[0m   "intermediate_size": 6144,
+[36m(WorkerDict pid=493885)[0m   "layer_types": [
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention",
+[36m(WorkerDict pid=493885)[0m     "full_attention"
+[36m(WorkerDict pid=493885)[0m   ],
+[36m(WorkerDict pid=493885)[0m   "max_position_embeddings": 40960,
+[36m(WorkerDict pid=493885)[0m   "max_window_layers": 28,
+[36m(WorkerDict pid=493885)[0m   "model_type": "qwen3",
+[36m(WorkerDict pid=493885)[0m   "num_attention_heads": 16,
+[36m(WorkerDict pid=493885)[0m   "num_hidden_layers": 28,
+[36m(WorkerDict pid=493885)[0m   "num_key_value_heads": 8,
+[36m(WorkerDict pid=493885)[0m   "pad_token_id": 151643,
+[36m(WorkerDict pid=493885)[0m   "rms_norm_eps": 1e-06,
+[36m(WorkerDict pid=493885)[0m   "rope_scaling": null,
+[36m(WorkerDict pid=493885)[0m   "rope_theta": 1000000,
+[36m(WorkerDict pid=493885)[0m   "sliding_window": null,
+[36m(WorkerDict pid=493885)[0m   "tie_word_embeddings": true,
+[36m(WorkerDict pid=493885)[0m   "torch_dtype": "bfloat16",
+[36m(WorkerDict pid=493885)[0m   "transformers_version": "4.53.3",
+[36m(WorkerDict pid=493885)[0m   "use_cache": true,
+[36m(WorkerDict pid=493885)[0m   "use_sliding_window": false,
+[36m(WorkerDict pid=493885)[0m   "vocab_size": 151936
+[36m(WorkerDict pid=493885)[0m }
+[36m(WorkerDict pid=493885)[0m 
+[36m(WorkerDict pid=493885)[0m Monkey patch _flash_attention_forward in transformers.integrations.flash_attention
+[36m(WorkerDict pid=493885)[0m Qwen3ForCausalLM contains 1.72B parameters
+[36m(WorkerDict pid=493885)[0m wrap_policy: functools.partial(<function _or_policy at 0x7f56f508b920>, policies=[functools.partial(<function transformer_auto_wrap_policy at 0x7f56f508b7e0>, transformer_layer_cls={<class 'transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer'>})])
+[36m(WorkerDict pid=493885)[0m Total steps: 3, num_warmup_steps: 0
+[36m(WorkerDict pid=493885)[0m Actor use_remove_padding=True
+[36m(WorkerDict pid=493885)[0m Actor use_fused_kernels=False
+[36m(PatchedvLLMServer pid=494355)[0m FastAPI startup
+[36m(PatchedvLLMServer pid=494355)[0m override_generation_config: {'n': 4, 'logprobs': 0, 'max_tokens': 1024, 'temperature': 1.0, 'top_k': -1, 'top_p': 1, 'ignore_eos': False}
+[36m(PatchedvLLMServer pid=494355)[0m WARNING 10-14 20:41:48 [arg_utils.py:1740] Detected VLLM_USE_V1=1 with Engine in background thread. Usage should be considered experimental. Please report any issues on Github.
+[36m(PatchedvLLMServer pid=494355)[0m WARNING 10-14 20:41:48 [cuda.py:102] To see benefits of async output processing, enable CUDA graph. Since, enforce-eager is enabled, async output processor cannot be used
+[36m(PatchedvLLMServer pid=494355)[0m WARNING 10-14 20:41:48 [__init__.py:2662] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reason: In a Ray actor and can only be spawned
+[36m(WorkerDict pid=493885)[0m [DP=0,TP=0] execute_method: init_worker
+[36m(WorkerDict pid=493885)[0m [DP=0,TP=0] execute_method: init_device
+[36m(WorkerDict pid=493885)[0m WARNING 10-14 20:41:56 [topk_topp_sampler.py:59] FlashInfer is not available. Falling back to the PyTorch-native implementation of top-p & top-k sampling. For the best performance, please install FlashInfer.
+[36m(WorkerDict pid=493885)[0m [DP=0,TP=0] execute_method: load_model
+[36m(WorkerDict pid=493885)[0m [DP=0,TP=0] execute_method: get_kv_cache_spec
+[36m(WorkerDict pid=493885)[0m [DP=0,TP=0] execute_method: determine_available_memory
+[36m(WorkerDict pid=493885)[0m [DP=0,TP=0] execute_method: initialize_from_config
+[36m(WorkerDict pid=493885)[0m [DP=0,TP=0] execute_method: compile_or_warm_up_model
+[36m(WorkerDict pid=493885)[0m [DP=0,TP=0] execute_method: initialize_cache
+[36m(TaskRunner pid=493519)[0m Saving tensorboard log to /root/autodl-tmp/MAS_Science_Infra/checkpoints/rl_gpu_gate/appo_futkl_1p7b_3step_appo/tensorboard.
+[36m(TaskRunner pid=493519)[0m Using LocalLogger is deprecated. The constructor API will change 
+[36m(TaskRunner pid=493519)[0m ('Training metrics JSONL: '
+[36m(TaskRunner pid=493519)[0m  '/root/autodl-tmp/MAS_Science_Infra/checkpoints/rl_gpu_gate/appo_futkl_1p7b_3step_appo/metrics.jsonl')
+[36m(TaskRunner pid=493519)[0m Checkpoint tracker file does not exist: %s /root/autodl-tmp/MAS_Science_Infra/checkpoints/rl_gpu_gate/appo_futkl_1p7b_3step_appo/latest_checkpointed_iteration.txt
+[36m(TaskRunner pid=493519)[0m Training from scratch
+[36m(PatchedvLLMServer pid=494355)[0m WARNING 10-14 20:41:59 [config.py:1392] Default sampling parameters have been overridden by the model's Hugging Face generation config recommended from the model creator. If this is not intended, please relaunch vLLM instance with `--generation-config vllm`.[36m(TaskRunner pid=493519)[0m WARNING:2026-10-14 20:42:00,047:[TIR-DIAG route] daemon-to-vllm pid=493519 model=LLM/Qwen3-1.7B endpoint=http://172.17.0.4:37461/v1/ env_proxies={} no_proxy_set=False env_bypass_hint=False
+[36m(TaskRunner pid=493519)[0m INFO:     Started server process [494939]
+[36m(TaskRunner pid=493519)[0m INFO:     Waiting for application startup.
+[36m(TaskRunner pid=493519)[0m INFO:     Application startup complete.
+[36m(TaskRunner pid=493519)[0m INFO:     Uvicorn running on http://0.0.0.0:53687 (Press CTRL+C to quit)
+[36m(TaskRunner pid=493519)[0m WARNING:2026-10-14 20:42:01,308:Loop and lock are not owned by the current process. Clearing them.
+[36m(TaskRunner pid=493519)[0m WARNING:2026-10-14 20:42:01,311:metadata.requester_custom_headers is an empty string. Skipping the span.
+[36m(TaskRunner pid=493519)[0m WARNING:2026-10-14 20:42:01,311:No headers found in 4 subtree spans of root 10183220546422856662. Cannot log to store.
+[36m(TaskRunner pid=493519)[0m WARNING:2026-10-14 20:42:01,352:[TIR-DIAG route] proxy-config pid=493519 model=LLM/Qwen3-1.7B endpoint=http://172.17.0.4:37461/v1/ env_proxies={} no_proxy_set=False env_bypass_hint=False
+🖇 AgentOps: [34mSession Replay for ro-f2041b7e6a21 trace: https://app.agentops.ai/sessions?trace_id=0f874d7510b82f598b7c3212096291c1[0m
+WARNING:2026-10-14 20:42:03,364:[TIR-DIAG route] runner rollout=ro-f2041b7e6a21 pid=491691 model=LLM/Qwen3-1.7B endpoint=http://172.17.0.4:53687/rollout/ro-f2041b7e6a21/attempt/at-299dbee5 env_proxies={} no_proxy_set=False env_bypass_hint=False
+🖇 AgentOps: [34mSession Replay for ro-702403ff6b4c trace: https://app.agentops.ai/sessions?trace_id=c140c38a65263f88307ad9c0c285b20e[0m
+[10/14/26 20:42:03] INFO     [Rollout ro-f2041b7e6a21]      lit_tir_agent.py:120
+                             source=hotpot q=In what year                       
+                             was the narrator of                                
+                             "Blackadder's Christmas Carol"                     
+                             born?When ready, output the                        
+                             final answer enclosed in                           
+                             <answer> and </answer> tags.                       
+                             Do not generate any content                        
+                             after                                              
+WARNING:2026-10-14 20:42:03,370:[TIR-DIAG route] runner rollout=ro-702403ff6b4c pid=491690 model=LLM/Qwen3-1.7B endpoint=http://172.17.0.4:53687/rollout/ro-702403ff6b4c/attempt/at-0750616f env_proxies={} no_proxy_set=False env_bypass_hint=False
+[10/14/26 20:42:03] INFO     [Rollout ro-702403ff6b4c]      lit_tir_agent.py:120
+                             source=hotpot q=In what year                       
+                             was the narrator of                                
+                             "Blackadder's Christmas Carol"                     
+                             born?When ready, output the                        
+                             final answer enclosed in                           
+                             <answer> and </answer> tags.                       
+                             Do not generate any content                        
+                             after                                              
+
+==> Initializing agentflow...
+Enabled tools: ['Base_Generator_Tool', 'Python_Coder_Tool'] with ['Default', 'Default']
+LLM engine name: LLM/Qwen3-1.7B
+Parallel loading: True (standalone mode: 4 workers (CPU=144))
+
+==> Setting up tools...
+Mapped: Base_Generator_Tool -> Generalist_Solution_Generator_Tool (dir: base_generator)
+Mapped: Python_Coder_Tool -> Python_Code_Generator_Tool (dir: python_coder)
+Mapped: Google_Search_Tool -> Ground_Google_Search_Tool (dir: google_search)
+Mapped: Web_Search_Tool -> Web_RAG_Search_Tool (dir: web_search)
+Mapped: Wikipedia_Search_Tool -> Wikipedia_RAG_Search_Tool (dir: wikipedia_search)
+  [0] Base_Generator_Tool -> Generalist_Solution_Generator_Tool -> base_generator
+  [1] Python_Coder_Tool -> Python_Code_Generator_Tool -> python_coder
+
+==> Mapped tools (directory names): ['base_generator', 'python_coder']
+Loading tools and getting metadata... (parallel=True, max_workers=4)
+Updated Python path: ['/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/user_space/projects/agentflow/adapted', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/thirdparty_files', '/root', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra/mas', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main/APPO/verl_arpo_entropy', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python311.zip', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11', '/root/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/lib/python3.11/lib-dynload', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages', '/root/autodl-tmp/MAS_Science_Infra/agent-lightning', '/root/autodl-tmp/MAS_Science_Infra', '/tmp/tmpyqz24pdt', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow']
+
+==> Tool name mapping (short to long): {'Base_Generator_Tool': 'Generalist_Solution_Generator_Tool', 'Python_Coder_Tool': 'Python_Code_Generator_Tool', 'Google_Search_Tool': 'Ground_Google_Search_Tool', 'Web_Search_Tool': 'Web_RAG_Search_Tool', 'Wikipedia_Search_Tool': 'Wikipedia_RAG_Search_Tool'}
+==> Tool name mapping (long to internal): {'Generalist_Solution_Generator_Tool': {'class_name': 'Base_Generator_Tool', 'dir_name': 'base_generator'}, 'Python_Code_Generator_Tool': {'class_name': 'Python_Coder_Tool', 'dir_name': 'python_coder'}, 'Ground_Google_Search_Tool': {'class_name': 'Google_Search_Tool', 'dir_name': 'google_search'}, 'Web_RAG_Search_Tool': {'class_name': 'Web_Search_Tool', 'dir_name': 'web_search'}, 'Wikipedia_RAG_Search_Tool': {'class_name': 'Wikipedia_Search_Tool', 'dir_name': 'wikipedia_search'}}
+
+==> Loading 2 tool modules in parallel...
+⏳ Waiting for all 2 modules to load...
+Error loading tools.base_generator.tool: Error loading module tools.base_generator.tool: No module named 'tools.base_generator'
+Error loading tools.python_coder.tool: Error loading module tools.python_coder.tool: No module named 'tools.python_coder'
+
+==> Total number of tools imported: 0 (took 0.00s)
+
+==> Running demo commands for each tool...
+
+✅ Finished running demo commands for each tool.
+✅ Finished setting up tools.
+✅ Total number of final available tools: 0
+✅ Final available tools: []
+Creating LLM engine for model: gpt-4o
+creating llm engine gpt-4o with: is_multimodal: False, kwargs: {'temperature': 0.7}
+Creating LLM engine for model: LLM/Qwen3-1.7B
+creating llm engine LLM/Qwen3-1.7B with: is_multimodal: False, kwargs: {'base_url': None, 'temperature': 0.7}
+                    INFO     [Rollout ro-f2041b7e6a21]      lit_tir_agent.py:261
+                             src=hotpot                                         
+                             pred="<answer>Base_Generator_T                     
+                             ool failed: Engine                                 
+                             LLM/Qwen3-1.7B not supported.                      
+                             If you are using Azure OpenAI                      
+                             models, please ensure the                          
+                             model string has the prefix                        
+                             'azure-'. For Together models,                     
+                             use 'together-'. For VLLM                          
+                             models, use 'vllm-'. For                           
+                             LiteLLM models, use                                
+                             'litellm-'. For Ollama models,                     
+                             use 'ollama-'. For other                           
+                             custom engines, you can edit                       
+                             the factory.py file and add                        
+                             its interface file. Your pull                      
+                             request will be warmly                             
+                             welcomed!</answer>" gt='1959'                      
+                             fmt=True R=0.000 search=0 py=0                     
+                             branch_local=0 t=0.18s                             
+🖇 AgentOps: [34mSession Replay for ro-f2041b7e6a21.session trace: https://app.agentops.ai/sessions?trace_id=0f874d7510b82f598b7c3212096291c1[0m
+                    INFO     [Worker 1 | Rollout ro-f2041b7e6a21]   agent.py:704
+                             Completed in 0.22s. Collected 34                   
+                             span(s). Final reward: 0.0                         
+                    INFO     [Worker 1] Progress: 1/unlimited       agent.py:785
+🖇 AgentOps: [34mSession Replay for ro-bf760291c82a trace: https://app.agentops.ai/sessions?trace_id=9ae6fa76a0328a74ae8b4ea6c2c515bc[0m
+                    INFO     [Rollout ro-bf760291c82a]      lit_tir_agent.py:120
+                             source=hotpot q=Robert Earl                        
+                             Holding owned an oil company                       
+                             that was originally founded by                     
+                             who?When ready, output the                         
+                             final answer enclosed in                           
+                             <answer> and </answer> tags.                       
+                             Do not generate any content                        
+
+==> Initializing agentflow...
+Enabled tools: ['Base_Generator_Tool', 'Python_Coder_Tool'] with ['Default', 'Default']
+LLM engine name: LLM/Qwen3-1.7B
+Parallel loading: True (standalone mode: 4 workers (CPU=144))
+
+==> Setting up tools...
+Mapped: Base_Generator_Tool -> Generalist_Solution_Generator_Tool (dir: base_generator)
+Mapped: Python_Coder_Tool -> Python_Code_Generator_Tool (dir: python_coder)
+Mapped: Google_Search_Tool -> Ground_Google_Search_Tool (dir: google_search)
+Mapped: Web_Search_Tool -> Web_RAG_Search_Tool (dir: web_search)
+Mapped: Wikipedia_Search_Tool -> Wikipedia_RAG_Search_Tool (dir: wikipedia_search)
+  [0] Base_Generator_Tool -> Generalist_Solution_Generator_Tool -> base_generator
+  [1] Python_Coder_Tool -> Python_Code_Generator_Tool -> python_coder
+
+==> Mapped tools (directory names): ['base_generator', 'python_coder']
+Loading tools and getting metadata... (parallel=True, max_workers=4)
+Updated Python path: ['/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/user_space/projects/agentflow/adapted', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/thirdparty_files', '/root', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra/mas', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main/APPO/verl_arpo_entropy', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python311.zip', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11', '/root/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/lib/python3.11/lib-dynload', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages', '/root/autodl-tmp/MAS_Science_Infra/agent-lightning', '/root/autodl-tmp/MAS_Science_Infra', '/tmp/tmpyqz24pdt', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow']
+
+==> Tool name mapping (short to long): {'Base_Generator_Tool': 'Generalist_Solution_Generator_Tool', 'Python_Coder_Tool': 'Python_Code_Generator_Tool', 'Google_Search_Tool': 'Ground_Google_Search_Tool', 'Web_Search_Tool': 'Web_RAG_Search_Tool', 'Wikipedia_Search_Tool': 'Wikipedia_RAG_Search_Tool'}
+==> Tool name mapping (long to internal): {'Generalist_Solution_Generator_Tool': {'class_name': 'Base_Generator_Tool', 'dir_name': 'base_generator'}, 'Python_Code_Generator_Tool': {'class_name': 'Python_Coder_Tool', 'dir_name': 'python_coder'}, 'Ground_Google_Search_Tool': {'class_name': 'Google_Search_Tool', 'dir_name': 'google_search'}, 'Web_RAG_Search_Tool': {'class_name': 'Web_Search_Tool', 'dir_name': 'web_search'}, 'Wikipedia_RAG_Search_Tool': {'class_name': 'Wikipedia_Search_Tool', 'dir_name': 'wikipedia_search'}}
+
+==> Loading 2 tool modules in parallel...
+⏳ Waiting for all 2 modules to load...
+Error loading tools.base_generator.tool: Error loading module tools.base_generator.tool: No module named 'tools.base_generator'
+Error loading tools.python_coder.tool: Error loading module tools.python_coder.tool: No module named 'tools.python_coder'
+
+==> Total number of tools imported: 0 (took 0.00s)
+
+==> Running demo commands for each tool...
+
+✅ Finished running demo commands for each tool.
+✅ Finished setting up tools.
+✅ Total number of final available tools: 0
+✅ Final available tools: []
+Creating LLM engine for model: gpt-4o
+creating llm engine gpt-4o with: is_multimodal: False, kwargs: {'temperature': 0.7}
+Creating LLM engine for model: LLM/Qwen3-1.7B
+creating llm engine LLM/Qwen3-1.7B with: is_multimodal: False, kwargs: {'base_url': None, 'temperature': 0.7}
+                    INFO     [Rollout ro-702403ff6b4c]      lit_tir_agent.py:261
+                             src=hotpot                                         
+                             pred="<answer>Base_Generator_T                     
+                             ool failed: Engine                                 
+                             LLM/Qwen3-1.7B not supported.                      
+                             If you are using Azure OpenAI                      
+                             models, please ensure the                          
+                             model string has the prefix                        
+                             'azure-'. For Together models,                     
+                             use 'together-'. For VLLM                          
+                             models, use 'vllm-'. For                           
+                             LiteLLM models, use                                
+                             'litellm-'. For Ollama models,                     
+                             use 'ollama-'. For other                           
+                             custom engines, you can edit                       
+                             the factory.py file and add                        
+                             its interface file. Your pull                      
+                             request will be warmly                             
+                             welcomed!</answer>" gt='1959'                      
+                             fmt=True R=0.000 search=0 py=0                     
+                             branch_local=0 t=0.29s                             
+🖇 AgentOps: [34mSession Replay for ro-702403ff6b4c.session trace: https://app.agentops.ai/sessions?trace_id=c140c38a65263f88307ad9c0c285b20e[0m
+                    INFO     [Worker 0 | Rollout ro-702403ff6b4c]   agent.py:704
+                             Completed in 0.34s. Collected 34                   
+                             span(s). Final reward: 0.0                         
+                    INFO     [Worker 0] Progress: 1/unlimited       agent.py:785
+
+==> Initializing agentflow...
+Enabled tools: ['Base_Generator_Tool', 'Python_Coder_Tool'] with ['Default', 'Default']
+LLM engine name: LLM/Qwen3-1.7B
+Parallel loading: True (standalone mode: 4 workers (CPU=144))
+
+==> Setting up tools...
+Mapped: Base_Generator_Tool -> Generalist_Solution_Generator_Tool (dir: base_generator)
+Mapped: Python_Coder_Tool -> Python_Code_Generator_Tool (dir: python_coder)
+Mapped: Google_Search_Tool -> Ground_Google_Search_Tool (dir: google_search)
+Mapped: Web_Search_Tool -> Web_RAG_Search_Tool (dir: web_search)
+Mapped: Wikipedia_Search_Tool -> Wikipedia_RAG_Search_Tool (dir: wikipedia_search)
+  [0] Base_Generator_Tool -> Generalist_Solution_Generator_Tool -> base_generator
+  [1] Python_Coder_Tool -> Python_Code_Generator_Tool -> python_coder
+
+==> Mapped tools (directory names): ['base_generator', 'python_coder']
+Loading tools and getting metadata... (parallel=True, max_workers=4)
+Updated Python path: ['/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/user_space/projects/agentflow/adapted', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/thirdparty_files', '/root', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra/mas', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main/APPO/verl_arpo_entropy', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python311.zip', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11', '/root/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/lib/python3.11/lib-dynload', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages', '/root/autodl-tmp/MAS_Science_Infra/agent-lightning', '/root/autodl-tmp/MAS_Science_Infra', '/tmp/tmpyqz24pdt', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow']
+
+==> Tool name mapping (short to long): {'Base_Generator_Tool': 'Generalist_Solution_Generator_Tool', 'Python_Coder_Tool': 'Python_Code_Generator_Tool', 'Google_Search_Tool': 'Ground_Google_Search_Tool', 'Web_Search_Tool': 'Web_RAG_Search_Tool', 'Wikipedia_Search_Tool': 'Wikipedia_RAG_Search_Tool'}
+==> Tool name mapping (long to internal): {'Generalist_Solution_Generator_Tool': {'class_name': 'Base_Generator_Tool', 'dir_name': 'base_generator'}, 'Python_Code_Generator_Tool': {'class_name': 'Python_Coder_Tool', 'dir_name': 'python_coder'}, 'Ground_Google_Search_Tool': {'class_name': 'Google_Search_Tool', 'dir_name': 'google_search'}, 'Web_RAG_Search_Tool': {'class_name': 'Web_Search_Tool', 'dir_name': 'web_search'}, 'Wikipedia_RAG_Search_Tool': {'class_name': 'Wikipedia_Search_Tool', 'dir_name': 'wikipedia_search'}}
+
+==> Loading 2 tool modules in parallel...
+⏳ Waiting for all 2 modules to load...
+Error loading tools.base_generator.tool: Error loading module tools.base_generator.tool: No module named 'tools.base_generator'
+Error loading tools.python_coder.tool: Error loading module tools.python_coder.tool: No module named 'tools.python_coder'
+
+==> Total number of tools imported: 0 (took 0.00s)
+
+==> Running demo commands for each tool...
+
+✅ Finished running demo commands for each tool.
+✅ Finished setting up tools.
+✅ Total number of final available tools: 0
+✅ Final available tools: []
+Creating LLM engine for model: gpt-4o
+creating llm engine gpt-4o with: is_multimodal: False, kwargs: {'temperature': 0.7}
+Creating LLM engine for model: LLM/Qwen3-1.7B
+creating llm engine LLM/Qwen3-1.7B with: is_multimodal: False, kwargs: {'base_url': None, 'temperature': 0.7}
+                    INFO     [Rollout ro-bf760291c82a]      lit_tir_agent.py:261
+                             src=hotpot                                         
+                             pred="<answer>Base_Generator_T                     
+                             ool failed: Engine                                 
+                             LLM/Qwen3-1.7B not supported.                      
+                             If you are using Azure OpenAI                      
+                             models, please ensure the                          
+                             model string has the prefix                        
+                             'azure-'. For Together models,                     
+                             use 'together-'. For VLLM                          
+                             models, use 'vllm-'. For                           
+                             LiteLLM models, use                                
+                             'litellm-'. For Ollama models,                     
+                             use 'ollama-'. For other                           
+                             custom engines, you can edit                       
+                             the factory.py file and add                        
+                             its interface file. Your pull                      
+                             request will be warmly                             
+                             welcomed!</answer>" gt='Harry                      
+                             F. Sinclair' fmt=True R=0.000                      
+                             search=0 py=0 branch_local=0                       
+                             t=0.13s                                            
+🖇 AgentOps: [34mSession Replay for ro-019aa321eb7c trace: https://app.agentops.ai/sessions?trace_id=794468191ee48ff9d0a54636ce800e3a[0m
+                    INFO     [Rollout ro-019aa321eb7c]      lit_tir_agent.py:120
+                             source=hotpot q=Robert Earl                        
+                             Holding owned an oil company                       
+                             that was originally founded by                     
+                             who?When ready, output the                         
+                             final answer enclosed in                           
+                             <answer> and </answer> tags.                       
+                             Do not generate any content                        
+🖇 AgentOps: [34mSession Replay for ro-bf760291c82a.session trace: https://app.agentops.ai/sessions?trace_id=9ae6fa76a0328a74ae8b4ea6c2c515bc[0m
+                    INFO     [Worker 1 | Rollout ro-bf760291c82a]   agent.py:704
+                             Completed in 0.17s. Collected 34                   
+                             span(s). Final reward: 0.0                         
+
+==> Initializing agentflow...
+Enabled tools: ['Base_Generator_Tool', 'Python_Coder_Tool'] with ['Default', 'Default']
+LLM engine name: LLM/Qwen3-1.7B
+Parallel loading: True (standalone mode: 4 workers (CPU=144))
+
+==> Setting up tools...
+Mapped: Base_Generator_Tool -> Generalist_Solution_Generator_Tool (dir: base_generator)
+Mapped: Python_Coder_Tool -> Python_Code_Generator_Tool (dir: python_coder)
+Mapped: Google_Search_Tool -> Ground_Google_Search_Tool (dir: google_search)
+Mapped: Web_Search_Tool -> Web_RAG_Search_Tool (dir: web_search)
+Mapped: Wikipedia_Search_Tool -> Wikipedia_RAG_Search_Tool (dir: wikipedia_search)
+  [0] Base_Generator_Tool -> Generalist_Solution_Generator_Tool -> base_generator
+  [1] Python_Coder_Tool -> Python_Code_Generator_Tool -> python_coder
+
+==> Mapped tools (directory names): ['base_generator', 'python_coder']
+Loading tools and getting metadata... (parallel=True, max_workers=4)
+Updated Python path: ['/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/user_space/projects/agentflow/adapted', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/thirdparty_files', '/root', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra/mas', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main/APPO/verl_arpo_entropy', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python311.zip', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11', '/root/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/lib/python3.11/lib-dynload', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages', '/root/autodl-tmp/MAS_Science_Infra/agent-lightning', '/root/autodl-tmp/MAS_Science_Infra', '/tmp/tmpyqz24pdt', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow']
+
+==> Tool name mapping (short to long): {'Base_Generator_Tool': 'Generalist_Solution_Generator_Tool', 'Python_Coder_Tool': 'Python_Code_Generator_Tool', 'Google_Search_Tool': 'Ground_Google_Search_Tool', 'Web_Search_Tool': 'Web_RAG_Search_Tool', 'Wikipedia_Search_Tool': 'Wikipedia_RAG_Search_Tool'}
+==> Tool name mapping (long to internal): {'Generalist_Solution_Generator_Tool': {'class_name': 'Base_Generator_Tool', 'dir_name': 'base_generator'}, 'Python_Code_Generator_Tool': {'class_name': 'Python_Coder_Tool', 'dir_name': 'python_coder'}, 'Ground_Google_Search_Tool': {'class_name': 'Google_Search_Tool', 'dir_name': 'google_search'}, 'Web_RAG_Search_Tool': {'class_name': 'Web_Search_Tool', 'dir_name': 'web_search'}, 'Wikipedia_RAG_Search_Tool': {'class_name': 'Wikipedia_Search_Tool', 'dir_name': 'wikipedia_search'}}
+
+==> Loading 2 tool modules in parallel...
+⏳ Waiting for all 2 modules to load...
+Error loading tools.base_generator.tool: Error loading module tools.base_generator.tool: No module named 'tools.base_generator'
+Error loading tools.python_coder.tool: Error loading module tools.python_coder.tool: No module named 'tools.python_coder'
+
+==> Total number of tools imported: 0 (took 0.00s)
+
+==> Running demo commands for each tool...
+
+✅ Finished running demo commands for each tool.
+✅ Finished setting up tools.
+✅ Total number of final available tools: 0
+✅ Final available tools: []
+Creating LLM engine for model: gpt-4o
+creating llm engine gpt-4o with: is_multimodal: False, kwargs: {'temperature': 0.7}
+Creating LLM engine for model: LLM/Qwen3-1.7B
+creating llm engine LLM/Qwen3-1.7B with: is_multimodal: False, kwargs: {'base_url': None, 'temperature': 0.7}
+                    INFO     [Rollout ro-019aa321eb7c]      lit_tir_agent.py:261
+                             src=hotpot                                         
+                             pred="<answer>Base_Generator_T                     
+                             ool failed: Engine                                 
+                             LLM/Qwen3-1.7B not supported.                      
+                             If you are using Azure OpenAI                      
+                             models, please ensure the                          
+                             model string has the prefix                        
+                             'azure-'. For Together models,                     
+                             use 'together-'. For VLLM                          
+                             models, use 'vllm-'. For                           
+                             LiteLLM models, use                                
+                             'litellm-'. For Ollama models,                     
+                             use 'ollama-'. For other                           
+                             custom engines, you can edit                       
+                             the factory.py file and add                        
+                             its interface file. Your pull                      
+                             request will be warmly                             
+                             welcomed!</answer>" gt='Harry                      
+                             F. Sinclair' fmt=True R=0.000                      
+                             search=0 py=0 branch_local=0                       
+                             t=0.18s                                            
+🖇 AgentOps: [34mSession Replay for ro-019aa321eb7c.session trace: https://app.agentops.ai/sessions?trace_id=794468191ee48ff9d0a54636ce800e3a[0m
+                    INFO     [Worker 0 | Rollout ro-019aa321eb7c]   agent.py:704
+                             Completed in 0.21s. Collected 34                   
+                             span(s). Final reward: 0.0                         
+🖇 AgentOps: [34mSession Replay for ro-7cc61a6fece1 trace: https://app.agentops.ai/sessions?trace_id=70befe79a698e97c1abdf0472ebc65b8[0m
+[10/14/26 20:42:13] INFO     [Rollout ro-7cc61a6fece1]      lit_tir_agent.py:120
+                             source=hotpot q=In what year                       
+                             was the narrator of                                
+                             "Blackadder's Christmas Carol"                     
+                             born?When ready, output the                        
+                             final answer enclosed in                           
+                             <answer> and </answer> tags.                       
+                             Do not generate any content                        
+                             after                                              
+🖇 AgentOps: [34mSession Replay for ro-987be1574f28 trace: https://app.agentops.ai/sessions?trace_id=fe7c93058293a5caf99b3b574b608fe3[0m
+[10/14/26 20:42:13] INFO     [Rollout ro-987be1574f28]      lit_tir_agent.py:120
+                             source=hotpot q=In what year                       
+                             was the narrator of                                
+                             "Blackadder's Christmas Carol"                     
+                             born?When ready, output the                        
+                             final answer enclosed in                           
+                             <answer> and </answer> tags.                       
+                             Do not generate any content                        
+                             after                                              
+
+==> Initializing agentflow...
+Enabled tools: ['Base_Generator_Tool', 'Python_Coder_Tool'] with ['Default', 'Default']
+LLM engine name: LLM/Qwen3-1.7B
+Parallel loading: True (standalone mode: 4 workers (CPU=144))
+
+==> Setting up tools...
+Mapped: Base_Generator_Tool -> Generalist_Solution_Generator_Tool (dir: base_generator)
+Mapped: Python_Coder_Tool -> Python_Code_Generator_Tool (dir: python_coder)
+Mapped: Google_Search_Tool -> Ground_Google_Search_Tool (dir: google_search)
+Mapped: Web_Search_Tool -> Web_RAG_Search_Tool (dir: web_search)
+Mapped: Wikipedia_Search_Tool -> Wikipedia_RAG_Search_Tool (dir: wikipedia_search)
+  [0] Base_Generator_Tool -> Generalist_Solution_Generator_Tool -> base_generator
+  [1] Python_Coder_Tool -> Python_Code_Generator_Tool -> python_coder
+
+==> Mapped tools (directory names): ['base_generator', 'python_coder']
+Loading tools and getting metadata... (parallel=True, max_workers=4)
+Updated Python path: ['/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/user_space/projects/agentflow/adapted', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/thirdparty_files', '/root', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra/mas', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main/APPO/verl_arpo_entropy', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python311.zip', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11', '/root/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/lib/python3.11/lib-dynload', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages', '/root/autodl-tmp/MAS_Science_Infra/agent-lightning', '/root/autodl-tmp/MAS_Science_Infra', '/tmp/tmpyqz24pdt', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow']
+
+==> Tool name mapping (short to long): {'Base_Generator_Tool': 'Generalist_Solution_Generator_Tool', 'Python_Coder_Tool': 'Python_Code_Generator_Tool', 'Google_Search_Tool': 'Ground_Google_Search_Tool', 'Web_Search_Tool': 'Web_RAG_Search_Tool', 'Wikipedia_Search_Tool': 'Wikipedia_RAG_Search_Tool'}
+==> Tool name mapping (long to internal): {'Generalist_Solution_Generator_Tool': {'class_name': 'Base_Generator_Tool', 'dir_name': 'base_generator'}, 'Python_Code_Generator_Tool': {'class_name': 'Python_Coder_Tool', 'dir_name': 'python_coder'}, 'Ground_Google_Search_Tool': {'class_name': 'Google_Search_Tool', 'dir_name': 'google_search'}, 'Web_RAG_Search_Tool': {'class_name': 'Web_Search_Tool', 'dir_name': 'web_search'}, 'Wikipedia_RAG_Search_Tool': {'class_name': 'Wikipedia_Search_Tool', 'dir_name': 'wikipedia_search'}}
+
+==> Loading 2 tool modules in parallel...
+⏳ Waiting for all 2 modules to load...
+Error loading tools.base_generator.tool: Error loading module tools.base_generator.tool: No module named 'tools.base_generator'
+Error loading tools.python_coder.tool: Error loading module tools.python_coder.tool: No module named 'tools.python_coder'
+
+==> Total number of tools imported: 0 (took 0.00s)
+
+==> Running demo commands for each tool...
+
+✅ Finished running demo commands for each tool.
+✅ Finished setting up tools.
+✅ Total number of final available tools: 0
+✅ Final available tools: []
+Creating LLM engine for model: gpt-4o
+creating llm engine gpt-4o with: is_multimodal: False, kwargs: {'temperature': 0.7}
+Creating LLM engine for model: LLM/Qwen3-1.7B
+creating llm engine LLM/Qwen3-1.7B with: is_multimodal: False, kwargs: {'base_url': None, 'temperature': 0.7}
+                    INFO     [Rollout ro-7cc61a6fece1]      lit_tir_agent.py:261
+                             src=hotpot                                         
+                             pred="<answer>Base_Generator_T                     
+                             ool failed: Engine                                 
+                             LLM/Qwen3-1.7B not supported.                      
+                             If you are using Azure OpenAI                      
+                             models, please ensure the                          
+                             model string has the prefix                        
+                             'azure-'. For Together models,                     
+                             use 'together-'. For VLLM                          
+                             models, use 'vllm-'. For                           
+                             LiteLLM models, use                                
+                             'litellm-'. For Ollama models,                     
+                             use 'ollama-'. For other                           
+                             custom engines, you can edit                       
+                             the factory.py file and add                        
+                             its interface file. Your pull                      
+                             request will be warmly                             
+                             welcomed!</answer>" gt='1959'                      
+                             fmt=True R=0.000 search=0 py=0                     
+                             branch_local=0 t=0.25s                             
+🖇 AgentOps: [34mSession Replay for ro-7cc61a6fece1.session trace: https://app.agentops.ai/sessions?trace_id=70befe79a698e97c1abdf0472ebc65b8[0m
+                    INFO     [Worker 1 | Rollout ro-7cc61a6fece1]   agent.py:704
+                             Completed in 0.30s. Collected 34                   
+                             span(s). Final reward: 0.0                         
+🖇 AgentOps: [34mSession Replay for ro-c1bed83edb15 trace: https://app.agentops.ai/sessions?trace_id=6502a8894e4ed96c90192ec10f72f418[0m
+                    INFO     [Rollout ro-c1bed83edb15]      lit_tir_agent.py:120
+                             source=hotpot q=Robert Earl                        
+                             Holding owned an oil company                       
+                             that was originally founded by                     
+                             who?When ready, output the                         
+                             final answer enclosed in                           
+                             <answer> and </answer> tags.                       
+                             Do not generate any content                        
+
+==> Initializing agentflow...
+Enabled tools: ['Base_Generator_Tool', 'Python_Coder_Tool'] with ['Default', 'Default']
+LLM engine name: LLM/Qwen3-1.7B
+Parallel loading: True (standalone mode: 4 workers (CPU=144))
+
+==> Setting up tools...
+Mapped: Base_Generator_Tool -> Generalist_Solution_Generator_Tool (dir: base_generator)
+Mapped: Python_Coder_Tool -> Python_Code_Generator_Tool (dir: python_coder)
+Mapped: Google_Search_Tool -> Ground_Google_Search_Tool (dir: google_search)
+Mapped: Web_Search_Tool -> Web_RAG_Search_Tool (dir: web_search)
+Mapped: Wikipedia_Search_Tool -> Wikipedia_RAG_Search_Tool (dir: wikipedia_search)
+  [0] Base_Generator_Tool -> Generalist_Solution_Generator_Tool -> base_generator
+  [1] Python_Coder_Tool -> Python_Code_Generator_Tool -> python_coder
+
+==> Mapped tools (directory names): ['base_generator', 'python_coder']
+Loading tools and getting metadata... (parallel=True, max_workers=4)
+Updated Python path: ['/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/user_space/projects/agentflow/adapted', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/thirdparty_files', '/root', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra/mas', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main/APPO/verl_arpo_entropy', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python311.zip', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11', '/root/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/lib/python3.11/lib-dynload', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages', '/root/autodl-tmp/MAS_Science_Infra/agent-lightning', '/root/autodl-tmp/MAS_Science_Infra', '/tmp/tmpyqz24pdt', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow']
+
+==> Tool name mapping (short to long): {'Base_Generator_Tool': 'Generalist_Solution_Generator_Tool', 'Python_Coder_Tool': 'Python_Code_Generator_Tool', 'Google_Search_Tool': 'Ground_Google_Search_Tool', 'Web_Search_Tool': 'Web_RAG_Search_Tool', 'Wikipedia_Search_Tool': 'Wikipedia_RAG_Search_Tool'}
+==> Tool name mapping (long to internal): {'Generalist_Solution_Generator_Tool': {'class_name': 'Base_Generator_Tool', 'dir_name': 'base_generator'}, 'Python_Code_Generator_Tool': {'class_name': 'Python_Coder_Tool', 'dir_name': 'python_coder'}, 'Ground_Google_Search_Tool': {'class_name': 'Google_Search_Tool', 'dir_name': 'google_search'}, 'Web_RAG_Search_Tool': {'class_name': 'Web_Search_Tool', 'dir_name': 'web_search'}, 'Wikipedia_RAG_Search_Tool': {'class_name': 'Wikipedia_Search_Tool', 'dir_name': 'wikipedia_search'}}
+
+==> Loading 2 tool modules in parallel...
+⏳ Waiting for all 2 modules to load...
+Error loading tools.base_generator.tool: Error loading module tools.base_generator.tool: No module named 'tools.base_generator'
+Error loading tools.python_coder.tool: Error loading module tools.python_coder.tool: No module named 'tools.python_coder'
+
+==> Total number of tools imported: 0 (took 0.00s)
+
+==> Running demo commands for each tool...
+
+✅ Finished running demo commands for each tool.
+✅ Finished setting up tools.
+✅ Total number of final available tools: 0
+✅ Final available tools: []
+Creating LLM engine for model: gpt-4o
+creating llm engine gpt-4o with: is_multimodal: False, kwargs: {'temperature': 0.7}
+Creating LLM engine for model: LLM/Qwen3-1.7B
+creating llm engine LLM/Qwen3-1.7B with: is_multimodal: False, kwargs: {'base_url': None, 'temperature': 0.7}
+                    INFO     [Rollout ro-987be1574f28]      lit_tir_agent.py:261
+                             src=hotpot                                         
+                             pred="<answer>Base_Generator_T                     
+                             ool failed: Engine                                 
+                             LLM/Qwen3-1.7B not supported.                      
+                             If you are using Azure OpenAI                      
+                             models, please ensure the                          
+                             model string has the prefix                        
+                             'azure-'. For Together models,                     
+                             use 'together-'. For VLLM                          
+                             models, use 'vllm-'. For                           
+                             LiteLLM models, use                                
+                             'litellm-'. For Ollama models,                     
+                             use 'ollama-'. For other                           
+                             custom engines, you can edit                       
+                             the factory.py file and add                        
+                             its interface file. Your pull                      
+                             request will be warmly                             
+                             welcomed!</answer>" gt='1959'                      
+                             fmt=True R=0.000 search=0 py=0                     
+                             branch_local=0 t=0.25s                             
+🖇 AgentOps: [34mSession Replay for ro-987be1574f28.session trace: https://app.agentops.ai/sessions?trace_id=fe7c93058293a5caf99b3b574b608fe3[0m
+
+==> Initializing agentflow...
+Enabled tools: ['Base_Generator_Tool', 'Python_Coder_Tool'] with ['Default', 'Default']
+LLM engine name: LLM/Qwen3-1.7B
+Parallel loading: True (standalone mode: 4 workers (CPU=144))
+
+==> Setting up tools...
+Mapped: Base_Generator_Tool -> Generalist_Solution_Generator_Tool (dir: base_generator)
+Mapped: Python_Coder_Tool -> Python_Code_Generator_Tool (dir: python_coder)
+Mapped: Google_Search_Tool -> Ground_Google_Search_Tool (dir: google_search)
+Mapped: Web_Search_Tool -> Web_RAG_Search_Tool (dir: web_search)
+Mapped: Wikipedia_Search_Tool -> Wikipedia_RAG_Search_Tool (dir: wikipedia_search)
+  [0] Base_Generator_Tool -> Generalist_Solution_Generator_Tool -> base_generator
+  [1] Python_Coder_Tool -> Python_Code_Generator_Tool -> python_coder
+
+==> Mapped tools (directory names): ['base_generator', 'python_coder']
+Loading tools and getting metadata... (parallel=True, max_workers=4)
+Updated Python path: ['/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/user_space/projects/agentflow/adapted', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/thirdparty_files', '/root', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra/mas', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main/APPO/verl_arpo_entropy', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python311.zip', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11', '/root/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/lib/python3.11/lib-dynload', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages', '/root/autodl-tmp/MAS_Science_Infra/agent-lightning', '/root/autodl-tmp/MAS_Science_Infra', '/tmp/tmpyqz24pdt', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow']
+
+==> Tool name mapping (short to long): {'Base_Generator_Tool': 'Generalist_Solution_Generator_Tool', 'Python_Coder_Tool': 'Python_Code_Generator_Tool', 'Google_Search_Tool': 'Ground_Google_Search_Tool', 'Web_Search_Tool': 'Web_RAG_Search_Tool', 'Wikipedia_Search_Tool': 'Wikipedia_RAG_Search_Tool'}
+==> Tool name mapping (long to internal): {'Generalist_Solution_Generator_Tool': {'class_name': 'Base_Generator_Tool', 'dir_name': 'base_generator'}, 'Python_Code_Generator_Tool': {'class_name': 'Python_Coder_Tool', 'dir_name': 'python_coder'}, 'Ground_Google_Search_Tool': {'class_name': 'Google_Search_Tool', 'dir_name': 'google_search'}, 'Web_RAG_Search_Tool': {'class_name': 'Web_Search_Tool', 'dir_name': 'web_search'}, 'Wikipedia_RAG_Search_Tool': {'class_name': 'Wikipedia_Search_Tool', 'dir_name': 'wikipedia_search'}}
+
+==> Loading 2 tool modules in parallel...
+⏳ Waiting for all 2 modules to load...
+Error loading tools.base_generator.tool: Error loading module tools.base_generator.tool: No module named 'tools.base_generator'
+Error loading tools.python_coder.tool: Error loading module tools.python_coder.tool: No module named 'tools.python_coder'
+
+==> Total number of tools imported: 0 (took 0.00s)
+
+==> Running demo commands for each tool...
+
+✅ Finished running demo commands for each tool.
+✅ Finished setting up tools.
+✅ Total number of final available tools: 0
+✅ Final available tools: []
+Creating LLM engine for model: gpt-4o
+creating llm engine gpt-4o with: is_multimodal: False, kwargs: {'temperature': 0.7}
+Creating LLM engine for model: LLM/Qwen3-1.7B
+creating llm engine LLM/Qwen3-1.7B with: is_multimodal: False, kwargs: {'base_url': None, 'temperature': 0.7}
+                    INFO     [Rollout ro-c1bed83edb15]      lit_tir_agent.py:261
+                             src=hotpot                                         
+                             pred="<answer>Base_Generator_T                     
+                             ool failed: Engine                                 
+                             LLM/Qwen3-1.7B not supported.                      
+                             If you are using Azure OpenAI                      
+                             models, please ensure the                          
+                             model string has the prefix                        
+                             'azure-'. For Together models,                     
+                             use 'together-'. For VLLM                          
+                             models, use 'vllm-'. For                           
+                             LiteLLM models, use                                
+                             'litellm-'. For Ollama models,                     
+                             use 'ollama-'. For other                           
+                             custom engines, you can edit                       
+                             the factory.py file and add                        
+                             its interface file. Your pull                      
+                             request will be warmly                             
+                             welcomed!</answer>" gt='Harry                      
+                             F. Sinclair' fmt=True R=0.000                      
+                             search=0 py=0 branch_local=0                       
+                             t=0.15s                                            
+                    INFO     [Worker 0 | Rollout ro-987be1574f28]   agent.py:704
+                             Completed in 0.29s. Collected 34                   
+                             span(s). Final reward: 0.0                         
+🖇 AgentOps: [34mSession Replay for ro-c1bed83edb15.session trace: https://app.agentops.ai/sessions?trace_id=6502a8894e4ed96c90192ec10f72f418[0m
+                    INFO     [Worker 1 | Rollout ro-c1bed83edb15]   agent.py:704
+                             Completed in 0.18s. Collected 34                   
+                             span(s). Final reward: 0.0                         
+🖇 AgentOps: [34mSession Replay for ro-be112f739c36 trace: https://app.agentops.ai/sessions?trace_id=d661a59929882b7816442f575ff4a407[0m
+                    INFO     [Rollout ro-be112f739c36]      lit_tir_agent.py:120
+                             source=hotpot q=Robert Earl                        
+                             Holding owned an oil company                       
+                             that was originally founded by                     
+                             who?When ready, output the                         
+                             final answer enclosed in                           
+                             <answer> and </answer> tags.                       
+                             Do not generate any content                        
+
+==> Initializing agentflow...
+Enabled tools: ['Base_Generator_Tool', 'Python_Coder_Tool'] with ['Default', 'Default']
+LLM engine name: LLM/Qwen3-1.7B
+Parallel loading: True (standalone mode: 4 workers (CPU=144))
+
+==> Setting up tools...
+Mapped: Base_Generator_Tool -> Generalist_Solution_Generator_Tool (dir: base_generator)
+Mapped: Python_Coder_Tool -> Python_Code_Generator_Tool (dir: python_coder)
+Mapped: Google_Search_Tool -> Ground_Google_Search_Tool (dir: google_search)
+Mapped: Web_Search_Tool -> Web_RAG_Search_Tool (dir: web_search)
+Mapped: Wikipedia_Search_Tool -> Wikipedia_RAG_Search_Tool (dir: wikipedia_search)
+  [0] Base_Generator_Tool -> Generalist_Solution_Generator_Tool -> base_generator
+  [1] Python_Coder_Tool -> Python_Code_Generator_Tool -> python_coder
+
+==> Mapped tools (directory names): ['base_generator', 'python_coder']
+Loading tools and getting metadata... (parallel=True, max_workers=4)
+Updated Python path: ['/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow/agentflow', '/root/autodl-tmp/MAS_Science_Infra/user_space/projects/agentflow/adapted', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/thirdparty_files', '/root', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra', '/root/autodl-tmp/MAS_Science_Infra/mas', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main/APPO/verl_arpo_entropy', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/APPO-main', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python311.zip', '/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11', '/root/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/lib/python3.11/lib-dynload', '/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages', '/root/autodl-tmp/MAS_Science_Infra/agent-lightning', '/root/autodl-tmp/MAS_Science_Infra', '/tmp/tmpyqz24pdt', '/root/autodl-tmp/MAS_Science_Infra/ref_Rep/agentflow']
+
+==> Tool name mapping (short to long): {'Base_Generator_Tool': 'Generalist_Solution_Generator_Tool', 'Python_Coder_Tool': 'Python_Code_Generator_Tool', 'Google_Search_Tool': 'Ground_Google_Search_Tool', 'Web_Search_Tool': 'Web_RAG_Search_Tool', 'Wikipedia_Search_Tool': 'Wikipedia_RAG_Search_Tool'}
+==> Tool name mapping (long to internal): {'Generalist_Solution_Generator_Tool': {'class_name': 'Base_Generator_Tool', 'dir_name': 'base_generator'}, 'Python_Code_Generator_Tool': {'class_name': 'Python_Coder_Tool', 'dir_name': 'python_coder'}, 'Ground_Google_Search_Tool': {'class_name': 'Google_Search_Tool', 'dir_name': 'google_search'}, 'Web_RAG_Search_Tool': {'class_name': 'Web_Search_Tool', 'dir_name': 'web_search'}, 'Wikipedia_RAG_Search_Tool': {'class_name': 'Wikipedia_Search_Tool', 'dir_name': 'wikipedia_search'}}
+
+==> Loading 2 tool modules in parallel...
+⏳ Waiting for all 2 modules to load...
+Error loading tools.base_generator.tool: Error loading module tools.base_generator.tool: No module named 'tools.base_generator'
+Error loading tools.python_coder.tool: Error loading module tools.python_coder.tool: No module named 'tools.python_coder'
+
+==> Total number of tools imported: 0 (took 0.00s)
+
+==> Running demo commands for each tool...
+
+✅ Finished running demo commands for each tool.
+✅ Finished setting up tools.
+✅ Total number of final available tools: 0
+✅ Final available tools: []
+Creating LLM engine for model: gpt-4o
+creating llm engine gpt-4o with: is_multimodal: False, kwargs: {'temperature': 0.7}
+Creating LLM engine for model: LLM/Qwen3-1.7B
+creating llm engine LLM/Qwen3-1.7B with: is_multimodal: False, kwargs: {'base_url': None, 'temperature': 0.7}
+[10/14/26 20:42:14] INFO     [Rollout ro-be112f739c36]      lit_tir_agent.py:261
+                             src=hotpot                                         
+                             pred="<answer>Base_Generator_T                     
+                             ool failed: Engine                                 
+                             LLM/Qwen3-1.7B not supported.                      
+                             If you are using Azure OpenAI                      
+                             models, please ensure the                          
+                             model string has the prefix                        
+                             'azure-'. For Together models,                     
+                             use 'together-'. For VLLM                          
+                             models, use 'vllm-'. For                           
+                             LiteLLM models, use                                
+                             'litellm-'. For Ollama models,                     
+                             use 'ollama-'. For other                           
+                             custom engines, you can edit                       
+                             the factory.py file and add                        
+                             its interface file. Your pull                      
+                             request will be warmly                             
+                             welcomed!</answer>" gt='Harry                      
+                             F. Sinclair' fmt=True R=0.000                      
+                             search=0 py=0 branch_local=0                       
+                             t=0.21s                                            
+🖇 AgentOps: [34mSession Replay for ro-be112f739c36.session trace: https://app.agentops.ai/sessions?trace_id=d661a59929882b7816442f575ff4a407[0m
+                    INFO     [Worker 0 | Rollout ro-be112f739c36]   agent.py:704
+                             Completed in 0.24s. Collected 34                   
+                             span(s). Final reward: 0.0                         
+[36m(TaskRunner pid=493519)[0m ERROR:2026-10-14 20:42:21,613:No usable training samples: 8 rollouts, 0 triplets; agent_match=None. Training stopped before batch construction. Check episode errors, model-call spans, token IDs and Agent selection. Rollout IDs: ro-702403ff6b4c, ro-f2041b7e6a21, ro-bf760291c82a, ro-019aa321eb7c, ro-7cc61a6fece1
+[36m(TaskRunner pid=493519)[0m Training Progress:   0%|          | 0/3 [00:21<?, ?it/s]
+
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m    ██╗     ██╗████████╗███████╗██╗     ██╗     ███╗   ███╗
+[36m(TaskRunner pid=493519)[0m    ██║     ██║╚══██╔══╝██╔════╝██║     ██║     ████╗ ████║
+[36m(TaskRunner pid=493519)[0m    ██║     ██║   ██║   █████╗  ██║     ██║     ██╔████╔██║
+[36m(TaskRunner pid=493519)[0m    ██║     ██║   ██║   ██╔══╝  ██║     ██║     ██║╚██╔╝██║
+[36m(TaskRunner pid=493519)[0m    ███████╗██║   ██║   ███████╗███████╗███████╗██║ ╚═╝ ██║
+[36m(TaskRunner pid=493519)[0m    ╚══════╝╚═╝   ╚═╝   ╚══════╝╚══════╝╚══════╝╚═╝     ╚═╝
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m [1;37m#------------------------------------------------------------#[0m
+[36m(TaskRunner pid=493519)[0m [1;37m#                                                            #[0m
+[36m(TaskRunner pid=493519)[0m [1;37m#       'This feature doesn't meet my needs because...'       #[0m
+[36m(TaskRunner pid=493519)[0m [1;37m#        https://github.com/BerriAI/litellm/issues/new        #[0m
+[36m(TaskRunner pid=493519)[0m [1;37m#                                                            #[0m
+[36m(TaskRunner pid=493519)[0m [1;37m#------------------------------------------------------------#[0m
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m  Thank you for using LiteLLM! - Krrish & Ishaan
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m [1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m 
+[36m(TaskRunner pid=493519)[0m [32mLiteLLM: Proxy initialized with Config, Set models:[0m
+[36m(TaskRunner pid=493519)[0m [32m    LLM/Qwen3-1.7B[0m
+[36m(PatchedvLLMServer pid=494355)[0m instance_id: 7e4aacb9-a92d-4cd1-afdd-3834dc748e61:B5Bir0:1:0 intializes with external actors: ['B5Bir0WorkerDict_0:0']
+[36m(PatchedvLLMServer pid=494355)[0m instance_id: 7e4aacb9-a92d-4cd1-afdd-3834dc748e61:B5Bir0:1:0 intializes finished.
+[36m(PatchedvLLMServer pid=494355)[0m WARNING 10-14 20:42:00 [executor_base.py:216] Executor is not sleeping.
+[36m(TaskRunner pid=493519)[0m Completed 0/4 tasks...
+[36m(TaskRunner pid=493519)[0m Warning: Reward is None for rollout ro-702403ff6b4c, will be auto-set to 0.0.
+[36m(TaskRunner pid=493519)[0m Warning: Length of triplets is 0 for rollout ro-702403ff6b4c.
+[36m(TaskRunner pid=493519)[0m Warning: Reward is None for rollout ro-f2041b7e6a21, will be auto-set to 0.0.
+[36m(TaskRunner pid=493519)[0m Warning: Length of triplets is 0 for rollout ro-f2041b7e6a21.
+[36m(TaskRunner pid=493519)[0m Warning: Reward is None for rollout ro-bf760291c82a, will be auto-set to 0.0.
+[36m(TaskRunner pid=493519)[0m Warning: Length of triplets is 0 for rollout ro-bf760291c82a.
+[36m(TaskRunner pid=493519)[0m Warning: Reward is None for rollout ro-019aa321eb7c, will be auto-set to 0.0.
+[36m(TaskRunner pid=493519)[0m Warning: Length of triplets is 0 for rollout ro-019aa321eb7c.
+[36m(TaskRunner pid=493519)[0m Completed 4/4 tasks...
+[36m(TaskRunner pid=493519)[0m All tasks finished.
+[36m(TaskRunner pid=493519)[0m [TIR appo] enqueued 4 rollouts: 0 branches, 4 independent fills; waiting...
+[36m(TaskRunner pid=493519)[0m Completed 4/8 tasks...
+[36m(TaskRunner pid=493519)[0m Warning: Reward is None for rollout ro-7cc61a6fece1, will be auto-set to 0.0.
+[36m(TaskRunner pid=493519)[0m Warning: Length of triplets is 0 for rollout ro-7cc61a6fece1.
+[36m(TaskRunner pid=493519)[0m Warning: Reward is None for rollout ro-987be1574f28, will be auto-set to 0.0.
+[36m(TaskRunner pid=493519)[0m Warning: Length of triplets is 0 for rollout ro-987be1574f28.
+[36m(TaskRunner pid=493519)[0m Warning: Reward is None for rollout ro-c1bed83edb15, will be auto-set to 0.0.
+[36m(TaskRunner pid=493519)[0m Warning: Length of triplets is 0 for rollout ro-c1bed83edb15.
+[36m(TaskRunner pid=493519)[0m Warning: Reward is None for rollout ro-be112f739c36, will be auto-set to 0.0.
+[36m(TaskRunner pid=493519)[0m Warning: Length of triplets is 0 for rollout ro-be112f739c36.
+[36m(TaskRunner pid=493519)[0m Completed 8/8 tasks...
+[36m(TaskRunner pid=493519)[0m All tasks finished.
+[10/14/26 20:42:21] ERROR    Algorithm bundle encountered an      trainer.py:532
+                             error.                                             
+                             Traceback (most recent call last):                 
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             agent-lightning/agentlightning/train               
+                             er/trainer.py", line 527, in                       
+                             _algorithm_bundle                                  
+                                 algorithm.run(                                 
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             agent-lightning/agentlightning/algor               
+                             ithm/verl/interface.py", line 184,                 
+                             in run                                             
+                                 run_ppo(                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             agent-lightning/agentlightning/verl/               
+                             entrypoint.py", line 86, in run_ppo                
+                                 ray.get(                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             .venv/lib/python3.11/site-packages/r               
+                             ay/_private/auto_init_hook.py", line               
+                             22, in auto_init_wrapper                           
+                                 return fn(*args, **kwargs)                     
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             .venv/lib/python3.11/site-packages/r               
+                             ay/_private/client_mode_hook.py",                  
+                             line 134, in wrapper                               
+                                 return func(*args, **kwargs)                   
+                                        ^^^^^^^^^^^^^^^^^^^^^                   
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             .venv/lib/python3.11/site-packages/r               
+                             ay/_private/worker.py", line 2986,                 
+                             in get                                             
+                                 values, debugger_breakpoint =                  
+                             worker.get_objects(                                
+                                                               ^^               
+                             ^^^^^^^^^^^^^^^^^                                  
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             .venv/lib/python3.11/site-packages/r               
+                             ay/_private/worker.py", line 1050,                 
+                             in get_objects                                     
+                                 raise                                          
+                             value.as_instanceof_cause()                        
+                             ray.exceptions.RayTaskError(RuntimeE               
+                             rror): [36mray::TaskRunner.run()[39m               
+                             (pid=493519, ip=172.17.0.4,                        
+                             actor_id=8b08b1b7a4b03ed62040779e010               
+                             00000,                                             
+                             repr=<agentlightning.verl.entrypoint               
+                             .TaskRunner object at                              
+                             0x7f1c9343cc10>)                                   
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^               
+                             ^^^^^^^^^^^                                        
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^               
+                             ^^^^^^                                             
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             agent-lightning/agentlightning/verl/               
+                             entrypoint.py", line 252, in run                   
+                                 trainer.fit()                                  
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             agent-lightning/agentlightning/verl/               
+                             trainer.py", line 529, in fit                      
+                                 metrics =                                      
+                             self._train_step(batch_dict)                       
+                                           ^^^^^^^^^^^^^^^^^^^^^^               
+                             ^^^^^^                                             
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             rl/hooks/trainer.py", line 39, in                  
+                             _train_step                                        
+                                 return                                         
+                             super()._train_step(batch_dict)                    
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^               
+                             ^^^^^^                                             
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             agent-lightning/agentlightning/verl/               
+                             trainer.py", line 260, in                          
+                             _train_step                                        
+                                 batch, agent_metrics =                         
+                             self.agent_mode_daemon.get_train_dat               
+                             a_batch(                                           
+                                                        ^^^^^^^^^               
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^                
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             rl/hooks/daemon.py", line 740, in                  
+                             get_train_data_batch                               
+                                 require_training_samples(self._c               
+                             ompleted_rollouts_v0,                              
+                             getattr(self.adapter, "agent_match",               
+                             None))                                             
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_Infra/               
+                             rl/hooks/training_batch.py", line                  
+                             32, in require_training_samples                    
+                                 raise RuntimeError(message)                    
+                             RuntimeError: No usable training                   
+                             samples: 8 rollouts, 0 triplets;                   
+                             agent_match=None. Training stopped                 
+                             before batch construction. Check                   
+                             episode errors, model-call spans,                  
+                             token IDs and Agent selection.                     
+                             Rollout IDs: ro-702403ff6b4c,                      
+                             ro-f2041b7e6a21, ro-bf760291c82a,                  
+                             ro-019aa321eb7c, ro-7cc61a6fece1                   
+                    ERROR    Algorithm bundle crashed;      client_server.py:155
+                             signaling stop event                               
+                             Traceback (most recent call                        
+                             last):                                             
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/execution/client_server                     
+                             .py", line 144, in                                 
+                             _execute_algorithm                                 
+                                 await                                          
+                             algorithm(wrapper_store,                           
+                             stop_evt)                                          
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/trainer/trainer.py",                        
+                             line 527, in _algorithm_bundle                     
+                                 algorithm.run(                                 
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/algorithm/verl/interfac                     
+                             e.py", line 184, in run                            
+                                 run_ppo(                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/verl/entrypoint.py",                        
+                             line 86, in run_ppo                                
+                                 ray.get(                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/.venv/lib/python3.11/sit                     
+                             e-packages/ray/_private/auto_i                     
+                             nit_hook.py", line 22, in                          
+                             auto_init_wrapper                                  
+                                 return fn(*args, **kwargs)                     
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/.venv/lib/python3.11/sit                     
+                             e-packages/ray/_private/client                     
+                             _mode_hook.py", line 134, in                       
+                             wrapper                                            
+                                 return func(*args,                             
+                             **kwargs)                                          
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^                                                 
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/.venv/lib/python3.11/sit                     
+                             e-packages/ray/_private/worker                     
+                             .py", line 2986, in get                            
+                                 values,                                        
+                             debugger_breakpoint =                              
+                             worker.get_objects(                                
+                                                                                
+                                 ^^^^^^^^^^^^^^^^^^^                            
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/.venv/lib/python3.11/sit                     
+                             e-packages/ray/_private/worker                     
+                             .py", line 1050, in                                
+                             get_objects                                        
+                                 raise                                          
+                             value.as_instanceof_cause()                        
+                             ray.exceptions.RayTaskError(Ru                     
+                             ntimeError):                                       
+                             [36mray::TaskRunner.run()[39m                      
+                             (pid=493519, ip=172.17.0.4,                        
+                             actor_id=8b08b1b7a4b03ed620407                     
+                             79e01000000,                                       
+                             repr=<agentlightning.verl.entr                     
+                             ypoint.TaskRunner object at                        
+                             0x7f1c9343cc10>)                                   
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^^^^^^                                  
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/verl/entrypoint.py",                        
+                             line 252, in run                                   
+                                 trainer.fit()                                  
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/verl/trainer.py", line                      
+                             529, in fit                                        
+                                 metrics =                                      
+                             self._train_step(batch_dict)                       
+                                           ^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/rl/hooks/trainer.py",                        
+                             line 39, in _train_step                            
+                                 return                                         
+                             super()._train_step(batch_dict                     
+                             )                                                  
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/verl/trainer.py", line                      
+                             260, in _train_step                                
+                                 batch, agent_metrics =                         
+                             self.agent_mode_daemon.get_tra                     
+                             in_data_batch(                                     
+                                                        ^^^                     
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^                                        
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/rl/hooks/daemon.py",                         
+                             line 740, in                                       
+                             get_train_data_batch                               
+                                 require_training_samples(s                     
+                             elf._completed_rollouts_v0,                        
+                             getattr(self.adapter,                              
+                             "agent_match", None))                              
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/rl/hooks/training_batch.                     
+                             py", line 32, in                                   
+                             require_training_samples                           
+                                 raise                                          
+                             RuntimeError(message)                              
+                             RuntimeError: No usable                            
+                             training samples: 8 rollouts,                      
+                             0 triplets; agent_match=None.                      
+                             Training stopped before batch                      
+                             construction. Check episode                        
+                             errors, model-call spans,                          
+                             token IDs and Agent selection.                     
+                             Rollout IDs: ro-702403ff6b4c,                      
+                             ro-f2041b7e6a21,                                   
+                             ro-bf760291c82a,                                   
+                             ro-019aa321eb7c,                                   
+                             ro-7cc61a6fece1                                    
+                    INFO     Stopping the lightning store   client_server.py:439
+                             server...                                          
+                    INFO     Stopping server              server_launcher.py:701
+                             fastapi.applications:app...                        
+                    INFO     Stopping uvicorn thread      server_launcher.py:894
+                             server...                                          
+                    INFO     Requesting graceful shutdown server_launcher.py:305
+                             of uvicorn server.                                 
+INFO:     Shutting down
+[10/14/26 20:42:21] INFO     [Worker 1] Tearing down OpenTelemetry   otel.py:121
+                             tracer does NOT remove the tracer                  
+                             provider.                                          
+                    INFO     Unpatched newer version of agentops agentops.py:168
+                             using handle_chat_attributes                       
+                    INFO     [Worker 1] Instrumentation removed. agentops.py:103
+[10/14/26 20:42:21] INFO     [Worker 0] Tearing down OpenTelemetry   otel.py:121
+                             tracer does NOT remove the tracer                  
+                             provider.                                          
+                    INFO     Unpatched newer version of agentops agentops.py:168
+                             using handle_chat_attributes                       
+                    INFO     [Worker 0] Instrumentation removed. agentops.py:103
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [491461]
+                    INFO     Uvicorn server shut down     server_launcher.py:307
+                             gracefully.                                        
+                    INFO     Uvicorn thread server        server_launcher.py:909
+                             stopped                                            
+                    INFO     Server                       server_launcher.py:711
+                             fastapi.applications:app                           
+                             stopped                                            
+                    INFO     Lightning store server         client_server.py:441
+                             stopped.                                           
+                    ERROR    Unhandled exception in execute client_server.py:425
+                             method                                             
+                             Traceback (most recent call                        
+                             last):                                             
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/execution/client_server                     
+                             .py", line 396, in execute                         
+                                 asyncio.run(self._execute_                     
+                             algorithm(algorithm, store,                        
+                             stop_evt))                                         
+                               File                                             
+                             "/root/.local/share/uv/python/                     
+                             cpython-3.11.16-linux-x86_64-g                     
+                             nu/lib/python3.11/asyncio/runn                     
+                             ers.py", line 190, in run                          
+                                 return runner.run(main)                        
+                                        ^^^^^^^^^^^^^^^^                        
+                               File                                             
+                             "/root/.local/share/uv/python/                     
+                             cpython-3.11.16-linux-x86_64-g                     
+                             nu/lib/python3.11/asyncio/runn                     
+                             ers.py", line 118, in run                          
+                                 return                                         
+                             self._loop.run_until_complete(                     
+                             task)                                              
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^^^^^                                   
+                               File                                             
+                             "/root/.local/share/uv/python/                     
+                             cpython-3.11.16-linux-x86_64-g                     
+                             nu/lib/python3.11/asyncio/base                     
+                             _events.py", line 654, in                          
+                             run_until_complete                                 
+                                 return future.result()                         
+                                        ^^^^^^^^^^^^^^^                         
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/execution/client_server                     
+                             .py", line 144, in                                 
+                             _execute_algorithm                                 
+                                 await                                          
+                             algorithm(wrapper_store,                           
+                             stop_evt)                                          
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/trainer/trainer.py",                        
+                             line 527, in _algorithm_bundle                     
+                                 algorithm.run(                                 
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/algorithm/verl/interfac                     
+                             e.py", line 184, in run                            
+                                 run_ppo(                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/verl/entrypoint.py",                        
+                             line 86, in run_ppo                                
+                                 ray.get(                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/.venv/lib/python3.11/sit                     
+                             e-packages/ray/_private/auto_i                     
+                             nit_hook.py", line 22, in                          
+                             auto_init_wrapper                                  
+                                 return fn(*args, **kwargs)                     
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/.venv/lib/python3.11/sit                     
+                             e-packages/ray/_private/client                     
+                             _mode_hook.py", line 134, in                       
+                             wrapper                                            
+                                 return func(*args,                             
+                             **kwargs)                                          
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^                                                 
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/.venv/lib/python3.11/sit                     
+                             e-packages/ray/_private/worker                     
+                             .py", line 2986, in get                            
+                                 values,                                        
+                             debugger_breakpoint =                              
+                             worker.get_objects(                                
+                                                                                
+                                 ^^^^^^^^^^^^^^^^^^^                            
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/.venv/lib/python3.11/sit                     
+                             e-packages/ray/_private/worker                     
+                             .py", line 1050, in                                
+                             get_objects                                        
+                                 raise                                          
+                             value.as_instanceof_cause()                        
+                             ray.exceptions.RayTaskError(Ru                     
+                             ntimeError):                                       
+                             [36mray::TaskRunner.run()[39m                      
+                             (pid=493519, ip=172.17.0.4,                        
+                             actor_id=8b08b1b7a4b03ed620407                     
+                             79e01000000,                                       
+                             repr=<agentlightning.verl.entr                     
+                             ypoint.TaskRunner object at                        
+                             0x7f1c9343cc10>)                                   
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^^^^^^                                  
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/verl/entrypoint.py",                        
+                             line 252, in run                                   
+                                 trainer.fit()                                  
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/verl/trainer.py", line                      
+                             529, in fit                                        
+                                 metrics =                                      
+                             self._train_step(batch_dict)                       
+                                           ^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/rl/hooks/trainer.py",                        
+                             line 39, in _train_step                            
+                                 return                                         
+                             super()._train_step(batch_dict                     
+                             )                                                  
+                                        ^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^^                                       
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/agent-lightning/agentlig                     
+                             htning/verl/trainer.py", line                      
+                             260, in _train_step                                
+                                 batch, agent_metrics =                         
+                             self.agent_mode_daemon.get_tra                     
+                             in_data_batch(                                     
+                                                        ^^^                     
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^                     
+                             ^^^^^^^^^^^                                        
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/rl/hooks/daemon.py",                         
+                             line 740, in                                       
+                             get_train_data_batch                               
+                                 require_training_samples(s                     
+                             elf._completed_rollouts_v0,                        
+                             getattr(self.adapter,                              
+                             "agent_match", None))                              
+                               File                                             
+                             "/root/autodl-tmp/MAS_Science_                     
+                             Infra/rl/hooks/training_batch.                     
+                             py", line 32, in                                   
+                             require_training_samples                           
+                                 raise                                          
+                             RuntimeError(message)                              
+                             RuntimeError: No usable                            
+                             training samples: 8 rollouts,                      
+                             0 triplets; agent_match=None.                      
+                             Training stopped before batch                      
+                             construction. Check episode                        
+                             errors, model-call spans,                          
+                             token IDs and Agent selection.                     
+                             Rollout IDs: ro-702403ff6b4c,                      
+                             ro-f2041b7e6a21,                                   
+                             ro-bf760291c82a,                                   
+                             ro-019aa321eb7c,                                   
+                             ro-7cc61a6fece1                                    
+                    INFO     Shutting down subprocesses     client_server.py:432
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/root/autodl-tmp/MAS_Science_Infra/mas/train_tir_agent.py", line 464, in <module>
+    main()
+  File "/root/autodl-tmp/MAS_Science_Infra/mas/train_tir_agent.py", line 460, in main
+    train(config, n_runners=n_runners, active_agents=active_agents, spec_path=spec_path)
+  File "/root/autodl-tmp/MAS_Science_Infra/mas/train_tir_agent.py", line 275, in train
+    trainer.fit(agent, train_dataset=train_data, val_dataset=val_data)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/trainer/trainer.py", line 438, in fit
+    self.strategy.execute(algorithm_bundle, runner_bundle, self.store)
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/execution/client_server.py", line 396, in execute
+    asyncio.run(self._execute_algorithm(algorithm, store, stop_evt))
+  File "/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/share/uv/python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py", line 654, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/execution/client_server.py", line 144, in _execute_algorithm
+    await algorithm(wrapper_store, stop_evt)
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/trainer/trainer.py", line 527, in _algorithm_bundle
+    algorithm.run(
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/algorithm/verl/interface.py", line 184, in run
+    run_ppo(
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/verl/entrypoint.py", line 86, in run_ppo
+    ray.get(
+  File "/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/_private/client_mode_hook.py", line 134, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/_private/worker.py", line 2986, in get
+    values, debugger_breakpoint = worker.get_objects(
+                                  ^^^^^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/.venv/lib/python3.11/site-packages/ray/_private/worker.py", line 1050, in get_objects
+    raise value.as_instanceof_cause()
+ray.exceptions.RayTaskError(RuntimeError): [36mray::TaskRunner.run()[39m (pid=493519, ip=172.17.0.4, actor_id=8b08b1b7a4b03ed62040779e01000000, repr=<agentlightning.verl.entrypoint.TaskRunner object at 0x7f1c9343cc10>)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/verl/entrypoint.py", line 252, in run
+    trainer.fit()
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/verl/trainer.py", line 529, in fit
+    metrics = self._train_step(batch_dict)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/rl/hooks/trainer.py", line 39, in _train_step
+    return super()._train_step(batch_dict)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/agent-lightning/agentlightning/verl/trainer.py", line 260, in _train_step
+    batch, agent_metrics = self.agent_mode_daemon.get_train_data_batch(
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/autodl-tmp/MAS_Science_Infra/rl/hooks/daemon.py", line 740, in get_train_data_batch
+    require_training_samples(self._completed_rollouts_v0, getattr(self.adapter, "agent_match", None))
+  File "/root/autodl-tmp/MAS_Science_Infra/rl/hooks/training_batch.py", line 32, in require_training_samples
+    raise RuntimeError(message)
+RuntimeError: No usable training samples: 8 rollouts, 0 triplets; agent_match=None. Training stopped before batch construction. Check episode errors, model-call spans, token IDs and Agent selection. Rollout IDs: ro-702403ff6b4c, ro-f2041b7e6a21, ro-bf760291c82a, ro-019aa321eb7c, ro-7cc61a6fece1

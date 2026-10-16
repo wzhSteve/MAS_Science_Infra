@@ -1,13 +1,14 @@
 """Shared EPC-AW episode context. One SystemMemory for planner/executor/diagnoser.
 
 Lives in user_space. May import MAS.epc_aw after putting the uploaded or
-ref_Rep/EPC-AW tree on sys.path. Collect / eval / sampling call run_window only.
+upload/ EPC-AW tree on sys.path. Collect / eval / sampling call run_window only.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -39,7 +40,7 @@ def _text(*vals: Any) -> str:
 
 
 def _use_mock() -> bool:
-    flag = os.environ.get("SCIENCE_EPC_AW_MOCK") or os.environ.get("SCIENCE_HIVE_MOCK") or ""
+    flag = os.environ.get("SCIENCE_EPC_AW_MOCK") or ""
     return flag.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -48,7 +49,7 @@ DEFAULT_RUNTIME: Dict[str, Any] = {
     "max_steps": 20,
     "max_time": 3000,
     "max_tokens": 4000,
-    "temperature": 0.0,
+    "temperature": 0.7,
     "enabled_tools": [
         "Base_Generator_Tool",
         "Python_Coder_Tool",
@@ -81,14 +82,13 @@ _SEARCH_FALLBACK = (
     "Wikipedia_Search_Tool",
     "Bing_Search_Tool",
     "Web_Search_Tool",
-    "Google_Search_Tool",
 )
 
 
 def _is_transport_failure(output: Any) -> bool:
     """Search host did not answer. Distinct from a Python snippet timeout."""
     text = str(output or "")
-    if text.startswith("Wikipedia unreachable:") or text.startswith("Bing unreachable:"):
+    if text.startswith("Wikipedia unreachable:"):
         return True
     return any(marker in text for marker in _TRANSPORT_MARKERS)
 
@@ -103,6 +103,47 @@ def _next_search_tool(available: List[str], failed: List[str]) -> str:
 
 def _runtime_path() -> Path:
     return Path(__file__).resolve().parent.parent / "contracts" / "runtime.yaml"
+
+
+# cheap: n=1 + lite prompts — BTS/belief/epc_aw_diagnosis never fire.
+# paper: n>=2 + official prompts — Solver.solve path with BTS consensus and diagnosis.
+PROFILES: Dict[str, Dict[str, Any]] = {
+    "cheap": {"n": 1, "prompts_lite": True},
+    "paper": {"n": 3, "prompts_lite": False},
+}
+
+
+def _runtime_yaml() -> Dict[str, Any]:
+    path = _runtime_path()
+    if not path.is_file():
+        return {}
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _profile_name() -> str:
+    raw = os.environ.get("SCIENCE_EPC_AW_PROFILE") or _runtime_yaml().get("profile") or ""
+    name = str(raw).strip().lower()
+    return name if name in PROFILES else ""
+
+
+def _profile_overrides() -> Dict[str, Any]:
+    name = _profile_name()
+    if not name:
+        return {}
+    over = dict(PROFILES[name])
+    if os.environ.get("SCIENCE_EPC_AW_PROFILE"):
+        return over
+    data = _runtime_yaml()
+    for key in over:
+        if key in data:
+            over[key] = data[key]
+    return over
 
 
 def _load_runtime() -> Dict[str, Any]:
@@ -121,6 +162,10 @@ def _load_runtime() -> Dict[str, Any]:
                     cfg[key] = data[key]
         except Exception:
             pass
+    over = _profile_overrides()
+    if "n" in over:
+        cfg["n"] = over["n"]
+    cfg["profile"] = _profile_name() or "custom"
     env_n = os.environ.get("SCIENCE_EPC_AW_N")
     if env_n not in (None, ""):
         try:
@@ -185,6 +230,29 @@ def _progress(text: str) -> None:
         return
 
 
+def _upstream_tool_modules(sub: str) -> List[Any]:
+    """EPC-AW tool modules under both import names (``MAS.epc_aw.tools.<sub>`` and
+    the Initializer's ``tools.<sub>``). Only modules whose file lives in the EPC-AW
+    tree are returned, so management ``mas/tools`` can never be patched by mistake.
+    """
+    import importlib
+
+    root = _import_root()
+    if root is None:
+        return []
+    epc_tools = (root / "MAS" / "epc_aw" / "tools").resolve()
+    found: List[Any] = []
+    for name in (f"MAS.epc_aw.tools.{sub}", "tools." + sub):
+        try:
+            mod = importlib.import_module(name)
+        except Exception:
+            continue
+        path = Path(str(getattr(mod, "__file__", "") or "")).resolve()
+        if epc_tools in path.parents and mod not in found:
+            found.append(mod)
+    return found
+
+
 def _import_root() -> Optional[Path]:
     env = os.environ.get("SCIENCE_EPC_AW_MAS_DIR", "").strip()
     if env:
@@ -200,11 +268,6 @@ def _import_root() -> Optional[Path]:
             mas = solver.parent.parent
             if mas.name == "MAS":
                 return mas.parent
-    for start in (here, Path.cwd()):
-        for parent in [start, *start.parents]:
-            cand = parent / "ref_Rep" / "EPC-AW"
-            if (cand / "MAS" / "epc_aw" / "solver.py").is_file():
-                return cand
     return None
 
 
@@ -225,10 +288,15 @@ def _epc_tools_scope(root: Optional[Path] = None) -> Iterator[None]:
     saved = {key: sys.modules[key] for key in list(sys.modules) if key == "tools" or key.startswith("tools.")}
     for key in saved:
         sys.modules.pop(key, None)
-    inserted = False
-    if parent and parent not in sys.path:
+    # mas/ is often already on sys.path ahead of this project. If the EPC
+    # tools parent is present but not first, ``import tools`` binds management
+    # mas/tools and every official tool then fails to load.
+    prior_index: Optional[int] = None
+    if parent:
+        if parent in sys.path:
+            prior_index = sys.path.index(parent)
+            sys.path.remove(parent)
         sys.path.insert(0, parent)
-        inserted = True
     try:
         yield
     finally:
@@ -236,11 +304,10 @@ def _epc_tools_scope(root: Optional[Path] = None) -> Iterator[None]:
             if key == "tools" or key.startswith("tools."):
                 sys.modules.pop(key, None)
         sys.modules.update(saved)
-        if inserted:
-            try:
-                sys.path.remove(parent)
-            except ValueError:
-                pass
+        if parent and parent in sys.path:
+            sys.path.remove(parent)
+        if prior_index is not None:
+            sys.path.insert(min(prior_index, len(sys.path)), parent)
 
 
 def _map_llm_env() -> None:
@@ -274,6 +341,9 @@ def _map_llm_env() -> None:
     os.environ["OPENAI_API_KEY"] = key
 
 
+_NO_THINK_SUFFIX = "\n/no_think"
+
+
 def _merge_no_think(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     extra = dict(kwargs.get("extra_body") or {})
     extra["enable_thinking"] = False
@@ -285,6 +355,28 @@ def _merge_no_think(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     extra["reasoning"]["enabled"] = False
     out = dict(kwargs)
     out["extra_body"] = extra
+    # Belt and braces: vLLM's OpenAI layer drops unknown fields like
+    # ``enable_thinking``, and the LiteLLM proxy may strip ``extra_body``
+    # entirely. Qwen3's chat template also honors the soft ``/no_think``
+    # switch inside the message content, so inject it into the last user
+    # message as well. Idempotent: never append twice.
+    messages = out.get("messages")
+    if isinstance(messages, list) and messages:
+        for item in reversed(messages):
+            if not isinstance(item, dict) or item.get("role") != "user":
+                continue
+            content = item.get("content")
+            if isinstance(content, str):
+                if not content.rstrip().endswith("/no_think"):
+                    item["content"] = content.rstrip() + _NO_THINK_SUFFIX
+            elif isinstance(content, list):
+                for part in reversed(content):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text = str(part.get("text") or "")
+                        if not text.rstrip().endswith("/no_think"):
+                            part["text"] = text.rstrip() + _NO_THINK_SUFFIX
+                        break
+            break
     return out
 
 
@@ -334,6 +426,7 @@ def _patch_one_engine(eng: Any) -> None:
                 pass
     _disable_engine_thinking(eng)
     _wrap_engine_completion_budget(eng)
+    _wrap_engine_llm_recorder(eng)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -384,6 +477,83 @@ def _budget_wrapper(orig: Any) -> Any:
 
     wrapped._science_budget = True  # type: ignore[attr-defined]
     return wrapped
+
+
+# --- Fix E: LLM call recording (prompt head / model / n / response head) ----
+_LLM_CALL_LOG: List[Dict[str, Any]] = []
+_LLM_CALL_LOG_CAP = 64
+
+
+def _prompt_head(prompt: Any, limit: int = 500) -> str:
+    if isinstance(prompt, list):
+        text = " ".join(str(x) for x in prompt if not isinstance(x, (bytes, bytearray)))
+    else:
+        text = str(prompt if prompt is not None else "")
+    text = " ".join(text.split())
+    return text[:limit]
+
+
+def _response_head(response: Any, limit: int = 300) -> str:
+    if isinstance(response, list):
+        text = " ".join(str(x) for x in response if not isinstance(x, (bytes, bytearray)))
+    else:
+        text = str(response if response is not None else "")
+    text = " ".join(text.split())
+    return text[:limit]
+
+
+def record_llm_call(entry: Dict[str, Any]) -> None:
+    """Append one _generate_text record to the episode-level ring buffer."""
+    _LLM_CALL_LOG.append(dict(entry))
+    if len(_LLM_CALL_LOG) > _LLM_CALL_LOG_CAP:
+        del _LLM_CALL_LOG[: len(_LLM_CALL_LOG) - _LLM_CALL_LOG_CAP]
+
+
+def drain_llm_calls() -> List[Dict[str, Any]]:
+    """Return and clear records logged since the last drain."""
+    out = list(_LLM_CALL_LOG)
+    _LLM_CALL_LOG.clear()
+    return out
+
+
+def _wrap_engine_llm_recorder(eng: Any) -> None:
+    """Wrap eng._generate_text (already budget-wrapped) so each call is logged."""
+    fn = getattr(eng, "_generate_text", None)
+    if fn is None or getattr(fn, "_science_llm_log", False):
+        return
+    orig = getattr(fn, "__func__", fn)
+
+    def wrapped(self: Any, prompt: Any, *args: Any, **kwargs: Any) -> Any:
+        model = str(getattr(self, "model_string", "") or "")
+        n = kwargs.get("n") if isinstance(kwargs.get("n"), int) else 1
+        try:
+            resp = orig(self, prompt, *args, **kwargs)
+        except Exception as exc:
+            record_llm_call(
+                {
+                    "model": model,
+                    "n": n,
+                    "prompt_head": _prompt_head(prompt),
+                    "response_head": f"{type(exc).__name__}: {exc}"[:300],
+                }
+            )
+            raise
+        response_head = resp
+        if isinstance(resp, list) and resp:
+            response_head = resp[0]
+        record_llm_call(
+            {
+                "model": model,
+                "n": n,
+                "prompt_head": _prompt_head(prompt),
+                "response_head": _response_head(response_head),
+            }
+        )
+        return resp
+
+    wrapped._science_llm_log = True  # type: ignore[attr-defined]
+    wrapped._science_budget = True  # type: ignore[attr-defined]
+    eng._generate_text = wrapped.__get__(eng, type(eng))  # type: ignore[method-assign]
 
 
 def _wrap_engine_completion_budget(eng: Any) -> None:
@@ -544,6 +714,353 @@ def _install_threadsafe_timeouts() -> None:
             continue
 
 
+# --- Prompt lite injection (mirrors agentflow-side isomorphic task) -------
+# ref models do open(prompt_file).read() then .format(**placeholders) on every
+# window call. Redirect those four main-chain templates to adapted/prompts/
+# *.lite.txt via per-module open shims (NOT builtins.open — a global builtins
+# patch previously broke MasExecutionRunner isolation).
+_LITE_DIR = Path(__file__).resolve().parent / "prompts"
+_LITE_REDIRECTS = {
+    "prompts/planner/generate_next_step.txt": "planner/generate_next_step.lite.txt",
+    "prompts/diagnoser/verificate_context.txt": "diagnoser/verificate_context.lite.txt",
+    "prompts/executor/generate_tool_command.txt": "executor/generate_tool_command.lite.txt",
+    "prompts/executor/direct_output.txt": "executor/direct_output.lite.txt",
+}
+_LITE_MARKER = "_science_prompt_lite"
+_LITE_ANNOUNCED = False
+
+
+def _prompts_lite_enabled() -> bool:
+    """contracts/runtime.yaml: prompts_lite (default true); profile overrides it."""
+    raw = os.environ.get("SCIENCE_EPC_AW_PROMPTS_LITE")
+    if raw is None or not raw.strip():
+        over = _profile_overrides()
+        data = _runtime_yaml()
+        if "prompts_lite" in over:
+            raw = "1" if bool(over["prompts_lite"]) else "0"
+        elif "prompts_lite" in data:
+            raw = "1" if bool(data["prompts_lite"]) else "0"
+    if raw is None or not raw.strip():
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _is_lite_candidate(path: str) -> Optional[Path]:
+    """Map an EPC-AW prompts/<role>/<name>.txt read to adapted/*.lite.txt."""
+    try:
+        text = str(path)
+    except Exception:
+        return None
+    # Normalize separators; avoid Path.resolve() (slow / noisy under isolation).
+    norm = text.replace("\\", "/")
+    for suffix, rel in _LITE_REDIRECTS.items():
+        if norm.endswith(suffix):
+            lite = _LITE_DIR / rel
+            return lite if lite.is_file() else None
+    return None
+
+
+def _restore_builtins_open_if_hijacked() -> None:
+    """Undo legacy builtins.open patch left by earlier opt-epc revisions."""
+    import builtins
+
+    current = builtins.open
+    if getattr(current, _LITE_MARKER, False):
+        orig = getattr(current, "_science_orig_open", None)
+        if orig is not None:
+            builtins.open = orig  # type: ignore[assignment]
+
+
+def _install_lite_prompts() -> None:
+    """Install per-model-module open() shims redirecting to adapted lite templates.
+
+    Idempotent via _science_prompt_lite marker on each module.open. Never
+    patches builtins.open (evaluator isolation previously crashed on that).
+    """
+    _restore_builtins_open_if_hijacked()
+    if not _prompts_lite_enabled():
+        return
+    redirects = {
+        suffix: str(_LITE_DIR / rel)
+        for suffix, rel in _LITE_REDIRECTS.items()
+        if (_LITE_DIR / rel).is_file()
+    }
+    if not redirects:
+        return
+    import builtins
+
+    modules = []
+    for mod_name in (
+        "MAS.epc_aw.models.planner",
+        "MAS.epc_aw.models.diagnoser",
+        "MAS.epc_aw.models.executor",
+    ):
+        try:
+            modules.append(__import__(mod_name, fromlist=["_"]))
+        except Exception:
+            continue
+    if not modules:
+        return
+
+    for module in modules:
+        existing = getattr(module, "open", None)
+        if getattr(existing, _LITE_MARKER, False):
+            continue
+        orig_open = existing if existing is not None else builtins.open
+
+        def _make_open(orig_open, redirects):
+            def _lite_open(file, *args, **kwargs):
+                try:
+                    path = str(file).replace("\\", "/")
+                except Exception:
+                    path = ""
+                for suffix, lite_path in redirects.items():
+                    if path.endswith(suffix) and path != lite_path:
+                        return orig_open(lite_path, *args, **kwargs)
+                return orig_open(file, *args, **kwargs)
+
+            return _lite_open
+
+        shim = _make_open(orig_open, redirects)
+        setattr(shim, _LITE_MARKER, True)
+        shim._science_orig_open = orig_open  # type: ignore[attr-defined]
+        module.open = shim  # type: ignore[attr-defined]
+
+    global _LITE_ANNOUNCED
+    if not _LITE_ANNOUNCED:
+        _LITE_ANNOUNCED = True
+        print(
+            f"EPC-AW prompts_lite: {len(redirects)} templates -> adapted/prompts/**/*.lite.txt",
+            flush=True,
+        )
+
+
+def _install_json_tolerant_parsing() -> None:
+    """Coerce fenced/partial LLM JSON output before json.loads raises ValueError.
+
+    The EPC-AW engine classes funnel every call through _generate_text, and
+    the model layer consumes the result with json.loads. Wrap
+    ChatOpenAI/ChatVLLM._generate_text so its return value is pre-cleaned:
+    strip code fences, extract the first balanced JSON object/array, try the
+    ```json block, or degrade to a structured error payload instead of
+    letting ValueError propagate.
+    """
+    for mod_name, cls_name in (
+        ("MAS.epc_aw.engine.openai", "ChatOpenAI"),
+        ("MAS.epc_aw.engine.vllm", "ChatVLLM"),
+    ):
+        try:
+            mod = __import__(mod_name, fromlist=[cls_name])
+            cls = getattr(mod, cls_name)
+        except Exception:
+            continue
+        fn = getattr(cls, "_generate_text", None)
+        if fn is None or getattr(fn, "_science_json_tolerant", False):
+            continue
+        setattr(cls, "_generate_text", _json_tolerant_wrapper(fn))
+
+
+def _install_memory_dedup(limit: int = 12) -> None:
+    """Dedup role-memory get_actions() by (tool_name, tool_input), newest first.
+
+    EPC-AW's Memory.get_actions() returns {'Planner Step N': {...}} dicts that
+    grow every step and then get str()-formatted into subsequent prompts.
+    Repeated (tool, command) turns collapse to one entry, capped at `limit`.
+    """
+    for spec in (
+        ("MAS.epc_aw.models.memory", "Memory"),
+    ):
+        try:
+            mod = __import__(spec[0], fromlist=[spec[1]])
+            cls = getattr(mod, spec[1])
+        except Exception:
+            continue
+        fn = getattr(cls, "get_actions", None)
+        if fn is None or getattr(fn, "_science_dedup", False):
+            continue
+
+        def make_dedup(orig: Any) -> Any:
+            def get_actions(self: Any) -> Any:
+                actions = orig(self)
+                if not isinstance(actions, dict):
+                    return actions
+                try:
+                    deduped: Dict[str, Any] = {}
+                    seen: set = set()
+                    for key in sorted(actions, key=_action_step_key, reverse=True):
+                        item = actions[key]
+                        token = _action_dedup_token(item)
+                        if token is not None and token in seen:
+                            continue
+                        if token is not None:
+                            seen.add(token)
+                        deduped[key] = item
+                        if len(deduped) >= limit:
+                            break
+                    if len(deduped) == len(actions):
+                        return actions
+                    # keep chronological order (oldest first) for prompt coherence
+                    return {k: deduped[k] for k in sorted(deduped, key=_action_step_key)}
+                except Exception:
+                    return actions
+
+            get_actions._science_dedup = True  # type: ignore[attr-defined]
+            return get_actions
+
+        cls.get_actions = make_dedup(fn)  # type: ignore[method-assign]
+
+
+def _action_step_key(key: Any) -> Tuple[int, str]:
+    text = str(key)
+    digits = re.findall(r"\d+", text)
+    return (int(digits[-1]) if digits else 0), text
+
+
+def _action_dedup_token(item: Any) -> Optional[Tuple[str, str]]:
+    if not isinstance(item, dict):
+        return None
+    tool = str(item.get("tool_name") or item.get("tool") or "")
+    command = str(item.get("tool_input") or item.get("command") or "")
+    if not tool and not command:
+        return None
+    return tool, command
+
+
+def _json_strip_code_fence(text: str) -> str:
+    t = text.strip()
+    m = re.search(r"```(?:json|JSON)?\s*([\s\S]*?)```", t)
+    if m:
+        return m.group(1).strip()
+    return t
+
+
+def _json_first_balanced(text: str) -> str:
+    for opener, closer in (("{", "}"), ("[", "]")):
+        depth = 0
+        start = -1
+        in_str = False
+        esc = False
+        for i, ch in enumerate(text):
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                if depth > 0:
+                    in_str = True
+                elif start < 0:
+                    pass
+            elif ch == opener:
+                if depth == 0 and start < 0:
+                    start = i
+                depth += 1
+            elif ch == closer and depth > 0:
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+    return ""
+
+
+def _json_tolerant_clean(text: str) -> str:
+    """fence strip → balanced substring → ```json block → raw as-is."""
+    if not isinstance(text, str):
+        return text
+    out = _json_strip_code_fence(text)
+    if not out:
+        return text
+    # The global tolerant_loads hook calls back into this function.
+    raw_loads = getattr(json.loads, "_science_orig_loads", json.loads)
+    try:
+        raw_loads(out)
+        return out
+    except Exception:
+        pass
+    balanced = _json_first_balanced(out)
+    if balanced:
+        try:
+            raw_loads(balanced)
+            return balanced
+        except Exception:
+            pass
+    return out
+
+
+_TEXT_FALLBACK_FORMATS = frozenset({"ToolCommand", "NextStep"})
+
+
+def _json_tolerant_wrapper(orig: Any) -> Any:
+    def wrapped(self: Any, prompt: Any, *args: Any, **kwargs: Any) -> Any:
+        resp = orig(self, prompt, *args, **kwargs)
+        response_format = kwargs.get("response_format")
+        if response_format is None:
+            for a in args:
+                if isinstance(a, type) and getattr(a, "model_json_schema", None):
+                    response_format = a
+                    break
+        if response_format is None:
+            return resp
+        if isinstance(resp, list):
+            # n>1 candidates (ChatOpenAI server path): clean each, keep the list shape.
+            return [wrapped_one(r, response_format) for r in resp]
+        return wrapped_one(resp, response_format)
+
+    def wrapped_one(resp: Any, response_format: Any) -> Any:
+        try:
+            cleaned = _json_tolerant_clean(resp)
+            try:
+                json.loads(cleaned)  # verifiable payload
+            except Exception:
+                # Executor.extract_explanation_and_command / parse_response_to_fields
+                # parse plain text themselves; an error dict would skip that path.
+                if getattr(response_format, "__name__", "") in _TEXT_FALLBACK_FORMATS and isinstance(resp, str):
+                    return resp
+                return {
+                    "error": "json_parse_failed",
+                    "message": _response_head(resp, 400),
+                }
+            return cleaned
+        except Exception as exc:
+            return {
+                "error": "json_parse_failed",
+                "message": f"{type(exc).__name__}: {exc}"[:400],
+            }
+
+    wrapped._science_json_tolerant = True  # type: ignore[attr-defined]
+    wrapped._science_budget = True  # type: ignore[attr-defined]
+    return wrapped
+
+
+def _install_json_tolerant_parse_hook() -> None:
+    """Belt-and-braces: json.loads of LLM text is also fenced/balanced-cleaned.
+
+    Some EPC-AW call sites parse strings that never passed a response_format,
+    so globally guard json.loads only for str inputs — non-str payloads
+    pass through untouched.
+    """
+    if getattr(json.loads, "_science_json_tolerant", False):
+        return
+    orig_loads = json.loads
+
+    def tolerant_loads(s: Any, *args: Any, **kwargs: Any) -> Any:  # type: ignore[no-redef]
+        if isinstance(s, str):
+            try:
+                return orig_loads(s, *args, **kwargs)
+            except ValueError:
+                cleaned = _json_tolerant_clean(s)
+                if cleaned != s:
+                    return orig_loads(cleaned, *args, **kwargs)
+                raise
+        return orig_loads(s, *args, **kwargs)
+
+    tolerant_loads._science_json_tolerant = True  # type: ignore[attr-defined]
+    tolerant_loads._science_orig_loads = orig_loads  # type: ignore[attr-defined]
+    json.loads = tolerant_loads  # type: ignore[assignment]
+
+
 def _install_engine_patches() -> None:
     os.environ.setdefault("ENABLE_THINKING", "0")
     os.environ.setdefault("SCIENCE_EPC_AW_MAX_MODEL_LEN", "8192")
@@ -551,6 +1068,8 @@ def _install_engine_patches() -> None:
     _install_client_timeout()
     _install_threadsafe_timeouts()
     _install_completion_budget()
+    _install_lite_prompts()
+    _install_json_tolerant_parse_hook()
     try:
         from engine_factory_patch import patch_factory_for_vllm
 
@@ -1008,94 +1527,22 @@ def _google_navigate(driver: Any, raw_get: Any, url: str, timeout_s: float, args
 
 
 def _patch_google_chrome_or_demote(enabled_tools: List[str]) -> List[str]:
-    """Inject Chrome binary into scraper, or drop Google_Search_Tool when missing."""
-    tools = [str(item) for item in (enabled_tools or []) if str(item).strip()]
-    chrome = _find_chrome_binary()
-    if chrome:
-        os.environ.setdefault("CHROME_BINARY", chrome)
-        try:
-            from tools.google_search import local_google_scraper as scraper_mod  # type: ignore
-        except Exception:
-            scraper_mod = None
-        if scraper_mod is not None and not getattr(scraper_mod.get_stealth_driver, "_science_chrome_bin", False):
-            major = _chrome_major(chrome)
-
-            def get_stealth_driver(*args: Any, **kwargs: Any) -> Any:
-                import undetected_chromedriver as uc  # type: ignore
-
-                options = uc.ChromeOptions()
-                options.page_load_strategy = "eager"
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--disable-gpu")
-                options.add_argument("--window-size=1366,768")
-                options.add_argument("--headless=new")
-                options.add_argument("--disable-blink-features=AutomationControlled")
-                profile_path = os.path.abspath(f"./chrome_profile/{int(__import__('time').time())}")
-                os.makedirs(profile_path, exist_ok=True)
-                options.add_argument(f"--user-data-dir={profile_path}")
-                launch: Dict[str, Any] = {
-                    "options": options,
-                    "browser_executable_path": chrome,
-                    "headless": True,
-                }
-                if major:
-                    launch["version_main"] = major
-                driver = uc.Chrome(**launch)
-                try:
-                    driver.set_page_load_timeout(20)
-                except Exception:
-                    pass
-                raw_get = driver.get
-
-                def get(url: str = "", *args: Any, **kwargs: Any) -> Any:
-                    return _google_navigate(driver, raw_get, url, 20.0, args, kwargs, profile_path)
-
-                driver.get = get  # type: ignore[method-assign]
-                try:
-                    driver.execute_cdp_cmd(
-                        "Page.addScriptToEvaluateOnNewDocument",
-                        {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
-                    )
-                except Exception:
-                    pass
-                return driver, profile_path
-
-            get_stealth_driver._science_chrome_bin = True  # type: ignore[attr-defined]
-            scraper_mod.get_stealth_driver = get_stealth_driver  # type: ignore[method-assign]
-        return tools
-    if "Google_Search_Tool" in tools:
-        tools = [name for name in tools if name != "Google_Search_Tool"]
-        _progress("skip Google_Search_Tool: Chrome binary not found")
-    return tools
+    """Google search is removed. Drop the name if an old list still contains it."""
+    return [
+        str(item) for item in (enabled_tools or [])
+        if str(item).strip() and str(item) != "Google_Search_Tool"
+    ]
 
 
 def _patch_google_search_model_string() -> None:
-    """ref_Rep Google tool uses self.model_string in USE_LOCAL path but never sets it."""
-    try:
-        from tools.google_search.tool import Google_Search_Tool  # type: ignore
-    except Exception:
-        return
-    if getattr(Google_Search_Tool.__init__, "_science_model_fix", False):
-        return
-    orig = Google_Search_Tool.__init__
+    """Google search is removed. Kept as a no-op for existing call sites."""
+    return None
 
-    def _init(self: Any, model_string: Any = None, *args: Any, **kwargs: Any) -> None:
-        model = model_string or os.environ.get("MODEL_Name") or os.environ.get("MODEL_NAME") or os.environ.get("OPENAI_MODEL")
-        orig(self, model, *args, **kwargs)
-        if getattr(self, "model_string", None) is None:
-            try:
-                self.model_string = model
-            except Exception:
-                pass
-        if getattr(self, "search_model", None) is None:
-            try:
-                self.search_model = model
-            except Exception:
-                pass
 
-    _init._science_model_fix = True  # type: ignore[attr-defined]
-    Google_Search_Tool.__init__ = _init  # type: ignore[method-assign]
+def _fix_google_model_string(_cls: Any) -> None:
+    return None
+
+
 
 
 _FAST_TIMEOUT = (3, 8)
@@ -1168,34 +1615,19 @@ def _html_to_text(html: str) -> str:
     return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
 
 
-_BING_SKIP = ("bing.com", "microsoft.com", "msn.com", "live.com", "microsoftonline")
 _DISPATCH_TOOLS = {
     "Bing_Search_Tool": "bing",
-    "Google_Search_Tool": "bing",
     "Wikipedia_Search_Tool": "wiki",
     "Web_Fetch_Tool": "fetch",
     "Web_Search_Tool": "fetch",
 }
 _DISPATCH_META: Dict[str, Dict[str, Any]] = {
-    "Bing_Search_Tool": {
-        "tool_name": "Bing_Search_Tool",
-        "tool_description": (
-            "Search Bing and return up to 5 hits with title, url, and snippet. "
-            "Does not open those pages. If a snippet is not enough, call Web_Fetch_Tool "
-            "with one of the urls on the next step."
-        ),
-        "tool_version": "1.0.0",
-        "input_types": {"query": "str - the search query."},
-        "output_type": "str - numbered hits, each with title, url, and snippet.",
-        "demo_commands": [{"command": 'execution = tool.execute(query="Citibank founded")', "description": "Search Bing."}],
-        "require_llm_engine": False,
-    },
     "Web_Fetch_Tool": {
         "tool_name": "Web_Fetch_Tool",
         "tool_description": (
-            "Open exactly one url copied from an earlier Bing or Wikipedia hit. "
-            "HTML returns text plus image urls. An image response returns type and size only. "
-            "PDF returns its text layer. Requires url. This tool does not search."
+            "Input is a URL. Opens exactly that page and extracts its readable text content "
+            "(HTML text, image metadata, or PDF text layer). This tool does not search; "
+            "get a url from Bing_Search_Tool or Wikipedia_Search_Tool first."
         ),
         "tool_version": "1.0.0",
         "input_types": {
@@ -1212,25 +1644,30 @@ _DISPATCH_META: Dict[str, Dict[str, Any]] = {
     "Wikipedia_Search_Tool": {
         "tool_name": "Wikipedia_Search_Tool",
         "tool_description": (
-            "Search Wikipedia titles only. Returns title, url, and snippet. "
-            "Does not open the page. Call Web_Fetch_Tool with one url on a later step if the snippet is not enough."
+            "Wikipedia search. Returns up to 10 entries, each with a title, its URL, "
+            "and a short truncated description. Does not open pages. "
+            "Call Web_Fetch_Tool with one url on a later step to read a page."
         ),
         "tool_version": "1.0.0",
         "input_types": {"query": "str - the search query."},
-        "output_type": "str - numbered hits, each with title, url, and snippet.",
+        "output_type": "str - numbered entries with title, URL, and truncated description.",
         "demo_commands": [{"command": 'execution = tool.execute(query="Citibank")', "description": "Search Wikipedia."}],
         "require_llm_engine": False,
     },
+    "Bing_Search_Tool": {
+        "tool_name": "Bing_Search_Tool",
+        "tool_description": (
+            "Bing web search. Returns up to 10 entries, each with a title, its URL, "
+            "and a short truncated description. Does not open pages. "
+            "If a title is promising, call Web_Fetch_Tool with that url on the next step."
+        ),
+        "tool_version": "1.0.0",
+        "input_types": {"query": "str - the search query."},
+        "output_type": "str - numbered entries with title, URL, and truncated description.",
+        "demo_commands": [{"command": 'execution = tool.execute(query="Citibank founded")', "description": "Search the web with Bing."}],
+        "require_llm_engine": False,
+    },
 }
-
-
-def _format_hits(hits: List[Dict[str, str]]) -> str:
-    lines: List[str] = []
-    for index, hit in enumerate(hits, start=1):
-        lines.append(f"{index}. title: {hit.get('title') or ''}")
-        lines.append(f"   url: {hit.get('url') or ''}")
-        lines.append(f"   snippet: {hit.get('snippet') or ''}")
-    return "\n".join(lines)
 
 
 def _strip_tags(text: str) -> str:
@@ -1241,64 +1678,49 @@ def _strip_tags(text: str) -> str:
     return " ".join(html_lib.unescape(plain).split())
 
 
-def _parse_bing_html(html: str, limit: int = 5) -> List[Dict[str, str]]:
-    import re
-
-    pattern = re.compile(
-        r'<h2[^>]*>\s*<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>\s*</h2>\s*<div class="b_caption"[^>]*>\s*<p[^>]*>(.*?)</p>',
-        re.S | re.I,
-    )
-    hits: List[Dict[str, str]] = []
-    for url, title, snippet in pattern.findall(html or ""):
-        if any(host in url for host in _BING_SKIP):
-            continue
-        title_text = _strip_tags(title)
-        snippet_text = _strip_tags(snippet)
-        if not title_text:
-            continue
-        hits.append({"title": title_text, "url": url, "snippet": snippet_text})
-        if len(hits) >= limit:
-            break
-    return hits
-
-
 def _bing_hits(query: str) -> str:
-    """Bing result cards only. Does not open the result URLs."""
+    """Bing web search: top-10 (title, url) pairs. Does not open the URLs.
+
+    Delegates to the mas.tools.search Bing kernel (same 7890 proxy chain as
+    _fast_get's environment) so both projects share one SERP implementation.
+    No Wikipedia fallback: a Bing failure is an explicit failure.
+    """
     q = str(query or "").strip()
     if not q:
         return "Bing_Search_Tool requires a query"
     try:
-        resp = _fast_get("https://cn.bing.com/search", {"q": q, "count": "5"})
-        resp.raise_for_status()
-        hits = _parse_bing_html(getattr(resp, "text", "") or "")
-        return _format_hits(hits) or f"No Bing results for {q}"
+        from mas.tools.search import bing_search
+
+        return str(bing_search(q, 10) or "")
     except Exception as exc:
         return f"Bing unreachable: {exc}"
 
 
 def _wikipedia_hits(query: str) -> str:
-    """One MediaWiki search. Returns titles, urls, and snippets. Does not open pages."""
+    """One MediaWiki search. Title, URL, and truncated snippet. Does not open pages."""
     q = str(query or "").strip()
     if not q:
         return "Wikipedia_Search_Tool requires a query"
     try:
+        from mas.tools.search import truncate_description
+
         search = _fast_get(
             "https://en.wikipedia.org/w/api.php",
-            {"action": "query", "list": "search", "srsearch": q, "srlimit": "5", "format": "json"},
+            {"action": "query", "list": "search", "srsearch": q, "srlimit": "10", "format": "json"},
         )
         search.raise_for_status()
-        raw = ((search.json().get("query") or {}).get("search") or [])[:5]
-        hits: List[Dict[str, str]] = []
-        for item in raw:
+        raw = ((search.json().get("query") or {}).get("search") or [])[:10]
+        lines = [f"wikipedia results for: {q}"]
+        for i, item in enumerate(raw, 1):
             title = str(item.get("title") or "").strip()
             if not title:
                 continue
-            hits.append({
-                "title": title,
-                "url": "https://en.wikipedia.org/wiki/" + title.replace(" ", "_"),
-                "snippet": _strip_tags(str(item.get("snippet") or "")),
-            })
-        return _format_hits(hits) or f"No Wikipedia results for {q}"
+            lines.append(f"{i}. {title}")
+            lines.append("   URL: https://en.wikipedia.org/wiki/" + title.replace(" ", "_"))
+            desc = truncate_description(str(item.get("snippet") or ""))
+            if desc:
+                lines.append(f"   {desc}")
+        return "\n".join(lines) or f"No Wikipedia results for {q}"
     except Exception as exc:
         return f"Wikipedia unreachable: {exc}"
 
@@ -1371,17 +1793,30 @@ def _web_fetch(query: str, url: str) -> str:
     target = str(url or "").strip()
     if not target:
         return "Web_Fetch_Tool requires a url"
+    resp: Any = None
     try:
         import requests
-
-        resp = requests.get(
-            target,
-            timeout=_FAST_TIMEOUT,
-            headers={"User-Agent": "MAS-Science-Infra/1.0"},
-            stream=True,
-        )
     except Exception as exc:
         return f"Web fetch failed: {exc}"
+    # Same proxy-chain fallback as _fast_get (SSH RemoteForward / local
+    # Clash first, direct last): bare direct egress is blocked on this
+    # host, so try every candidate before giving up.
+    errors: List[str] = []
+    for proxies in _proxy_candidates():
+        label = (proxies or {}).get("http") or "direct"
+        try:
+            resp = requests.get(
+                target,
+                timeout=_FAST_TIMEOUT,
+                headers={"User-Agent": "MAS-Science-Infra/1.0"},
+                stream=True,
+                proxies=proxies,
+            )
+            break
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+    if resp is None:
+        return f"Web fetch failed: {'; '.join(errors[-4:]) if errors else 'no route'}"
     try:
         status = int(getattr(resp, "status_code", 0) or 0)
         if status >= 400:
@@ -1463,19 +1898,116 @@ def _call_args(command: str, fallback_query: str, context: str) -> Tuple[str, st
     return query, url
 
 
+# --- Query sanitizing (mirrors agentflow/adapted/context.py) ---------------
+# Dataset prompts append instruction tails ("?When ready, output the final
+# answer...") and planners prepend imperatives ("Search the web for: ...").
+# Both pollute SERP queries; strip them before any search.
+_QUERY_TAIL_RE = re.compile(
+    r"(?i)\??\s*when\s+ready\s*,?\s*output\s+the\s+final\s+answer.*$"
+    r"|\?\s*when\s+ready\b.*$"
+    r"|do\s+not\s+generate\s+any\s+content\b.*$",
+    re.S,
+)
+_QUERY_PREFIX_RE = re.compile(
+    r"(?i)^\s*(?:please\s+)?"
+    r"(?:search\s+(?:the\s+web|wikipedia|the\s+internet|online)?\s*for"
+    r"|look\s*up"
+    r"|find\s+(?:information\s+)?(?:about|on)"
+    r"|fetch\s+(?:the\s+)?(?:url|page|website)"
+    r"|compute"
+    r"|calculate"
+    r")\s*[:：]?\s*"
+)
+_QUERY_STOPWORDS = {
+    "the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or",
+    "is", "was", "are", "were", "be", "been", "his", "her", "its", "their",
+    "before", "after", "answering", "please", "prefer",
+    "search", "web", "internet", "online", "look", "up", "find", "about",
+    "when", "ready", "output", "final", "answer", "generate", "any",
+    "content", "tag", "tags", "enclosed", "do", "not", "did",
+    "what", "which", "who", "where", "whom", "whose", "how",
+}
+
+
+def _condense_query(query: str) -> str:
+    """Strip instruction tails / imperative prefixes, cut at the first "?",
+    and keep an entity-first keyword window for SERP queries."""
+    q = str(query or "").strip()
+    if not q:
+        return q
+    text = _QUERY_TAIL_RE.sub("", q)
+    text = _QUERY_PREFIX_RE.sub("", text).strip()
+    if len(text) <= 48 and "?" not in text:
+        return text
+    text = text.split("?", 1)[0]
+    text = re.sub(r"(?i)^(what|which|who|where|when|whom|whose|how)\s+(is|was|are|were|did|does|do|has|have|had)\b", " ", text)
+    text = re.sub(r"(?i)\b(the actor who|the actress who|the person who|who played|that appeared in|which appeared in|use (wikipedia|web|google)[^.]*\.?)", " ", text)
+    text = re.sub(r"[?.!]+$", " ", text)
+    text = re.sub(r"^(?:What|Which|Who|Where|When|Whom|Whose|How)\s+", "", text, flags=re.I)
+    words = text.split()
+    keep: List[str] = []
+    for w in words:
+        lowered = w.lower().strip(".,;:!?\"'()")
+        if lowered in _QUERY_STOPWORDS:
+            continue
+        is_entity = bool(re.match(r"^[A-Z0-9]", w)) or w.isdigit()
+        is_year = bool(re.match(r"^\d{4}$", w))
+        if is_entity and not is_year:
+            keep.append(w)
+        elif is_year and keep:
+            keep.append(w)
+        elif keep and len(keep) <= 5 and w not in ("played", "role", "title"):
+            continue
+    keep2 = [w for w in (keep or words) if w.lower().strip(".,;:!?\"'()") not in _QUERY_STOPWORDS]
+    if len(keep2) > 8:
+        keep2 = keep2[:8]
+    return " ".join(keep2).strip() or q
+
+
+# SERP-list detector shared by the verify stop-gate below.
+_SERP_LIST_PREFIXES = (
+    "bing results for:",
+    "wikipedia results for:",
+)
+
+
+def _looks_like_serp_list(text: str) -> bool:
+    head = str(text or "").lstrip()[:120].lower()
+    return any(head.startswith(p.lower()) for p in _SERP_LIST_PREFIXES)
+
+
+def _serp_first_url(text: str) -> str:
+    """First http(s) URL from a SERP list body (title+URL lines). Empty if none."""
+    import re
+
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Only lines that carry a URL payload (SERP entries or "   URL: ...").
+        if "http://" not in stripped and "https://" not in stripped:
+            continue
+        match = re.search(r"https?://[^\s'\"<>)]+", stripped)
+        if match:
+            return match.group(0).rstrip(".,)")
+    return ""
+
+
 def _run_dispatch(tool_name: str, query: str, url: str) -> str:
+    if tool_name == "Google_Search_Tool":
+        return "No result was generated because the tool was not found: Google_Search_Tool"
     kind = _DISPATCH_TOOLS.get(tool_name)
     if kind == "bing":
-        return _bing_hits(query)
+        return _bing_hits(_condense_query(query))
     if kind == "wiki":
-        return _wikipedia_hits(query)
+        return _wikipedia_hits(_condense_query(query))
     if kind == "fetch":
         return _web_fetch(query, url)
     return f"No result was generated because the tool was not found: {tool_name}"
 
 
 def _register_dispatch_tools(solver: Any, enabled: Optional[List[str]] = None) -> None:
-    """Expose Bing and Web_Fetch without a ref_Rep package.
+    """Expose Google/Wikipedia search and Web_Fetch without the upstream tool package.
 
     Only names listed in the runtime enabled_tools are added. An imported
     Web_Search_Tool is not promoted just because Wikipedia was loaded.
@@ -1502,8 +2034,9 @@ def _register_dispatch_tools(solver: Any, enabled: Optional[List[str]] = None) -
     if isinstance(wiki, dict):
         wiki = dict(wiki)
         wiki["tool_description"] = (
-            "Search Wikipedia titles only. Returns title, url, and snippet. "
-            "Does not open the page. Call Web_Fetch_Tool with one url on a later step if the snippet is not enough."
+            "Wikipedia search. Returns up to 10 entries, each with a title, its URL, "
+            "and a short truncated description. Does not open pages. "
+            "Call Web_Fetch_Tool with one url on a later step to read a page."
         )
         wiki["demo_commands"] = [{"command": 'execution = tool.execute(query="Citibank")', "description": "Search Wikipedia."}]
         meta["Wikipedia_Search_Tool"] = wiki
@@ -1515,32 +2048,25 @@ def _register_dispatch_tools(solver: Any, enabled: Optional[List[str]] = None) -
 
 def _install_fast_search() -> None:
     """Wikipedia's own execute must not open the article or call Web_Search."""
-    try:
-        import importlib
-
-        mod = importlib.import_module("tools.wikipedia_search.tool")
-    except Exception:
-        return
-    cls = getattr(mod, "Wikipedia_Search_Tool", None)
-    if cls is None or getattr(getattr(cls, "execute", None), "_science_fast", False):
-        return
-
     def execute(self: Any, query: str = "", *args: Any, **kwargs: Any) -> str:
         return _wikipedia_hits(str(query or kwargs.get("query") or ""))
 
     execute._science_fast = True  # type: ignore[attr-defined]
-    cls.execute = execute  # type: ignore[method-assign]
+    for mod in _upstream_tool_modules("wikipedia_search.tool"):
+        cls = getattr(mod, "Wikipedia_Search_Tool", None)
+        if cls is not None and not getattr(getattr(cls, "execute", None), "_science_fast", False):
+            cls.execute = execute  # type: ignore[method-assign]
 
 
 def _guard_wikipedia_sys_exit() -> None:
     """Wikipedia_Search_Tool calls sys.exit when OPENAI_API_KEY missing — convert to error string."""
-    try:
-        from tools.wikipedia_search import tool as wiki_mod  # type: ignore
-    except Exception:
-        return
-    cls = getattr(wiki_mod, "Wikipedia_Search_Tool", None)
-    if cls is None or getattr(cls.execute, "_science_no_exit", False):
-        return
+    for mod in _upstream_tool_modules("wikipedia_search.tool"):
+        cls = getattr(mod, "Wikipedia_Search_Tool", None)
+        if cls is not None and not getattr(cls.execute, "_science_no_exit", False):
+            _wrap_wikipedia_no_exit(cls)
+
+
+def _wrap_wikipedia_no_exit(cls: Any) -> None:
     orig = cls.execute
 
     def execute(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -1556,13 +2082,19 @@ def _guard_wikipedia_sys_exit() -> None:
 def _build_real() -> Dict[str, Any]:
     root = _import_root()
     if root is None:
-        raise ImportError("EPC-AW MAS not found in upload/ or ref_Rep/EPC-AW")
+        raise ImportError("EPC-AW MAS not found in upload/ (set SCIENCE_EPC_AW_DIR or upload EPC-AW-main)")
     _ensure_import_paths(root)
     _map_llm_env()
     os.environ.setdefault("ENABLE_THINKING", "0")
     from MAS.epc_aw.solver import construct_solver  # type: ignore
 
     _install_engine_patches()
+    # JSON-tolerant wrap must land AFTER construct_solver imports the engine
+    # classes but BEFORE any instance is created. The engine __init__ patch
+    # above runs first; the class-level wrap below is applied once and also
+    # via instances created later (idempotent _science_json_tolerant marker).
+    _install_json_tolerant_parsing()
+    _install_memory_dedup()
 
     model = (
         os.environ.get("MODEL_NAME")
@@ -1687,6 +2219,7 @@ class EpcAwEpisodeContext:
         self.json_data = {}
         self.last_trace = {}
         self._active_question = ""
+        drain_llm_calls()
         memory = self.system_memory
         if hasattr(memory, "obtained_information") and isinstance(getattr(memory, "obtained_information", None), list):
             memory.obtained_information.clear()
@@ -1930,6 +2463,20 @@ class EpcAwEpisodeContext:
         except Exception:
             pass
 
+    def _drain_llm_calls(self) -> Dict[str, Any]:
+        """Fix E: collect _generate_text records for this window's trace."""
+        calls = drain_llm_calls()
+        summaries = [
+            {
+                "model": str(c.get("model") or ""),
+                "n": int(c.get("n") or 1),
+                "prompt_head": str(c.get("prompt_head") or "")[:500],
+                "response_head": str(c.get("response_head") or "")[:300],
+            }
+            for c in calls
+        ]
+        return {"count": len(summaries), "calls": summaries}
+
     def plan_window(self, message: Any) -> Dict[str, Any]:
         self.last_trace = {}
         self.hydrate_from_message(message)
@@ -1945,6 +2492,59 @@ class EpcAwEpisodeContext:
             self._active_question = question
         self.question = question
         self.step_count += 1
+        # --- Fix D: search→fetch hard constraint state machine -----------------
+        # If the previous round ran a search tool and its output is still a raw
+        # SERP list (titles+URLs) that no fetch/generator has digested yet, this
+        # round is forced to Web_Fetch_Tool on the first SERP URL — the LLM does
+        # not get to pick (mirrors agentflow/adapted/context.py).
+        forced_fetch_url = ""
+        prev_output = str(self.last_tool_output or "")
+        if (
+            self.step_count > 1
+            and str(self.last_tool_name or "") in ("Wikipedia_Search_Tool", "Web_Search_Tool", "Bing_Search_Tool")
+            and _looks_like_serp_list(prev_output)
+            and "Web_Fetch_Tool" in self._available_tools()
+            and "Web_Fetch_Tool" not in self.failed_tools
+            and not _is_transport_failure(prev_output)
+        ):
+            forced_fetch_url = _serp_first_url(prev_output)
+        if forced_fetch_url:
+            prev_search_tool = str(self.last_tool_name or "")
+            self.last_trace["forced_fetch"] = {"url": forced_fetch_url, "from": prev_search_tool}
+            self.last_context = str(self.last_context or question)
+            self.last_sub_goal = f"Fetch {forced_fetch_url} and extract the facts needed to answer the current step"
+            self.last_tool_name = "Web_Fetch_Tool"
+            self.tool_available = True
+            self.last_trace.update(
+                {
+                    "outline": self.system_memory.get_outline() if hasattr(self.system_memory, "get_outline") else {},
+                    "tool": "Web_Fetch_Tool",
+                    "context": self.last_context,
+                    "sub_goal": self.last_sub_goal,
+                    "tool_available": True,
+                    "forced_fetch": {"url": forced_fetch_url, "from": prev_search_tool},
+                }
+            )
+            self.last_trace["llm_calls"] = self._drain_llm_calls()
+            return {
+                "kind": "plan_step",
+                "payload": {
+                    "next": EXECUTOR_ID,
+                    "args": {
+                        "question": question,
+                        "context": self.last_context,
+                        "sub_goal": self.last_sub_goal,
+                        "tool_name": "Web_Fetch_Tool",
+                        "tool_available": True,
+                        "query": "",
+                        "url": forced_fetch_url,
+                    },
+                    "sub_goal": self.last_sub_goal,
+                    "done": False,
+                    "trace": dict(self.last_trace),
+                },
+            }
+        # --- End Fix D state machine -------------------------------------------
         _progress("正在生成下一步")
         self._analyze_once(question)
         target = _first_outline_target(self.system_memory)
@@ -2020,6 +2620,7 @@ class EpcAwEpisodeContext:
         )
         if "bts" not in self.last_trace:
             self.last_trace["bts"] = {"n": _plan_n() if not isinstance(plan, list) else max(1, len(plan)), "selected": "0"}
+        self.last_trace["llm_calls"] = self._drain_llm_calls()
         return {
             "kind": "plan_step",
             "payload": {
@@ -2061,6 +2662,7 @@ class EpcAwEpisodeContext:
                 "command": self.last_command,
                 "output": output,
                 "analysis": "skipped execute_tool_command",
+                "llm_calls": self._drain_llm_calls(),
             }
             return {
                 "kind": "tool_result",
@@ -2087,6 +2689,7 @@ class EpcAwEpisodeContext:
         if _is_llm_error(command_blob):
             self.last_trace["llm_error"] = command_blob
             output = f"llm error: {_llm_error_text(command_blob)}"
+            self.last_trace["llm_calls"] = self._drain_llm_calls()
             return {
                 "kind": "tool_result",
                 "payload": {
@@ -2138,6 +2741,7 @@ class EpcAwEpisodeContext:
             "analysis": self.last_analysis,
             "explanation": self.last_explanation,
             "failed_tools": list(self.failed_tools),
+            "llm_calls": self._drain_llm_calls(),
         }
         return {
             "kind": "tool_result",
@@ -2186,6 +2790,19 @@ class EpcAwEpisodeContext:
         if new_flag and new_info and hasattr(self.system_memory, "add_obtained_information"):
             self.system_memory.add_obtained_information(new_info)
         ready = str(conclusion).strip().upper() == "STOP" and bool(new_flag) and self.step_count > 1
+        # Stop-gate: a bare SERP list is titles+URLs, not a digested answer.
+        # Reject STOP while steps remain and no generator/digested evidence
+        # exists (mirrors agentflow/adapted/context.py).
+        if ready and _looks_like_serp_list(self.last_tool_output or "") and self.step_count < int(self.max_steps or _max_steps()):
+            got_answer = False
+            for item in (self._obtained() or []):
+                chunk = str(item or "")
+                if chunk.strip() and not _looks_like_serp_list(chunk):
+                    got_answer = True
+                    break
+            if not got_answer:
+                ready = False
+                self.last_trace["stop_gate"] = "serp_only_evidence"
         updated_outline = outline
         if not ready:
             epc_aw_analysis = ""
@@ -2259,6 +2876,21 @@ class EpcAwEpisodeContext:
             except Exception as exc:
                 self.last_trace["llm_error"] = str(exc)
                 answer = ""
+            # The direct_output prompt mandates "1. Process Summary ... 2. Answer: X".
+            # Keep only the Answer section so the grader sees the answer itself,
+            # not a process narrative that buries (and truncates) it.
+            m = re.search(
+                r"(?is)(?:^|\n)[ \t]*(?:2?[.\-:]?\s*)?(?:\*\*)?\s*Answer\s*(?:\*\*)?\s*[.:：]\s*(.*?)(?:\n\s*\n|\Z)",
+                answer,
+            )
+            if m and m.group(1).strip():
+                answer = m.group(1).strip().strip("*").strip()
+            elif re.search(r"(?i)process summary", answer):
+                # Malformed two-section output with no explicit Answer line:
+                # fall back to the last non-empty line, usually the answer.
+                tail = [ln.strip(" -*") for ln in answer.strip().splitlines() if ln.strip()]
+                if tail:
+                    answer = tail[-1]
         self.last_trace.update(
             {
                 "analysis": analysis,
@@ -2267,6 +2899,7 @@ class EpcAwEpisodeContext:
                 "outline": outline,
                 "outline_updated": updated_outline,
                 "ready_to_stop": ready,
+                "llm_calls": self._drain_llm_calls(),
             }
         )
         stop_now = bool(ready) or hit_limit

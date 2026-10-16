@@ -52,6 +52,9 @@ type Props = {
   onModeChange: (mode: CanvasMode) => void;
   onDebug: () => void;
   debugOpen: boolean;
+  onFlowDoc: () => void;
+  flowDocOpen: boolean;
+  onToolTest: () => void;
 };
 
 function samplingState(opportunity?: SamplingOpportunity): SamplingCanvasState | undefined {
@@ -65,7 +68,7 @@ function GraphWorkbench({
   workflow, palette, onChange, active, libraryOpen, onLibraryOpenChange, onModelResources, defaultModel,
   modelOptions, modelOptionsLoading, modelOptionsError, onRefreshModelOptions, traceFocus,
   inspectorVisible = true, onInspect, mode, samplingPreview, selectedSamplingOpportunity, onSelectSamplingOpportunity,
-  onModeChange, onDebug, debugOpen,
+  onModeChange, onDebug, debugOpen, onFlowDoc, flowDocOpen, onToolTest,
 }: Props) {
   const modelNames = useMemo(() => new Map(modelOptions.map(option => [option.id, option.name])), [modelOptions]);
   const graph = useGraphEditor(workflow, onChange, palette, modelNames);
@@ -396,6 +399,7 @@ function GraphWorkbench({
   }}>
     <GraphCanvas nodes={nodes} edges={edges} active={active} mode={mode}
       onModeChange={onModeChange} onDebug={onDebug} debugOpen={debugOpen}
+      onFlowDoc={onFlowDoc} flowDocOpen={flowDocOpen} onToolTest={onToolTest}
       onNodesChange={graph.onNodesChange} onEdgesChange={graph.onEdgesChange} onConnect={onConnect}
       isValidConnection={isValidConnection} onConnectStart={() => setConnection(null)} onConnectEnd={onConnectEnd}
       onMoveStart={() => setConnection(null)}

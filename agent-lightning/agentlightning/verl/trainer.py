@@ -10,6 +10,8 @@ from copy import deepcopy
 from pprint import pprint
 from typing import Dict, Tuple, Type
 
+import inspect
+
 import numpy as np
 import torch
 import verl
@@ -460,10 +462,21 @@ class AgentLightningTrainer(RayPPOTrainer):
         if self.adapter is not None and not isinstance(self.adapter, TraceToTripletBase):
             raise ValueError("Adapter must be a TraceToTripletBase for currently VERL implementation.")
         verl_version = verl.__version__
-        if verl_version == "0.5.0":
-            # Note (Zhiyuan): To avoid further patch into vllm async server, using the same sentence to get the naming here.
-            # However, it is possible that verl updates the naming and causes incompatibility.
-            # Reference: https://github.com/volcengine/verl/blob/5b5e09d9cc20625e436d01f69d9cc739ff681c54/verl/workers/rollout/vllm_rollout/vllm_async_server.py#L217
+        # The daemon's request-model name must equal the name the async vLLM
+        # server registers in OpenAIServingModels. Vendored verl snapshots
+        # (0.3.x, e.g. ref_Rep/APPO-main) register the last two path segments
+        # (BaseModelPath name in vllm_async_server.init_engine), so the daemon
+        # must request that same short name or every rollout call 404s.
+        # Detect the convention from the installed verl's init_engine source
+        # instead of pinning an exact __version__ string.
+        try:
+            from verl.workers.rollout.vllm_rollout import vllm_async_server as _vas
+
+            _init_src = inspect.getsource(_vas.AsyncvLLMServer.init_engine)
+            _registers_short = 'split("/")[-2:]' in _init_src or "split('/')[-2:]" in _init_src
+        except Exception:
+            _registers_short = verl_version == "0.5.0"
+        if _registers_short:
             model = "/".join(self.config.actor_rollout_ref.model.path.split("/")[-2:])
         else:
             # For other versions (e.g., 0.6.0), we use the full path to the model.

@@ -146,6 +146,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
                             )},
                             "parent_id": getattr(s, "parent_id", None),
                             "span_id": getattr(s, "span_id", None),
+                            "start": getattr(s, "start_time", None),
+                            "end": getattr(s, "end_time", None),
                         }
                         for i, s in enumerate(spans[:80])
                     ],
@@ -736,6 +738,34 @@ class TirAgentModeDaemon(AgentModeDaemon):
             return await self._enqueue_from_runner_expansions()
         return await self._enqueue_tree_branches_legacy()
 
+    def _reject_mas_faults(self, data_proto: Any, data_metrics: Dict[str, Any]) -> None:
+        """A MAS fault makes this step's reward unusable. Model-wrong answers pass."""
+        import os
+
+        raw = data_proto.non_tensor_batch.get("rollout_id_list", None) if data_proto is not None else None
+        if raw is None:
+            ids: List[str] = []
+        elif isinstance(raw, np.ndarray):
+            ids = [str(item) for item in raw.tolist()]
+        else:
+            ids = [str(item) for item in list(raw)]
+        rows = []
+        for rid in dict.fromkeys(ids):
+            meta = self._rollout_meta.get(str(rid)) or {}
+            rows.append({"mas_fault": meta.get("mas_fault") or "", "reward": meta.get("reward")})
+        try:
+            from workflow.mas_health import MasHealthError, assess_step
+        except Exception:
+            data_metrics["training/mas_fault"] = 0.0
+            return
+        report = assess_step(rows)
+        data_metrics["training/mas_fault"] = 0.0 if report["ok"] else 1.0
+        if report["ok"]:
+            return
+        if os.environ.get("TIR_MAS_HEALTH", "1").strip().lower() in ("0", "false", "no", "off"):
+            return
+        raise MasHealthError(report["faults"][0])
+
     def get_train_data_batch(self, max_prompt_length: int, max_response_length: int, device, global_steps: int):
         require_training_samples(self._completed_rollouts_v0, getattr(self.adapter, "agent_match", None))
         data_proto, data_metrics = super().get_train_data_batch(
@@ -744,6 +774,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
             device=device,
             global_steps=global_steps,
         )
+        self._reject_mas_faults(data_proto, data_metrics)
         if self.tir_algo == "grpo":
             # RL2 (b): grpo early-return is now conditional. When
             # zero_prefix_adv_for_children is active (DEFAULT_TIR default True;

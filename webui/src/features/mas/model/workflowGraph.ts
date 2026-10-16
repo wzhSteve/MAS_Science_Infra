@@ -1,4 +1,5 @@
 import type { AgentKind, AgentSpec, RouterSpec, WorkflowSpec } from '../../../shared/api/types';
+import { DEFAULT_PLANNER_PROMPT, DEFAULT_VERIFIER_PROMPT } from './defaultPrompts';
 import type { EdgeKind, GraphNode, GraphEdge } from '../types';
 import { EDGE_KINDS, edgeDefinition } from './edgeDefinitions';
 import { resolveHandles, serializeEdges } from './edgeGeometry';
@@ -61,6 +62,13 @@ function inferredKind(agent: AgentSpec): AgentKind {
   return 'blank';
 }
 
+function visiblePrompt(kind: string | undefined, prompt: string | undefined): string {
+  if ((prompt || '').trim()) return prompt || '';
+  if (kind === 'planner') return DEFAULT_PLANNER_PROMPT;
+  if (kind === 'verifier') return DEFAULT_VERIFIER_PROMPT;
+  return '';
+}
+
 export function workflowToFlow(
   wf: WorkflowSpec,
   modelNames: ReadonlyMap<string, string> = new Map(),
@@ -76,7 +84,7 @@ export function workflowToFlow(
             role: wf.hub?.role || 'planner',
             skills: wf.hub?.skills || [],
             tools: wf.tools || [],
-            system_prompt: wf.hub?.system_prompt || '',
+            system_prompt: visiblePrompt('planner', wf.hub?.system_prompt || ''),
             trainable: true,
           },
         ];
@@ -135,7 +143,7 @@ export function workflowToFlow(
       skills: a.skills || [],
       tools: a.tools || (a.id === 'planner' || a.kind === 'planner' ? wf.tools : []),
       memory_scope: a.memory_scope || 'agent',
-      system_prompt: a.system_prompt ?? (a.id === 'planner' ? wf.hub?.system_prompt : '') ?? '',
+      system_prompt: visiblePrompt(a.kind || inferredKind(a), a.system_prompt ?? (a.id === 'planner' ? wf.hub?.system_prompt : '') ?? ''),
       model: a.model || 'inherit',
       model_name: a.model && a.model !== 'inherit' ? modelNames.get(a.model) || a.model : undefined,
       trainable: a.trainable !== false,
@@ -161,7 +169,7 @@ export function workflowToFlow(
         skills: ['verifier'],
         tools: [],
         memory_scope: 'agent',
-        system_prompt: '',
+        system_prompt: visiblePrompt('verifier', ''),
         model: 'inherit',
         trainable: false,
         profile: {},

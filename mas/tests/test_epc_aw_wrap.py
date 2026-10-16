@@ -227,9 +227,9 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
         )
         self.assertEqual(saved["n"], 3)
         self.assertEqual(saved["max_steps"], 7)
+        self.assertNotIn("Google_Search_Tool", saved["enabled_tools"])
         self.assertIn("Bing_Search_Tool", saved["enabled_tools"])
         self.assertIn("Web_Fetch_Tool", saved["enabled_tools"])
-        self.assertNotIn("Google_Search_Tool", saved["enabled_tools"])
         loaded = get_project_runtime("epc-aw-main")
         self.assertEqual(loaded["max_steps"], 7)
         os.environ.pop("SCIENCE_EPC_AW_N", None)
@@ -247,6 +247,7 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
             solver, ["Wikipedia_Search_Tool", "Bing_Search_Tool"],
         )
         self.assertIn("Bing_Search_Tool", solver.planner.available_tools)
+        self.assertNotIn("Google_Search_Tool", solver.planner.available_tools)
         self.assertNotIn("Web_Fetch_Tool", solver.planner.available_tools)
         self.assertNotIn("Web_Search_Tool", solver.planner.available_tools)
         self.assertEqual(sys.modules["context"]._plan_n(), 3)
@@ -431,8 +432,8 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
         from workflow.user_gateway.loader import load_entry_module
 
         self._drop_upload("epc-aw-main")
-        # Point upload MAS to the reference tree so Executor imports succeed.
-        root = ROOT / "ref_Rep" / "EPC-AW"
+        # Point upload MAS to the real project upload so Executor imports succeed.
+        root = ROOT / "user_space" / "projects" / "epc-aw-main" / "upload" / "EPC-AW-main"
         upload = self.user_root / "projects" / "epc-aw-main" / "upload" / "EPC-AW-main"
         if upload.exists():
             import shutil
@@ -490,6 +491,32 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
             merged = ctx_mod._merge_no_think({})
             self.assertEqual(merged["extra_body"]["enable_thinking"], False)
             self.assertEqual(merged["extra_body"]["chat_template_kwargs"]["enable_thinking"], False)
+            # messages-level soft switch survives LiteLLM stripping extra_body
+            merged2 = ctx_mod._merge_no_think(
+                {"messages": [{"role": "user", "content": "What is 1+1?"}]}
+            )
+            self.assertTrue(
+                merged2["messages"][0]["content"].rstrip().endswith("/no_think")
+            )
+            # idempotent: no double suffix
+            merged3 = ctx_mod._merge_no_think(merged2)
+            self.assertEqual(
+                merged3["messages"][0]["content"].count("/no_think"), 1
+            )
+            # multimodal content list also gets the suffix on its text part
+            merged4 = ctx_mod._merge_no_think(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "describe"}],
+                        }
+                    ]
+                }
+            )
+            self.assertTrue(
+                merged4["messages"][0]["content"][0]["text"].rstrip().endswith("/no_think")
+            )
         finally:
             if old_model is None:
                 os.environ.pop("MODEL", None)
@@ -503,6 +530,195 @@ class TestEpcAwScaffold(EpcAwWrapTestBase):
                 os.environ.pop("AI_ASSISTANT_MODEL", None)
             else:
                 os.environ["AI_ASSISTANT_MODEL"] = old_asst
+
+
+class TestEpcAwSearchFetchGate(EpcAwWrapTestBase):
+    """Fix D: after a search tool returns a SERP list, the next plan is forced
+    to Web_Fetch_Tool on the first SERP URL — the planner LLM is bypassed."""
+
+    def _make_ctx(self):
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        return sys.modules["context"].get_episode_context(reset=True)
+
+    def test_serp_first_url_extracts_first_entry(self) -> None:
+        ctx_mod = sys.modules["context"]
+        serp = (
+            "bing results for: Citibank founded\n"
+            "1. Citibank - Wikipedia\n"
+            "   URL: https://en.wikipedia.org/wiki/Citibank\n"
+            "2. History\n"
+            "   URL: https://www.citigroup.com/history"
+        )
+        self.assertEqual(
+            ctx_mod._serp_first_url(serp),
+            "https://en.wikipedia.org/wiki/Citibank",
+        )
+        self.assertEqual(ctx_mod._serp_first_url("no urls here"), "")
+        self.assertEqual(ctx_mod._serp_first_url(""), "")
+
+    def test_search_output_forces_web_fetch_next_step(self) -> None:
+        from types import SimpleNamespace
+
+        ctx = self._make_ctx()
+        question = "Who was president when Citibank was founded?"
+        ctx._active_question = question
+        ctx.question = question
+        ctx.step_count = 1
+        ctx.last_tool_name = "Bing_Search_Tool"
+        ctx.last_tool_output = (
+            "bing results for: Citibank founded\n"
+            "1. Citibank - Wikipedia\n"
+            "   URL: https://en.wikipedia.org/wiki/Citibank"
+        )
+        ctx.planner.available_tools = [
+            "Python_Coder_Tool",
+            "Base_Generator_Tool",
+            "Wikipedia_Search_Tool",
+            "Bing_Search_Tool",
+            "Web_Fetch_Tool",
+        ]
+        called = {"n": 0}
+
+        def _must_not_run(*_args: object, **_kwargs: object) -> object:
+            called["n"] += 1
+            return SimpleNamespace(context="c", sub_goal="s", tool_name="Base_Generator_Tool"), ""
+
+        ctx.planner.generate_next_step = _must_not_run  # type: ignore[method-assign]
+        plan = ctx.plan_window({"kind": "plan_step", "dst": "planner", "payload": {"question": question}})
+        args = plan["payload"]["args"]
+        self.assertEqual(args["tool_name"], "Web_Fetch_Tool")
+        self.assertEqual(args["url"], "https://en.wikipedia.org/wiki/Citibank")
+        self.assertIn("Fetch https://en.wikipedia.org/wiki/Citibank", args["sub_goal"])
+        self.assertEqual(called["n"], 0)  # planner LLM bypassed
+        trace = plan["payload"]["trace"]
+        self.assertEqual(trace.get("tool"), "Web_Fetch_Tool")
+        self.assertIn("forced_fetch", trace)
+        self.assertEqual(trace["forced_fetch"]["url"], "https://en.wikipedia.org/wiki/Citibank")
+        # llm_calls key exists even when no engine fired (Fix E)
+        self.assertIn("llm_calls", trace)
+        self.assertEqual(trace["llm_calls"]["count"], 0)
+
+    def test_fetched_page_does_not_force_again(self) -> None:
+        ctx = self._make_ctx()
+        question = "Who was president when Citibank was founded?"
+        ctx._active_question = question
+        ctx.question = question
+        ctx.step_count = 2
+        ctx.last_tool_name = "Web_Fetch_Tool"
+        ctx.last_tool_output = "Citibank was founded in 1812. James Madison was president."
+        plan = ctx.plan_window({"kind": "plan_step", "dst": "planner", "payload": {"question": question}})
+        self.assertNotIn("forced_fetch", plan["payload"]["trace"])
+
+    def test_serp_output_allows_free_choice_after_fetch_rejected(self) -> None:
+        ctx = self._make_ctx()
+        question = "Who was president when Citibank was founded?"
+        ctx._active_question = question
+        ctx.question = question
+        ctx.step_count = 2
+        ctx.last_tool_name = "Bing_Search_Tool"
+        ctx.last_tool_output = (
+            "wikipedia results for: Citibank\n"
+            "1. Citibank\n"
+            "   URL: https://en.wikipedia.org/wiki/Citibank"
+        )
+        # Web_Fetch already failed twice → state machine stands down
+        ctx.failed_tools = ["Web_Fetch_Tool"]
+        plan = ctx.plan_window({"kind": "plan_step", "dst": "planner", "payload": {"question": question}})
+        self.assertNotIn("forced_fetch", plan["payload"]["trace"])
+
+
+class TestEpcAwLlmCallTrace(EpcAwWrapTestBase):
+    """Fix E: every window's trace carries llm_calls with prompt/model/n."""
+
+    def _make_ctx(self):
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.loader import load_entry_module
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        sys.modules.pop("context", None)
+        load_entry_module("epc-aw-main", reload=True)
+        return sys.modules["context"]
+
+    def test_engine_recorder_logs_generate_text(self) -> None:
+        ctx_mod = self._make_ctx()
+
+        class FakeEngine:
+            model_string = "test-model"
+
+            def _generate_text(self, prompt, system_prompt=None, max_tokens=2048, top_p=0.99, n=1, response_format=None):
+                return "ok response" if n == 1 else ["a", "b"]
+
+        eng = FakeEngine()
+        ctx_mod._wrap_engine_llm_recorder(eng)
+        out = eng._generate_text("What is 1+1?", n=1)
+        self.assertEqual(out, "ok response")
+        calls = ctx_mod.drain_llm_calls()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["model"], "test-model")
+        self.assertEqual(calls[0]["n"], 1)
+        self.assertEqual(calls[0]["prompt_head"], "What is 1+1?")
+        self.assertEqual(calls[0]["response_head"], "ok response")
+        # list-of-candidates responses record only the first head
+        eng2 = FakeEngine()
+        ctx_mod._wrap_engine_llm_recorder(eng2)
+        eng2._generate_text("pick", n=2)
+        calls2 = ctx_mod.drain_llm_calls()
+        self.assertEqual(calls2[0]["n"], 2)
+        self.assertEqual(calls2[0]["response_head"], "a")
+        # exceptions are logged and re-raised
+        class BoomEngine:
+            model_string = "boom"
+
+            def _generate_text(self, prompt, **kwargs):
+                raise RuntimeError("endpoint down")
+
+        eng3 = BoomEngine()
+        ctx_mod._wrap_engine_llm_recorder(eng3)
+        with self.assertRaises(RuntimeError):
+            eng3._generate_text("q")
+        calls3 = ctx_mod.drain_llm_calls()
+        self.assertIn("RuntimeError", calls3[0]["response_head"])
+
+    def test_window_trace_carries_llm_calls(self) -> None:
+        ctx_mod = self._make_ctx()
+        ctx = ctx_mod.get_episode_context(reset=True)
+        ctx_mod.record_llm_call(
+            {"model": "m", "n": 1, "prompt_head": "p" * 600, "response_head": "r"}
+        )
+        plan = ctx.plan_window({"kind": "plan_step", "dst": "planner", "payload": {"question": "1+1"}})
+        llm = plan["payload"]["trace"]["llm_calls"]
+        self.assertEqual(llm["count"], 1)
+        self.assertEqual(len(llm["calls"][0]["prompt_head"]), 500)  # head clamped
+        self.assertEqual(llm["calls"][0]["model"], "m")
+        # drained: next window starts from zero
+        tool = ctx.exec_window({
+            "kind": "tool_invoke",
+            "dst": "u_epc-aw-main__executor",
+            "payload": plan["payload"]["args"],
+        })
+        self.assertEqual(tool["payload"]["trace"]["llm_calls"]["count"], 0)
+
+    def test_runtime_defaults_match_source_main(self) -> None:
+        from workflow.user_gateway.epc_aw import scaffold_epc_aw_pev
+        from workflow.user_gateway.paths import project_dir
+
+        self._drop_upload("epc-aw-main")
+        scaffold_epc_aw_pev("epc-aw-main", title="EPC-AW-main")
+        import yaml
+
+        runtime = yaml.safe_load(
+            (project_dir("epc-aw-main") / "contracts" / "runtime.yaml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(runtime["temperature"], 0.7)
+        self.assertEqual(runtime["n"], 1)
+        self.assertEqual(runtime["max_tokens"], 4000)
 
 
 if __name__ == "__main__":

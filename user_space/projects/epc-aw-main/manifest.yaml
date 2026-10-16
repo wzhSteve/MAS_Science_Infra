@@ -4,6 +4,7 @@ mode: native_mas
 status: ready
 entry: adapted/entry.py:UserAgent
 experiment_id: alpha
+prompts_lite: true
 agent_ids:
 - planner
 - u_epc-aw-main__executor

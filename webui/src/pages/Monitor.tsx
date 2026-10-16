@@ -5,7 +5,8 @@ import { InlineNotice } from '../shared/components/InlineNotice';
 import { LoadingState } from '../shared/components/LoadingState';
 import { PageHeader } from '../shared/components/PageHeader';
 import { MonitorData, MonitorSummary } from '../features/monitor/components/MonitorData';
-import { MetricsLink, TrainingLog } from '../features/monitor/components/TrainingLog';
+import { TrainingLog } from '../features/monitor/components/TrainingLog';
+import { AglMetricsLink } from '../app/layout/MetricsLink';
 import { useRuntimeCommands } from '../app/providers/RuntimeProvider';
 
 export interface MonitorPanelProps {
@@ -40,11 +41,11 @@ export const MonitorPanel = memo(function MonitorPanel({
     <div className="page-stack">
       <PageHeader
         title="Monitor"
-        description="训练 Reward 与 AGL Metrics 同源（LightningStore），展示当前实验的数据，不限定为当前查看的训练运行。"
+        description="Reward 与 Loss 来自 metrics.jsonl，训练进行中与 LightningStore 合并，保留更完整的曲线。"
         actions={
           <>
             <Button onClick={onRefresh} loading={loading}>刷新</Button>
-            <MetricsLink online={aglOnline} />
+            <AglMetricsLink />
           </>
         }
       />

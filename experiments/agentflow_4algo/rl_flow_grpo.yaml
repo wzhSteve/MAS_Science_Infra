@@ -1,0 +1,67 @@
+profile: a800_2gpu
+algo: flow_grpo
+n_runners: 8
+rollout_per_gpu: 4
+devices:
+  ids:
+  - 0
+  - 1
+model_path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+algorithm:
+  adv_estimator: grpo
+  use_kl_in_reward: false
+  tir_algo: flow_grpo
+data:
+  train_files: /root/autodl-tmp/MAS_Science_Infra/data/train.parquet
+  val_files: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet
+  train_batch_size: 8
+  max_prompt_length: 2048
+  max_response_length: 512
+  truncation: left
+actor_rollout_ref:
+  rollout:
+    tensor_model_parallel_size: 1
+    n: 4
+    log_prob_micro_batch_size_per_gpu: 1
+    name: vllm
+    gpu_memory_utilization: 0.25
+    engine_kwargs:
+      vllm:
+        enable_auto_tool_choice: true
+        tool_call_parser: hermes
+        max_model_len: 2560
+  actor:
+    ppo_mini_batch_size: 8
+    ppo_micro_batch_size_per_gpu: 1
+    optim:
+      lr: 1.0e-06
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    entropy_coeff: 0
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.3
+    fsdp_config:
+      param_offload: false
+      optimizer_offload: false
+  ref:
+    log_prob_micro_batch_size_per_gpu: 1
+    fsdp_config:
+      param_offload: true
+  model:
+    path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+    use_remove_padding: true
+    enable_gradient_checkpointing: true
+trainer:
+  n_gpus_per_node: 2
+  val_before_train: false
+  critic_warmup: 0
+  logger:
+  - console
+  - tensorboard
+  project_name: AgentLightning
+  experiment_name: agentflow_4algo_flow_grpo_10step
+  nnodes: 1
+  test_freq: 100
+  total_epochs: 1
+  total_training_steps: 1
+  save_freq: -1

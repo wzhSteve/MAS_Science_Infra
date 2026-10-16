@@ -5,13 +5,13 @@ kernel output (or writes code, or reasons) and returns a ``tool_result``.
 Pure functions in ``mas/tools`` stay as kernels used *inside* the agent;
 they are not first-class MAS nodes.
 
-Palette ids: ``wikipedia_search``, ``google_search``, ``web_fetch``, ``python_coder``,
+Palette ids: ``wikipedia_search``, ``bing_search``, ``web_fetch``, ``python_coder``,
 ``think``. ``web_search`` resolves to ``web_fetch``. ``execute_python`` maps to
-``python_coder``. Bing does not exist in this palette.
+``python_coder``. ``google_search`` is not a tool.
 
-Tool isolation contract (user requirement):
-  - ``wikipedia_search`` / ``google_search``: query -> top-10 (title, URL) ONLY.
-    They never return page content and never open a page.
+Tool isolation contract:
+  - ``wikipedia_search`` / ``bing_search``: query -> top-10 entries of title,
+    URL, and a truncated description. Neither tier opens a result page.
   - ``web_fetch`` / ``web_search``: url -> page content extraction. They never search.
 """
 
@@ -57,7 +57,7 @@ _logged_tier_mismatches: set = set()
 
 
 def log_effective_tier(tool_id: str, configured_tier: Optional[str]) -> str:
-    """Startup structured log for tier resolution (MAS_design §6.2, Phase 4).
+    """Startup structured log for tier resolution (MAS_design §5.2, Phase 4).
 
     Emits ONCE per (tool, mismatch) at warning level:
       {"tool", "configured_tier", "effective_tier", "override_reason"}
@@ -174,14 +174,6 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
                 return t.execute(args.get("query") or "")
 
             return _wiki
-        if name == "google_search":
-            def _gog(args: Dict[str, Any]) -> Any:
-                Google_Search_Tool = _import_epc_aw_tool("epc_aw.tools.google_search.tool", "Google_Search_Tool")
-
-                t = Google_Search_Tool(model_string=_model_name())
-                return t.execute(args.get("query") or "")
-
-            return _gog
         if name == "web_search":
             def _web(args: Dict[str, Any]) -> Any:
                 Web_Search_Tool = _import_epc_aw_tool("epc_aw.tools.web_search.tool", "Web_Search_Tool")
@@ -205,22 +197,32 @@ def _epc_aw_llm_backend(name: str) -> Optional[Callable[[Dict[str, Any]], Any]]:
 
 
 PALETTE_TOOL_IDS = (
-    "wikipedia_search",
-    "google_search",
-    "web_fetch",
+    "base_generator",
     "python_coder",
-    "think",
+    "bing_search",
+    "wikipedia_search",
+    "web_fetch",
 )
-# Aliases: bing is gone; ``web_search`` is the user-facing name of the same
-# url->content tool as ``web_fetch``.
+# ``web_search`` is the user-facing name of the same url->content tool as ``web_fetch``.
 _LEGACY_TOOL_ALIASES = {
-    "bing_search": "google_search",
     "web_search": "web_fetch",
 }
 
 TOOL_AGENT_ARGS_SCHEMAS: Dict[str, Dict[str, Any]] = {
-    "wikipedia_search": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
-    "google_search": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    "wikipedia_search": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+        },
+        "required": ["query"],
+    },
+    "bing_search": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+        },
+        "required": ["query"],
+    },
     "web_fetch": {
         "type": "object",
         "properties": {"query": {"type": "string"}, "url": {"type": "string"}},
@@ -232,6 +234,11 @@ TOOL_AGENT_ARGS_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["url"],
     },
     "python_coder": {"type": "object", "properties": {"query": {"type": "string"}, "code": {"type": "string"}}, "required": []},
+    "base_generator": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "text": {"type": "string"}},
+        "required": [],
+    },
     "think": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
 }
 
@@ -254,14 +261,13 @@ def _kernel(name: str) -> Optional[Callable[[Dict[str, Any]], str]]:
                 return str(_wiki_fn(args.get("query") or ""))
 
             return _wiki
-        if name == "google_search":
-            def _google(args: Dict[str, Any]) -> str:
-                # Late import so tests can patch tools.search.google_search.
-                from .search import google_search as _gs
+        if name == "bing_search":
+            def _bing(args: Dict[str, Any]) -> str:
+                from .search import bing_search as _bs
 
-                return str(_gs(args.get("query") or ""))
+                return str(_bs(args.get("query") or ""))
 
-            return _google
+            return _bing
         if name in ("web_fetch", "web_search"):
             def _typed_fetch(args: Dict[str, Any]) -> str:
                 # Late import so tests can patch tools.search.fetch_by_type.
@@ -270,6 +276,11 @@ def _kernel(name: str) -> Optional[Callable[[Dict[str, Any]], str]]:
                 return str(_typed(str(args.get("url") or ""), str(args.get("query") or "")))
 
             return _typed_fetch
+        if name == "base_generator":
+            def _gen(args: Dict[str, Any]) -> str:
+                return str(args.get("query") or args.get("text") or args.get("input") or "")
+
+            return _gen
         if name == "think":
             return None
     except Exception:
@@ -279,12 +290,12 @@ def _kernel(name: str) -> Optional[Callable[[Dict[str, Any]], str]]:
 
 _DESCRIPTIONS = {
     "wikipedia_search": (
-        "Search Wikipedia for a query. Returns the top 10 entries, each with ONLY a title and its URL. "
-        "Does not return page content and does not open pages. Use web_fetch with one of the URLs to read a page."
+        "Search Wikipedia. Returns up to 10 entries, each with a title, its URL, and a short "
+        "truncated description. Does not open pages. Use web_fetch with one URL to read a full page."
     ),
-    "google_search": (
-        "Search the open web for a query. Returns the top 10 entries, each with ONLY a title and its URL. "
-        "Does not return page content and does not open pages. Use web_fetch with one of the URLs to read a page."
+    "bing_search": (
+        "Search the web with Bing. Returns up to 10 entries, each with a title, its URL, and a short "
+        "truncated description. Does not open pages. Use web_fetch with one URL to read a full page."
     ),
     "web_fetch": (
         "Input is a URL. Opens exactly that page and extracts its readable text content. "
@@ -295,6 +306,10 @@ _DESCRIPTIONS = {
         "Alias of web_fetch. This tool does not search."
     ),
     "python_coder": "Write and execute Python to solve the task",
+    "base_generator": (
+        "Generalist answer with no web search and no page fetch. "
+        "Same role as AgentFlow Base_Generator_Tool."
+    ),
     "think": "Reason about the given text with no external side effects",
 }
 
@@ -303,10 +318,11 @@ def _default_registry() -> Dict[str, ToolAgent]:
     out: Dict[str, ToolAgent] = {}
     for aid in (
         "wikipedia_search",
-        "google_search",
+        "bing_search",
         "web_fetch",
         "web_search",  # alias of web_fetch: url -> content, kept callable
         "python_coder",
+        "base_generator",
         "think",
     ):
         kernel = _kernel(aid)

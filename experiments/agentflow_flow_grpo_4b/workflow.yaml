@@ -1,0 +1,68 @@
+schema_version: '0.3'
+topology: centralized
+entry_agent: planner
+hub:
+  role: planner
+  skills: []
+  max_feedback_hops: 10
+  system_prompt: AgentFlow planner window (Planner.generate_next_step).
+tools: []
+agents:
+- id: planner
+  kind: planner
+  role: planner
+  label: agentflow_planner
+  trainable: true
+  system_prompt: Wrap AgentFlow Planner.analyze_query + generate_next_step. next is
+    the executor window.
+  tools: []
+  profile:
+    backend: user_space
+    user_project: agentflow
+  meta:
+    origin: user
+    user_project: agentflow
+    wraps: AgentFlow.Planner
+- id: u_agentflow__executor
+  kind: blank
+  role: executor
+  label: agentflow_executor
+  trainable: false
+  system_prompt: Wrap AgentFlow Executor (generate_tool_command + execute_tool_command)
+    and Memory.add_action.
+  profile:
+    backend: user_space
+    user_project: agentflow
+    llm_required: false
+  meta:
+    origin: user
+    user_project: agentflow
+    wraps: AgentFlow.Executor
+- id: verifier
+  kind: verifier
+  role: verifier
+  label: agentflow_verifier
+  trainable: false
+  system_prompt: Wrap AgentFlow Verifier.verificate_context; on STOP Planner.generate_direct_output.
+  profile:
+    backend: user_space
+    user_project: agentflow
+  meta:
+    origin: user
+    user_project: agentflow
+    wraps: AgentFlow.Verifier
+routers: []
+edges:
+- from: planner
+  to: u_agentflow__executor
+  kind: message
+- from: u_agentflow__executor
+  to: verifier
+  kind: message
+- from: verifier
+  to: planner
+  kind: feedback
+llm:
+  kind: local
+  model: Qwen3-4B
+  base_url: http://127.0.0.1:8001/v1

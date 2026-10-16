@@ -21,9 +21,10 @@
 .assistant-dock-head small { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 11px; }
 .assistant-dock-head-actions { display: inline-flex; gap: 2px; }
 .assistant-dock-controls {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px 12px;
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
   border-bottom: 1px solid var(--border-subtle);
 }
+.assistant-dock-controls .assistant-project-select { flex: 1; min-width: 0; }
 .assistant-dock-controls .ui-button { min-height: 32px; }
 .assistant-dock-log { flex: 1; min-height: 0; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .assistant-bubble { display: grid; gap: 4px; }

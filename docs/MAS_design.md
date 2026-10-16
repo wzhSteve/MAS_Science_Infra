@@ -2,8 +2,8 @@
 
 日期：2026-10-13
 版本：v2（设计稿，尚未实施）。本 v2 吸收 [GPT_analysis_for_MAS_design.md](./GPT_analysis_for_MAS_design.md) 评审意见修订：A 类 20 项直接采纳（文档层补强）、B 类 4 项压缩范围（只写合同不扩信封）、C 类 6 项推迟（入 §16 ADR）。涉及代码现状的表述已逐一对照仓库源码校准。
-状态：设计稿（尚未实施）。实施计划见 `/root/.cursor/plans/mas_小成本结构重构_fcb9c5c2.plan.md`。
-配套阅读：[RL_design.md](./RL_design.md) · [Harness_design.md](./Harness_design.md) · [TECHNICAL_FRAMEWORK.md](./TECHNICAL_FRAMEWORK.md)（原 MAS_AGENT_LANDING.md 已删除，历史版本见 git）
+状态：Phase 0–6 已落地；2026-10-15 修订新增 §8.5 Mode B-window（user_space 窗口图进入训练的合同），§8.3 相应更新。2026-10-16 修订：默认工具五件套改为与 AgentFlow / EPC-AW 对齐；Mode B-window 的 AgentFlow 窗口可以按 planner / executor 回合做 ARPO 续写。差距清单见 [AUDIT_GAP_MATRIX.md](./AUDIT_GAP_MATRIX.md)。
+配套阅读：[RL_design.md](./RL_design.md) · [Harness_design.md](./Harness_design.md) · [TECHNICAL_FRAMEWORK.md](./TECHNICAL_FRAMEWORK.md) · [AUDIT_GAP_MATRIX.md](./AUDIT_GAP_MATRIX.md)（原 MAS_AGENT_LANDING.md 已删除，历史版本见 git）
 
 ---
 
@@ -163,7 +163,7 @@ MAS_Science_Infra/
 | kind | 数量 | LLM 窗口 | 可训练 | 说明 |
 |---|---|---|---|---|
 | `planner` | 每图恰好 1 个 | 多轮 | 是 | 唯一 plan agent；输出 `plan_step`/`final_answer`；`HubSpec` 是其默认配置来源 |
-| `tool` | 5 个内置 + 可注册 | 单次 | 否 | HIVE 式 LLM-in-tool：`wikipedia_search` / `google_search` / `web_fetch`(=`web_search`) / `python_coder` / `think` |
+| `tool` | 5 个内置 + 可注册 | 单次 | 否 | 默认五件套与 AgentFlow / EPC-AW 对齐：`base_generator` / `python_coder` / `bing_search` / `wikipedia_search` / `web_fetch`（`web_search` 仍是 `web_fetch` 的别名）。`think` 不再出现在默认 palette，旧图里的节点仍能解析 |
 | `verifier` | 0-1 个 | 单次 | 可 | 无声明时运行时兜底（格式检查）；有 `system_prompt` 时按 `verify` schema 校验输出 |
 | `blank` | 任意 | 单次 | 可 | 用户自定义：`system_prompt` + `input_schema`/`output_schema`（JSON Schema 自描述）+ `profile.memory` 策略 |
 
@@ -445,19 +445,19 @@ def archive_root() -> Path:
 
 供 Harness 判断实验差异来自算法还是工具配置（Phase 4 实现进 Trajectory.meta 的 tool 配置段与启动日志）。
 
-### 5.3 think 的类型区分
+### 5.3 工具类型
 
-`think` 与搜索/代码执行性质不同。合同层区分三种执行类型，不新建 Python 基类，日志与成本统计可分辨：
+默认 palette 不再放 `think`。通用解答是 `base_generator`：不搜索、不打开页面，对应 AgentFlow 的 `Base_Generator_Tool`。合同层仍区分三种执行类型，不新建 Python 基类：
 
 | 类型 | 成员 | 特征 |
 |---|---|---|
-| External Tool | wikipedia_search / google_search / web_fetch | 外部副作用（网络） |
-| Reasoning Agent | think（与其他 blank agent） | 额外 LLM 推理窗口，无外部副作用 |
-| LLM-in-Tool | python_coder 的 pro 路径等 | 工具内部调 LLM |
+| External Tool | `bing_search` / `wikipedia_search` / `web_fetch` | 外部副作用（网络）。搜索只返回标题、URL、短描述 |
+| Reasoning Agent | `base_generator`；旧图里的 `think` | 无检索副作用 |
+| LLM-in-Tool | `python_coder` | 本地执行代码 |
 
 ### 5.4 工具隔离合同（保留）
 
-`wikipedia_search` / `google_search`: query → top-10 (title, URL) only，不开页面不回内容；`web_fetch` / `web_search`: url → 页面内容抽取，不搜索。pro tier 放宽召回（srlimit）但同样不破隔离。
+`bing_search` / `wikipedia_search`：query → 最多 10 条（title、URL、短描述），不开页面。`web_fetch` / `web_search`：恰好一个 URL → 页面正文，不搜索。空结果（0 hits、GET 404）是工具已经回答；`TIR_OFFLINE_SEARCH`、缓存缺口、连接失败才算 MAS 故障（见 `mas/workflow/mas_health.py`）。
 
 ---
 
@@ -572,13 +572,31 @@ planner 每轮输入由三段构成，在输入构造期组合，不互相混同
 - 画布 PEV 图在 Collect/eval 执行，训练热路径不原样重放（单 Agent + BranchSite 两波采样）。
 - mock collect 不走 centralized_runtime。
 - `topology: decentralized` 仅设计 sketch（peer-to-peer + broadcast），无实现。
-- user_space 窗口未接入 Tir 训练热路径。
+- user_space 窗口经 Mode B-window（§8.5）进入训练；不走 TirAgent 单 hub。AgentFlow 窗口可以在 planner / executor 回合后做 ARPO 续写。
 
 ### 8.4 PolicyBinding（远期方向，不做）
 
 未来统一两模式可引入 `AgentNode → PolicyBinding → Rollout Backend` 的策略绑定层。**本轮不实现**——当前最重要的是用户清楚自己定义了什么、评估了什么、训练了什么。触发条件：出现"训练多 Agent 工作流"的真实需求（ADR-12）。
 
 ---
+
+### 8.5 Mode B-window：训练 user_space 窗口图里的可训 Agent
+
+AgentFlow 的 Flow-GRPO 要在 Planner–Executor–Verifier 环运行时优化 planner，单 hub TirAgent 表达不了这张图。Mode B-window 是 PolicyBinding（§8.4）的最小实现，只覆盖一种形状：**一个可训窗口 + 若干冻结窗口**。
+
+| 项 | 合同 |
+|---|---|
+| 触发 | `agent_window_rollout(spec)` 为真：planner 的下游是 `profile.backend: user_space` 或 `kind: blank`（`mas/workflow/runtime.py`） |
+| 执行 | `LitTirAgent` → `run_compiled_episode` → centralized_runtime + user_gateway；与 Mode A 同一张图 |
+| 可训对象 | `trainable: true` 的节点（目前只允许 planner）。只有它的 LLM 调用以 `agent.<id>` span 发出 token ids；训练入口按 `agent_match` 过滤 |
+| 冻结窗口 | executor / verifier / 终答生成是环境：可以打同一个 vLLM，但不发 token span，不进 actor batch |
+| Reward | 轨迹结局一次 `emit_reward`；AGL daemon 广播到该轨迹每个可训 turn，按 `data_id` 分组 |
+| 采样 | `grpo` / `flow_grpo` 仍是独立 G 条、不 fork。ARPO（以及 APPO / AEPO / RAE）可以在 `after_agent_turn` 上分支。AgentFlow 把官方 `Memory` 与步数写成消息里的 `agentflow_state`，子轨迹用 `resume_messages` 还原后再调用 `generate_next_step`，不重跑 `analyze_query`。planner 回合的快照是重采样这一步；executor / verifier 回合的快照带上已完成的工具动作，子轨迹从下一步接着走 |
+| 配置优先级 | rl.yaml 的 `algo` 压过 workflow 的 `sampling.mode`（RL_design 修订记录 3）。窗口图上的 ARPO 预检要求至少一个 `after_agent_turn` / `planner` 站点，并拒绝指向图中不存在的 agent（例如旧的 hub 锚点） |
+| 分支图 | 父窗口写下 `snapshot_ref`、`prefix_hash`、`fork_node_ids`。四项与子轨迹 `resume` 对齐后，`assemble_executions` 画出 `kind=branch` 的边，标签是 `site_id`。对不上记 Unconfirmed，不画假边 |
+| MAS 故障 | `mas/workflow/mas_health.py` 把工具后端故障、窗口异常、非有限 reward、冻结 span 混进 actor batch 标成故障。模型答错、0 hits、GET 404 不算。训练步里 `training/mas_fault=1` 时不把该步当成有效更新 |
+
+已知限制：token ids 由 tokenizer 对 chat template 重编码得到，不是 vLLM 原值（AGL 黑盒边界内无法取得）；训练记录 `retokenize_roundtrip_ok` 供核对漂移。多个可训窗口、窗口间奖励归属仍属 §8.4 远期范围。自由搭建的 centralized 图使用同一套 `workflow.sampling.sites`：位置是 planner 回合之后（也可放 verifier、边、工具返回之后），门控用 token 熵（`entropy_delta`，`prob = clamp(draw - w * ΔH)`）。
 
 ## 9. 分支采样（训练态）三补
 

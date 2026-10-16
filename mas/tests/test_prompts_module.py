@@ -18,11 +18,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 MAS_ROOT = Path(__file__).resolve().parents[1]
+REPO = MAS_ROOT.parent
 if str(MAS_ROOT) not in sys.path:
     sys.path.insert(0, str(MAS_ROOT))
 
 from workflow.prompts import (  # noqa: E402
     DEFAULT_PLANNER_PROMPT,
+    DEFAULT_VERIFIER_PROMPT,
     _usable,
     candidate_menu,
     planner_prompt,
@@ -119,8 +121,20 @@ class TestPlannerUserText(unittest.TestCase):
         self.assertEqual(
             text,
             "q?\n\n[Verifier feedback from previous turn]\nfix it\n"
-            "Decide the next step. Output JSON with keys: next, args, sub_goal, done.",
+            "Decide the next step. If the feedback already answers the question, "
+            "set done to true and next to empty. "
+            "Output JSON with keys: next, args, sub_goal, done.",
         )
+
+    def test_feedback_keeps_candidate_ids(self) -> None:
+        text = planner_user_text(
+            question="q?",
+            feedback="plan_step.next ['agent1'] not in candidates",
+            candidates=["base_generator", "bing_search"],
+        )
+        self.assertIn("['base_generator', 'bing_search']", text)
+        self.assertIn("next must be one of", text)
+        self.assertIn("set done to true and next to empty", text)
 
     def test_menu_variant(self) -> None:
         text = planner_user_text(question="q?", candidates=["x"])
@@ -154,6 +168,19 @@ class TestPromptProvenance(unittest.TestCase):
         prov = prompt_provenance(s, c)
         self.assertEqual(prov["prompt_source"]["planner"], "default")
         self.assertEqual(prov["prompt_source"]["verifier"], "none")
+
+    def test_empty_verifier_prompt_uses_default(self) -> None:
+        c = _compiled(verifier_prompt_text="  ")
+        self.assertEqual(verifier_prompt(c), DEFAULT_VERIFIER_PROMPT)
+        prov = prompt_provenance(_spec(hub_prompt=None), c)
+        self.assertEqual(prov["prompt_source"]["verifier"], "default")
+
+    def test_canvas_copy_matches_runtime_defaults(self) -> None:
+        text = (REPO / "webui/src/features/mas/model/defaultPrompts.ts").read_text(encoding="utf-8")
+        for sentence in (*DEFAULT_PLANNER_PROMPT.split("。"), *DEFAULT_VERIFIER_PROMPT.split("。")):
+            piece = sentence.strip()
+            if piece:
+                self.assertIn(piece, text)
 
     def test_trajectory_meta_receives_prompt_fields(self) -> None:
         from workflow.runtime import EpisodeRaw, episode_to_trajectory

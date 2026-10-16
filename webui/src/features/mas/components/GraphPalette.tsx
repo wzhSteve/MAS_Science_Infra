@@ -5,44 +5,61 @@ import type { AgentKind, Palette, WorkflowSpec } from '../../../shared/api/types
 import type { GraphNode, GraphNodePreset } from '../types';
 import { Button } from '../../../shared/ui/button';
 import { Input } from '../../../shared/ui/input';
-import { masApi, type EpcAwRuntimeConfig } from '../api';
+import { masApi, resolveAllowedTools, resolveEnabledTools, type UserProjectRuntimeConfig } from '../api';
 
 export const NODE_TRANSFER = 'application/science-node';
 export type LibraryTab = 'agent' | 'tool' | 'router' | 'template' | 'user';
 
-const DEFAULT_TOOLS = [
-  'Base_Generator_Tool',
-  'Python_Coder_Tool',
-  'Wikipedia_Search_Tool',
-  'Bing_Search_Tool',
-  'Web_Fetch_Tool',
-];
-
-const DEFAULT_RUNTIME: EpcAwRuntimeConfig = {
+const DEFAULT_RUNTIME: UserProjectRuntimeConfig = {
   n: 1,
   max_steps: 20,
   max_time: 3000,
   max_tokens: 4000,
   temperature: 0,
-  enabled_tools: [...DEFAULT_TOOLS],
+  enabled_tools: resolveAllowedTools(),
 };
 
 function isUserSpaceNode(node: GraphNode): boolean {
+  const wraps = String(node.data.meta?.wraps || '');
   return node.data.backend === 'user_space' || node.data.profile?.backend === 'user_space'
-    || String(node.data.meta?.wraps || '').startsWith('EPC-AW');
+    || wraps.startsWith('EPC-AW') || wraps.startsWith('AgentFlow');
 }
 
-function EpcAwRuntimePanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  const [form, setForm] = useState<EpcAwRuntimeConfig>(DEFAULT_RUNTIME);
+function hasRuntimePanel(family: string, wraps: string): boolean {
+  if (family === 'epc_aw' || family === 'agentflow') return true;
+  const w = wraps.toLowerCase();
+  return w.includes('epc-aw') || w.includes('epc_aw') || w.includes('agentflow');
+}
+
+function familyLabel(family: string, wraps: string, title: string): string {
+  if (family === 'agentflow' || wraps.toLowerCase().includes('agentflow')) return 'AgentFlow';
+  if (family === 'epc_aw' || wraps.toLowerCase().includes('epc')) return 'EPC-AW';
+  return title || '用户项目';
+}
+
+export function UserProjectRuntimePanel({ projectId, family, wraps, title, onClose }: {
+  projectId: string;
+  family: string;
+  wraps: string;
+  title: string;
+  onClose: () => void;
+}) {
+  const [form, setForm] = useState<UserProjectRuntimeConfig>(DEFAULT_RUNTIME);
   const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'saved' | 'error'>('loading');
   const [error, setError] = useState('');
+  const label = familyLabel(family, wraps, title);
 
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
     void masApi.userProjectRuntime(projectId).then((data) => {
       if (cancelled) return;
-      setForm({ ...DEFAULT_RUNTIME, ...data });
+      setForm({
+        ...DEFAULT_RUNTIME,
+        ...data,
+        enabled_tools: resolveEnabledTools(data.enabled_tools, data.allowed_tools),
+        allowed_tools: resolveAllowedTools(data.allowed_tools),
+      });
       setStatus('idle');
     }).catch((err: Error) => {
       if (cancelled) return;
@@ -56,8 +73,14 @@ function EpcAwRuntimePanel({ projectId, onClose }: { projectId: string; onClose:
     setStatus('saving');
     setError('');
     try {
-      const saved = await masApi.putUserProjectRuntime(projectId, form);
-      setForm({ ...DEFAULT_RUNTIME, ...saved });
+      const { allowed_tools: _catalog, ...payload } = form;
+      const saved = await masApi.putUserProjectRuntime(projectId, payload);
+      setForm({
+        ...DEFAULT_RUNTIME,
+        ...saved,
+        enabled_tools: resolveEnabledTools(saved.enabled_tools, saved.allowed_tools ?? form.allowed_tools),
+        allowed_tools: resolveAllowedTools(saved.allowed_tools ?? form.allowed_tools),
+      });
       setStatus('saved');
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败');
@@ -73,9 +96,10 @@ function EpcAwRuntimePanel({ projectId, onClose }: { projectId: string; onClose:
 
   return <div className="mas-epc-runtime" onClick={(event) => event.stopPropagation()}>
     <div className="mas-epc-runtime__head">
-      <strong>EPC-AW 运行超参</strong>
+      <strong>运行超参</strong>
       <Button size="sm" variant="ghost" onClick={onClose} aria-label="关闭超参">关闭</Button>
     </div>
+    <p className="field-hint">{label}{family ? ` · ${family}` : ''}</p>
     {status === 'loading' ? <p className="field-hint">读取中…</p> : <>
       <label className="mas-epc-runtime__field">n（候选计划数）
         <Input type="number" min={1} max={16} value={form.n ?? 1}
@@ -98,8 +122,8 @@ function EpcAwRuntimePanel({ projectId, onClose }: { projectId: string; onClose:
           onChange={(event) => setForm((prev) => ({ ...prev, temperature: Number(event.target.value) || 0 }))} />
       </label>
       <fieldset className="mas-epc-runtime__tools">
-        <legend>enabled_tools</legend>
-        {DEFAULT_TOOLS.map((tool) => (
+        <legend>Executor 工具池</legend>
+        {resolveAllowedTools(form.allowed_tools).map((tool) => (
           <label key={tool} className="mas-checkbox-row">
             <input type="checkbox" checked={(form.enabled_tools || []).includes(tool)} onChange={() => toggleTool(tool)} />
             <span>{tool}</span>
@@ -186,8 +210,14 @@ export const GraphPalette = memo(function GraphPalette({ palette, nodes, poolMem
     <div className="mas-panel-body mas-library-items">
       {tab === 'user' ? userProjects.map((project) => {
         const ready = project.status === 'ready' && project.workflow;
-        const family = project.family || (String(project.wraps || '').includes('EPC-AW') ? 'epc_aw' : '');
-        const isEpc = family === 'epc_aw';
+        const wraps = String(project.wraps || '');
+        const family = project.family
+          || (wraps.toLowerCase().includes('agentflow') ? 'agentflow' : '')
+          || (wraps.includes('EPC-AW') ? 'epc_aw' : '');
+        const showRuntime = hasRuntimePanel(family, wraps);
+        const badge = family === 'agentflow' ? 'AgentFlow · 用户封装'
+          : family === 'epc_aw' ? 'EPC-AW · 用户封装'
+          : project.mode === 'native_mas' ? '整图导入 · Mode 2' : 'I/O 模块 · Mode 1';
         return <div key={project.id} className="mas-library-user-block">
           <button type="button" className="mas-library-item" disabled={!ready}
             onClick={() => {
@@ -212,15 +242,21 @@ export const GraphPalette = memo(function GraphPalette({ palette, nodes, poolMem
             }}>
             <span className="mas-library-icon"><Bot size={17} /></span>
             <span><strong>{project.title}</strong>
-              <small>{isEpc ? 'EPC-AW · 用户封装' : project.mode === 'native_mas' ? '整图导入 · Mode 2' : 'I/O 模块 · Mode 1'}{ready ? '' : ' · 未就绪'}</small></span>
+              <small>{badge}{ready ? '' : ' · 未就绪'}</small></span>
             {ready && <Plus size={14} className="mas-library-plus" aria-hidden="true" />}
           </button>
-          {isEpc && ready && <div className="mas-library-user-actions">
+          {showRuntime && ready && <div className="mas-library-user-actions">
             <Button size="sm" variant="ghost" onClick={() => setRuntimeProject((cur) => cur === project.id ? null : project.id)}>
               <Settings2 size={14} /> 超参
             </Button>
           </div>}
-          {runtimeProject === project.id && <EpcAwRuntimePanel projectId={project.id} onClose={() => setRuntimeProject(null)} />}
+          {runtimeProject === project.id && <UserProjectRuntimePanel
+            projectId={project.id}
+            family={family}
+            wraps={wraps}
+            title={project.title}
+            onClose={() => setRuntimeProject(null)}
+          />}
         </div>;
       })
         : tab === 'template' ? templates.map((template) =>

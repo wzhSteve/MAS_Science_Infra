@@ -1,0 +1,56 @@
+# single-ppo project workflow (schema 0.3).
+#
+# Topology choice: ``single``. Evidence from the runtime (dug during recon):
+# - spec.py     : topo in ("centralized","hub_react","single","") is always
+#                 executable; compiler.py treats "single" identically to
+#                 centralized (entry maps hub->planner).
+# - runtime.py  : run_compiled_episode routes single/direct_user_window into
+#                 centralized_runtime.run_centralized_episode (routers OR a
+#                 blank / user_space downstream of planner).
+# - verified via live compile: planner(user_space) + u_single-ppo__solver(blank)
+#   compiles ok=True with message_out[planner]=u_single-ppo__solver.
+# The single planner node IS the whole agent: one window, one ReAct tool loop.
+schema_version: '0.3'
+topology: single
+entry_agent: planner
+hub:
+  role: planner
+  skills: []
+  max_feedback_hops: 2
+  system_prompt: Single-agent APPO/ARPO ReAct window. Tag protocol <search>/<python>/<result>/<answer>.
+tools: []
+agents:
+- id: planner
+  kind: planner
+  role: planner
+  label: single_ppo_solver
+  trainable: true
+  system_prompt: Wrap the single-ppo ReAct loop. Returns plan_step done+answer directly.
+  tools: []
+  profile:
+    backend: user_space
+    user_project: single-ppo
+  meta:
+    origin: user
+    user_project: single-ppo
+    wraps: APPO.SingleAgent
+- id: u_single-ppo__solver
+  kind: blank
+  role: executor
+  label: single_ppo_executor
+  trainable: false
+  system_prompt: Defensive mirror only; the planner window closes episodes itself.
+  tools: []
+  profile:
+    backend: user_space
+    user_project: single-ppo
+    llm_required: false
+  meta:
+    origin: user
+    user_project: single-ppo
+    wraps: APPO.SingleAgent
+routers: []
+edges:
+- from: planner
+  to: u_single-ppo__solver
+  kind: message

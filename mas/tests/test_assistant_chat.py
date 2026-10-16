@@ -89,7 +89,7 @@ class AssistantChatTestBase(unittest.TestCase):
 
 class TestWorkspaceSnapshot(unittest.TestCase):
     def test_snapshot_uses_summary_not_full_yaml(self) -> None:
-        from science_infra.control.assistant import ChatBody, build_workspace_snapshot, summarize_workflow
+        from ai_assistant import ChatBody, build_workspace_snapshot, summarize_workflow
 
         huge = {"agents": [{"id": "planner", "kind": "planner", "system_prompt": "x" * 5000}]}
         summary = summarize_workflow({
@@ -115,7 +115,7 @@ class TestWorkspaceSnapshot(unittest.TestCase):
 
 class TestHistoryFilter(unittest.TestCase):
     def test_welcome_stripped(self) -> None:
-        from science_infra.control.assistant import _history_messages
+        from ai_assistant import _history_messages
 
         hist = _history_messages([
             {"role": "assistant", "content": "我只能改 user_space/ 里的用户代码，可以解答本仓库合同。"},
@@ -128,7 +128,7 @@ class TestHistoryFilter(unittest.TestCase):
 
 class TestStreamLoop(unittest.TestCase):
     def test_stream_tool_then_tokens_no_local_answer(self) -> None:
-        from science_infra.control.assistant import ChatBody, iter_chat_events
+        from ai_assistant import ChatBody, iter_chat_events
 
         _FakeOpenAI.script = [
             [
@@ -145,7 +145,7 @@ class TestStreamLoop(unittest.TestCase):
             "AI_ASSISTANT_MODEL": "unit-model",
         }
         events = []
-        with patch("science_infra.control.assistant.load_science_env", lambda **k: None):
+        with patch("ai_assistant.llm.load_science_env", lambda **k: None):
             with patch.dict(os.environ, env, clear=False):
                 with patch("openai.OpenAI", _FakeOpenAI):
                     body = ChatBody(
@@ -173,7 +173,7 @@ class TestStreamLoop(unittest.TestCase):
         self.assertLess(start_i, token_i)
 
     def test_first_token_yielded_before_stream_exhausted(self) -> None:
-        from science_infra.control.assistant import ChatBody, iter_chat_events
+        from ai_assistant import ChatBody, iter_chat_events
 
         state = {"pulled": 0, "exhausted": False, "token_when_first": None}
 
@@ -197,7 +197,7 @@ class TestStreamLoop(unittest.TestCase):
             "AI_ASSISTANT_API_BASE": "https://example.test/v1",
             "AI_ASSISTANT_MODEL": "unit-model",
         }
-        with patch("science_infra.control.assistant.load_science_env", lambda **k: None):
+        with patch("ai_assistant.llm.load_science_env", lambda **k: None):
             with patch.dict(os.environ, env, clear=False):
                 with patch("openai.OpenAI", _LiveOpenAI):
                     body = ChatBody(message="解释一下采样站点")
@@ -217,7 +217,7 @@ class TestStreamLoop(unittest.TestCase):
 
 class TestToolJail(AssistantChatTestBase):
     def test_grep_and_read_outside_rejected(self) -> None:
-        from science_infra.control.assistant import assistant_tools
+        from ai_assistant import assistant_tools
 
         tools = {t["name"]: t["fn"] for t in assistant_tools("hive")}
         with self.assertRaises((PermissionError, ValueError, FileNotFoundError)):
@@ -227,7 +227,7 @@ class TestToolJail(AssistantChatTestBase):
 
     def test_write_still_jailed(self) -> None:
         from workflow.user_gateway.registry import create_project
-        from science_infra.control.assistant import assistant_tools
+        from ai_assistant import assistant_tools
 
         create_project("hive", title="Hive", mode="native_mas")
         tools = {t["name"]: t["fn"] for t in assistant_tools("hive")}
@@ -238,7 +238,7 @@ class TestToolJail(AssistantChatTestBase):
 
 class TestOfflineOnlyLocal(unittest.TestCase):
     def test_no_llm_uses_local_answer(self) -> None:
-        from science_infra.control.assistant import ChatBody, iter_chat_events
+        from ai_assistant import ChatBody, iter_chat_events
 
         env = {
             "AI_ASSISTANT_API_KEY": "",
@@ -246,7 +246,7 @@ class TestOfflineOnlyLocal(unittest.TestCase):
             "AI_ASSISTANT_BASE_URL": "",
             "AI_ASSISTANT_MODEL": "",
         }
-        with patch("science_infra.control.assistant.load_science_env", lambda **k: None):
+        with patch("ai_assistant.llm.load_science_env", lambda **k: None):
             with patch.dict(os.environ, env, clear=False):
                 events = list(iter_chat_events(ChatBody(message="你好")))
         kinds = [k for k, _ in events]

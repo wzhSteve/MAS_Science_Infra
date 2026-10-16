@@ -1,0 +1,11 @@
+experiment:
+  id: agentflow_4algo
+  name: agentflow_4algo
+  seed: 42
+  refs:
+    llm: llm.yaml
+    workflow: workflow.yaml
+    rl: rl.yaml
+    harness: harness.yaml
+  pipeline: [collect, train]
+  agl_metrics_url: /agl/metrics

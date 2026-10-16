@@ -17,12 +17,27 @@ for p in (str(ROOT), str(TIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+
+_SNAPSHOT = {}
+
+
+def setUpModule() -> None:
+    _SNAPSHOT["path"] = list(sys.path)
+    _SNAPSHOT["modules"] = {k: v for k, v in sys.modules.items() if k == "tools" or k.startswith("tools.")}
+
+
+def tearDownModule() -> None:
+    sys.path[:] = _SNAPSHOT.get("path", sys.path)
+    for k in [k for k in sys.modules if k == "tools" or k.startswith("tools.")]:
+        del sys.modules[k]
+    sys.modules.update(_SNAPSHOT.get("modules", {}))
+
 ALL_TOOLS = [
     "Base_Generator_Tool",
     "Python_Coder_Tool",
     "Wikipedia_Search_Tool",
     "Web_Search_Tool",
-    "Google_Search_Tool",
+    "Bing_Search_Tool",
 ]
 
 
@@ -101,9 +116,9 @@ class TestEpcAwCompletionBudget(unittest.TestCase):
 class TestEpcAwToolSmoke(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.root = ROOT / "ref_Rep" / "EPC-AW"
+        cls.root = ROOT / "user_space" / "projects" / "epc-aw-main" / "upload" / "EPC-AW-main"
         if not (cls.root / "MAS" / "epc_aw").is_dir():
-            raise unittest.SkipTest("ref_Rep/EPC-AW missing")
+            raise unittest.SkipTest("upload/EPC-AW-main missing")
 
     def setUp(self) -> None:
         self._old = {k: os.environ.get(k) for k in (
@@ -316,8 +331,8 @@ class TestEpcAwChromeDemote(unittest.TestCase):
         fake.write_text("#!/bin/sh\n", encoding="utf-8")
         fake.chmod(0o755)
         ctx._find_chrome_binary = lambda: str(fake)  # type: ignore
-        tools = ctx._patch_google_chrome_or_demote(list(ALL_TOOLS))
-        self.assertIn("Google_Search_Tool", tools)
+        tools = ctx._patch_google_chrome_or_demote(list(ALL_TOOLS) + ["Google_Search_Tool"])
+        self.assertNotIn("Google_Search_Tool", tools)
 
     def test_exec_marks_binary_location_failed(self) -> None:
         ctx_mod = self._load_context()
@@ -483,26 +498,17 @@ class TestFastSearchTools(unittest.TestCase):
             requests.get = orig
         self.assertEqual(timeouts, [(3, 8)])
         self.assertEqual(urls, ["https://en.wikipedia.org/w/api.php"])
-        self.assertIn("title: Citibank", text)
-        self.assertIn("url: https://en.wikipedia.org/wiki/Citibank", text)
-        self.assertIn("snippet: American bank founded in 1812", text)
-        self.assertNotIn("extracts", text)
+        self.assertIn("1. Citibank", text)
+        self.assertIn("URL: https://en.wikipedia.org/wiki/Citibank", text)
+        self.assertIn("American bank founded in 1812", text)
+        self.assertNotIn("snippet:", text)
+        self.assertNotIn("<span>", text)
 
-    def test_bing_parser_keeps_title_url_snippet(self) -> None:
+    def test_google_search_is_unknown_tool(self) -> None:
         mod = self._load()
-        html = (
-            '<h2 class=""><a href="https://www.citi.com/">Citi</a></h2>'
-            '<div class="b_caption"><p>Citibank offers banking.</p></div>'
-            '<h2 class=""><a href="https://www.bing.com/ck/a">skip</a></h2>'
-            '<div class="b_caption"><p>ignored</p></div>'
-        )
-        hits = mod._parse_bing_html(html)
-        self.assertEqual(len(hits), 1)
-        self.assertEqual(hits[0]["url"], "https://www.citi.com/")
-        text = mod._format_hits(hits)
-        self.assertIn("title: Citi", text)
-        self.assertIn("url: https://www.citi.com/", text)
-        self.assertIn("snippet: Citibank offers banking.", text)
+        out = mod._run_dispatch("Google_Search_Tool", "citibank", "")
+        self.assertIn("tool was not found", out)
+        self.assertIn("Google_Search_Tool", out)
 
     def test_web_fetch_missing_url_skips_http(self) -> None:
         import requests

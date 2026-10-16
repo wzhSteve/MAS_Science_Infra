@@ -2,6 +2,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import type { Bundle, MetaResponse } from '../shared/api/types';
 import { MasGraphEditor, useMasDraft } from '../features/mas';
 import { WorkflowDebug } from '../features/mas/components/WorkflowDebug';
+import { UserProjectFlowDoc } from '../features/mas/components/UserProjectFlowDoc';
+import { ToolTestDialog } from '../features/mas/components/ToolTestDialog';
 import { executableInfo } from '../features/mas/model/workflowGraph';
 import { InlineNotice } from '../shared/components/InlineNotice';
 import { LoadingState } from '../shared/components/LoadingState';
@@ -53,6 +55,15 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugVisited, setDebugVisited] = useState(false);
   const [debugMode, setDebugMode] = useState<'live' | 'mock'>('live');
+  const [flowDocOpen, setFlowDocOpen] = useState(false);
+  const [toolTestOpen, setToolTestOpen] = useState(false);
+  // NodeInspector 流程简述卡「查看完整流程文档」的最小侵入接线：
+  // NodeInspector 深处无 props 透传链可直达，这里监听全局事件桥接，等价于点击画布工具栏的 BookOpen 按钮
+  useEffect(() => {
+    const openFlowDoc = () => setFlowDocOpen(true);
+    window.addEventListener('mas:open-flow-doc', openFlowDoc);
+    return () => window.removeEventListener('mas:open-flow-doc', openFlowDoc);
+  }, []);
   const readiness = useModelReadiness(props.expId, props.bundle?.llm.config_revision, workflowVisible && debugOpen);
   const [traceFocus, setTraceFocus] = useState<TraceFocusRequest | null>(null);
   const [defaultModel, setDefaultModel] = useState<AgentDefaultModel>({
@@ -75,6 +86,10 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
     setLibraryOpen(false); setDebugMode('live'); setDebugVisited(true); setDebugOpen(true);
   }, []);
   const closeDebug = useCallback(() => setDebugOpen(false), []);
+  const toggleFlowDoc = useCallback(() => {
+    setFlowDocOpen(value => !value);
+  }, []);
+  const openToolTest = useCallback(() => setToolTestOpen(true), []);
   const openDemo = useCallback(() => {
     props.onWorkspace(); setExpanded(false); setLibraryOpen(false); setDebugMode('mock'); setDebugVisited(true); setDebugOpen(true);
   }, [props.onWorkspace]);
@@ -82,8 +97,7 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
     setExpanded(false);
     setDebugOpen(false);
     setTraceFocus({ ...target, token: ++focusSequence.current });
-  }, []);
-  const locateAgent = useCallback((agentId: string) => {
+  }, []);  const locateAgent = useCallback((agentId: string) => {
     locate({ agentId }); props.onWorkspace();
   }, [locate, props.onWorkspace]);
   const captureTrainingModel = useCallback((state: BindingView) => {
@@ -156,11 +170,14 @@ export const MASPanel = memo(function MASPanel(props: MASPanelProps) {
           mode={canvasMode} samplingPreview={samplingPreview.data}
           selectedSamplingOpportunity={selectedSamplingOpportunity}
           onSelectSamplingOpportunity={setSelectedSamplingOpportunity}
-          onModeChange={selectCanvasMode} onDebug={debugOpen ? closeDebug : openDebug} debugOpen={debugOpen} />
+          onModeChange={selectCanvasMode} onDebug={debugOpen ? closeDebug : openDebug} debugOpen={debugOpen}
+          onFlowDoc={toggleFlowDoc} flowDocOpen={flowDocOpen} onToolTest={openToolTest} />
       </div>
       {debugVisited && <WorkflowDebug experimentId={props.expId} draft={draft} active={workflowVisible}
         open={debugOpen} mode={debugMode} executable={executable} readiness={readiness}
         onClose={closeDebug} onLive={openDebug} onConfigureModel={configureModel} onLocate={locate} />}
+      <UserProjectFlowDoc open={flowDocOpen && workflowVisible} onClose={() => setFlowDocOpen(false)} />
+      <ToolTestDialog open={toolTestOpen} palette={draft.palette} onOpenChange={setToolTestOpen} />
     </div>
     <RetainedView active={active && section === 'inference'} className="workspace-document-scroll">
       <div className="workspace-document"><h1>模型连接</h1>

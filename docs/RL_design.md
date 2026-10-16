@@ -1,8 +1,21 @@
 # RL 层设计文档 v1（组合式 RL 与 0 代码实验框架）
 
 日期：2026-10-13
-状态：设计稿（尚未实施）。本文档覆盖 RL 层（`rl/` 包 + 训练热路径三件套 + vendored verl / agent-lightning 集成 + 训练控制面）。理论素材取自 [GPT_analysis_for_RL_design.md](./GPT_analysis_for_RL_design.md)（1097 行多轮对话，**原文保留不动**——本文档 §1 是其结构化重写，不替代原文）；上游数据合同以 [MAS_design.md](./MAS_design.md) v2 为准（其 §11 承诺 MAS→RL 的接口，本文档只消费、不重复定义）。
-配套阅读：[MAS_design.md](./MAS_design.md) · [Harness_design.md](./Harness_design.md) · [TECHNICAL_FRAMEWORK.md](./TECHNICAL_FRAMEWORK.md)
+状态：RL0–RL6 已落地（提交 `7903f85`…`dcdb8d0`）；2026-10-15 修订见下方「修订记录」。本文档覆盖 RL 层（`rl/` 包 + 训练热路径三件套 + vendored verl / agent-lightning 集成 + 训练控制面）。理论素材取自 [GPT_analysis_for_RL_design.md](./GPT_analysis_for_RL_design.md)（1097 行多轮对话，**原文保留不动**——本文档 §1 是其结构化重写，不替代原文）；上游数据合同以 [MAS_design.md](./MAS_design.md) v2 为准（其 §11 承诺 MAS→RL 的接口，本文档只消费、不重复定义）。
+配套阅读：[MAS_design.md](./MAS_design.md) · [Harness_design.md](./Harness_design.md) · [TECHNICAL_FRAMEWORK.md](./TECHNICAL_FRAMEWORK.md) · [AUDIT_GAP_MATRIX.md](./AUDIT_GAP_MATRIX.md)
+
+**修订记录（2026-10-16）**——以下事实以代码为准，覆盖正文里「窗口图不能分支」「MAS 故障与模型答错不分」的旧表述：
+
+4. **AgentFlow 窗口可以跑 ARPO 续写。** planner / executor / verifier 窗口把官方 `Memory` 和步数放进消息的 `agentflow_state`（[user_space/projects/agentflow/adapted/context.py](../user_space/projects/agentflow/adapted/context.py) 的 `export_state` / `restore_state`）。子轨迹还原后从 `generate_next_step` 继续，不重跑 `analyze_query`。父窗口的 `snapshot_ref`、`prefix_hash`、`fork_node_ids` 与子轨迹对齐后，分支图才连线。`grpo` / `flow_grpo` 仍然不 fork。
+5. **MAS 故障会阻止该步更新。** [mas/workflow/mas_health.py](../mas/workflow/mas_health.py) 把离线搜索、缓存缺口、连接失败、窗口异常、非有限 reward、冻结角色 span 标成故障，`TirAgentModeDaemon._reject_mas_faults` 抛出并不做策略更新。模型答错、搜索 0 hits、页面 404 不算故障。
+6. **vLLM 让出显存不再无限等待。** 采样结束后的 `sleep` 先取消残留请求，90 秒超时后继续（[rl/verl_backend/verl/workers/rollout/vllm_rollout/vllm_async_server.py](../rl/verl_backend/verl/workers/rollout/vllm_rollout/vllm_async_server.py)）。Flow-GRPO 的参考模型权重可卸到 CPU，避免 KL 前向和 rollout 引擎抢同一张卡时卡死。
+7. **预检里的 V5。** overlay 展开出来的 `algorithm.advantage` 与 `algo` 同时出现，是预设展开，不是用户双轨声明。保存路径仍拒绝手写的 composed 段再加 `algo`。
+
+**修订记录（2026-10-15）**——以下事实以代码为准，覆盖正文中对应的旧表述：
+
+1. **D2 已连通**。`apply_train_signal` 把 `loss_mode` 与 FIPO 三参双写进 `actor_rollout_ref.actor.policy_loss`（`rl/hooks/overlay.py`），`loss_applied_to_actor` 标记已删除，契约测试 `test_appo_arpo_credit.TestPresets` 锁定。APPO 预设实际跑 future_kl。正文 §1.2/§1.3/§2.3/§2.4 中"D2 未连通 / 名实不符"的描述是修复前的历史记录；§3.3 是修复方案本身。
+2. **Flow-GRPO 的论文归属更正**。本仓 `flow_grpo` 对应 AgentFlow 论文 *In-the-Flow Agentic System Optimization for Effective Planning and Tool Use*（arXiv:2510.05592）的 Flow-based Group Refined Policy Optimization，**不是** flow-matching 生成模型的 Flow-GRPO（SDE 随机化）。语义：在多轮 Planner–Executor–Verifier 系统运行中只优化 planner；轨迹级 0/1 结局奖励广播到每个 planner turn；按题目 `data_id` 分组做 GRPO；非对称 clip 0.2/0.3、`use_kl_loss` 系数 0.001。参考实现 `ref_Rep/AgentFlow-main/train/config.yaml` + `agentflow/verl/daemon.py`。
+3. **Flow-GRPO 的三个必要条件不在 advantage 层**：① rl.yaml 的 `algo` 优先于 `workflow.sampling.mode`（`apply_sample_policy(..., algo=)`，否则带 ARPO sampling 的 workflow 会把 flow_grpo 改写成 arpo）；② `RewardSpec.outcome="binary"`（`flow_grpo` 预设默认）；③ planner-only——只有可训窗口的 LLM 调用进 actor batch（`agent_match`，见 MAS_design §8.5 Mode B-window）。
 
 ---
 
@@ -42,7 +55,7 @@
 引 MAS_design §8.2：**画布 ≠ 训练结构**。两种执行模式不共享计算图：
 
 - **Mode A（Workflow Execution）**：Collect、单题调试、批量评估、user_space——画布 PEV 图原样执行，无采样树；
-- **Mode B（Trainable Policy Rollout）**：单 hub TirAgent + BranchSite 两波采样 + RL 训练。
+- **Mode B（Trainable Policy Rollout）**：单 hub TirAgent，或 Mode B-window（AgentFlow 等 user_space 窗口，只训 planner）+ BranchSite 两波采样 + RL 训练。窗口图的 ARPO 续写见文首 2026-10-16 修订记录 4。
 
 **声明：RL 层只服务 Mode B。** 训练收益不能直接归因到画布上具体 Agent（MAS_design §8.2 后果 2）；UI 与文档不得暗示"训练优化了你画的工作流"。若未来需要训练多 Agent 工作流，走 PolicyBinding 远期方向（MAS_design ADR-12），本文档不为它设计。
 
@@ -136,7 +149,7 @@ Agent RL 的训练目标可分解为五个相互依赖的层。素材原文最�
 |---|---|---|---|---|
 | **L1 加正则项** | \(\mathcal{L} = \mathcal{L}_{\rm GRPO} + \lambda C(\theta)\)（熵正则、行为约束、成本惩罚） | 不改变 \(\hat A_t\) 构造，只增标量项 | 弱——通常是工程改进 | 无自研项；近似物 = flow_grpo 强制 `use_kl_loss=True, kl_loss_coef=0.001`（`overlay.py:137-152`（KL 强制两键位实测 `:144-147`），复用 VERL 既有 KL 项） |
 | **L2 改 Advantage Estimation** | \(\mathcal{L}_{\rm PPO}(\rho_t, \hat A^{\rm new}_t)\)，surrogate 不变 | 保留 clipped PPO 骨架，重构 \(\hat A_t\) | 主流——素材与文献一致认为这是值得研究的层 | gigpo / aepo / igpo / rae / appo_credit 全在此层；GiGPO 论文、APPO 的 procedure-level advantage 同层（素材第九节） |
-| **L3 重定义优化目标** | 新的目标、约束或梯度估计原理 | 超出新正则与新权重的目标重定义 | 高潜力高门槛——理论要求高 | 唯一候选 = APPO 预设 `loss_mode=future_kl`（FIPO loss，vendored 已有实现但 D2 断链未生效）；§1.6 三方向均属 L3 |
+| **L3 重定义优化目标** | 新的目标、约束或梯度估计原理 | 超出新正则与新权重的目标重定义 | 高潜力高门槛——理论要求高 | 唯一候选 = APPO 预设 `loss_mode=future_kl`（FIPO loss，D2 已连通，见修订记录 1）；§1.6 三方向均属 L3 |
 
 L1 与 L2 的流水量级校准（素材第九节的判语）：L1"实现容易，没有明确理论动机时通常像工程性改进"；L2"保留基本优化框架，改变策略更新接收的学习信号——值得研究"；L3"理论要求更高，但解决现有方法无法充分处理的问题时算法贡献也可能更强"。素材同时警告：三层次**不是论文质量的绝对排名**——严谨推导的正则项可能很有价值，看似全新的目标函数也可能只是已有方法的重参数化。因此层次的正确用法是**贡献归因**（回答创新在哪一层），不是**价值评判**。
 
@@ -153,13 +166,13 @@ L1 与 L2 的流水量级校准（素材第九节的判语）：L1"实现容易�
 | GRPO（基线） | Advantage | 同 prompt 组内相对优势 \(\hat A_i = (R_i - \mu_R) / (\sigma_R + \epsilon)\) | vendored `core_algos.py:113`；分组靠 `uid = data_id_list`（agl `trainer.py:298`） | 基线 |
 | GiGPO | Advantage | 全局 \(A^E\)（组内 z-score）+ 局部 \(A^S\)（同 `(data_id, anchor_obs)` step 组），合计 \(a_e + w \cdot a_s\) | `rl/hooks/gigpo_core.py:36`、分派 `advantage.py:108` | **已占"重复状态局部优势"研究空间**；孤立 anchor 退化为 GRPO |
 | ARPO | Rollout 采样 | 熵门控 fork：接受概率 \(\max(0, \min(1, {\rm draw} - w \cdot \Delta H))\) | `rl/hooks/branch_policy.py:35`；advantage 不变（`advantage.py:74` 直接 return） | 已占"工具交互后自适应探索 + 步骤归因"空间 |
-| APPO | Rollout + Advantage（+L3 loss） | 程序级分支 + 分支行 outcome 折扣回写父行；论文带 FIPO future_kl loss | `advantage.py:118`（credit）；预设 `overlay.py:127-131`；FIPO = vendored `core_algos.py:688`（**D2 未连通**） | 已占"分支价值 → 未来影响信号"空间 |
-| Flow-GRPO | Rollout 规范化 + Loss 正则（L1 借用） | 原论文是 flow-matching 的 SDE 随机化 + KL 约束；本仓形态 = outcome 广播到每 turn + 强制 `use_kl_loss` | `overlay.py:137-152`（KL 强制两键位实测 `:144-147`）；advantage 直通（`advantage.py:71`） | 原论文非 Agent 专用，本仓只借其 KL-约束思想 |
+| APPO | Rollout + Advantage（+L3 loss） | 程序级分支 + 分支行 outcome 折扣回写父行；论文带 FIPO future_kl loss | `advantage.py:118`（credit）；预设 `overlay.py:127-131`；FIPO = vendored `core_algos.py:688`（D2 已连通，见修订记录 1） | 已占"分支价值 → 未来影响信号"空间 |
+| Flow-GRPO | Rollout（in-the-flow 只训 planner）+ Reward（0/1）+ Loss 正则（L1 借用） | AgentFlow 论文：多轮系统运行中只优化 planner，轨迹 0/1 结局广播到每个 planner turn，按题分组 GRPO；clip 0.2/0.3、KL 0.001 | `apply_algo_overlay` flow_grpo 分支；`RewardSpec.outcome="binary"`；advantage 直通（`advantage.py`）；planner-only 经 `agent_match` | 信用分配与 GRPO 相同；贡献在 rollout 结构与"只训 planner" |
 | AEPO | Advantage | 熵重塑：\(\hat A \leftarrow \hat A \cdot (1 + a \cdot z(\Delta H))\)，低熵=确定的位置放大优势 | `advantage.py:193` | 熵-信用耦合空间 |
 | IGPO | Advantage | turn 级信息增益组内 z-score（非末 turn 用 IG，末 turn 用 outcome） | `advantage.py:215` | 信息增益信号空间 |
 | RAE | Advantage + Rollout 裁决 | validate / invalidate / abstain 三态裁决；R0 分支前缀清零，R1-lite verdict 缩放，R1-full \(\log \pi_{\rm tgt}\) 重归一 | `rl/hooks/rae_advantage.py:33`（R0）/ `:85`（R1-lite）/ `:161`（R1-full）；裁决 `:229`、daemon 填充 `daemon.py:738-761` | 恢复感知雏形（§1.6 方向 ② 前身） |
 
-命名陷阱声明（素材第三节提醒）：ARPO / APPO 存在同缩异义论文（ARPO = Agentic Reinforced Policy Optimization，ICLR 2026；APPO = Agentic Procedural Policy Optimization，2026），本仓实现锚定上述两篇；阅读文献时不得把同名算法的结论直接搬运。另按 §1.2 分层标注：GiGPO / AEPO / IGPO / RAE / appo_credit 是纯 L2；ARPO 是采样层（`advantage.py:74` 证明其 advantage 不动）；APPO 横跨 L2 + L3（FIPO 未连通时只有 L2 生效）；flow_grpo 的正则是 L1 借用。
+命名陷阱声明（素材第三节提醒）：ARPO / APPO 存在同缩异义论文（ARPO = Agentic Reinforced Policy Optimization，ICLR 2026；APPO = Agentic Procedural Policy Optimization，2026），本仓实现锚定上述两篇；阅读文献时不得把同名算法的结论直接搬运。另按 §1.2 分层标注：GiGPO / AEPO / IGPO / RAE / appo_credit 是纯 L2；ARPO 是采样层（`advantage.py:74` 证明其 advantage 不动）；APPO 横跨 L2 + L3（`loss_mode=vanilla` 时只有 L2 生效）；flow_grpo 的 advantage 与 GRPO 相同，差别在 rollout 与 reward。
 
 素材原文的警示（第九节）：GiGPO 的局部优势、APPO 的程序级优势与 ARPO 的步骤归因**已经占据了"细粒度信用分配"的大部分研究空间**，单纯把它们叠加不保证新颖。其中 GiGPO 尤其关键（素材第八节）：它已深入研究"不增加额外 rollout 的多步信用分配"——episode 级保留全局任务目标 + step 级按 `(data_id, anchor_obs)` 分组比较，其成立前提是状态匹配可靠（两个文本相似的 anchor 不保证同环境状态/剩余预算/可用工具）。要超越它需要一个比"找到相同状态再比较奖励"更有区分度的问题——§1.6 方向 ①（显式 baseline 分布 \(\mu\)）正是这种超越的候选。
 
@@ -174,7 +187,7 @@ L1 与 L2 的流水量级校准（素材第九节的判语）：L1"实现容易�
 | **A 最终奖励不区分决策质量** | 两条同 reward 轨迹，中间决策可能完全不同（正确工具+错参数 vs 错误工具+偶然成功）；GRPO 不自动识别 | 部分缓解——RAE 裁决按 `(data_id, action_key)` 表决失败形态（`rae_advantage.py:229`），APPO 分支 outcome 回写父行提供局部对比（`advantage.py:118`）；纯 GRPO 路径完全未缓解 |
 | **B 同轨 token 共享优势** | 整条回答所有有效 token 共享同一 \(\hat A_i\)——早期错误、正确调用、后期修复拿到同一信号 | **GiGPO 缓解**（step 组分解到 anchor），IGPO 缓解（turn 级 IG），RAE R0 前缀清零部分缓解（`rae_advantage.py:33`）；flow_grpo 反其道行之（全广播） |
 | **C 组内相对 ≠ 绝对学习价值** | \([0,0,0,1]\)（一题一成）与 \([0.7,0.8,0.9,1.0]\)（整体接近成功）标准化后信号取决于相对排名与组内方差；全零组优势退化为 0 | **未缓解**——所有预设都以组内相对为基线；绝对学习价值需要外部基准（素材结论：这是开放问题）；本仓见 §1.6 方向 ③ |
-| **D clip 限比率不限信用分配** | 裁剪约束 \(\rho_t\) 的更新幅度，不判断 reward 可信度、失败可恢复性、分支信息量 | 部分缓解——RAE verdict 强负（invalidate → \(\log \epsilon_f\)）与 dead-end backprop（`rae_advantage.py:161` 区段、`daemon.py:787-813`）是对"错误信用"的显式补偿；FIPO 的 \(A_t \cdot (1 + b \cdot f_t)\) 是信用感知更新形态但 D2 未连通 |
+| **D clip 限比率不限信用分配** | 裁剪约束 \(\rho_t\) 的更新幅度，不判断 reward 可信度、失败可恢复性、分支信息量 | 部分缓解——RAE verdict 强负（invalidate → \(\log \epsilon_f\)）与 dead-end backprop（`rae_advantage.py:161` 区段、`daemon.py:787-813`）是对"错误信用"的显式补偿；FIPO 的 \(A_t \cdot (1 + b \cdot f_t)\) 是信用感知更新形态（APPO 预设 `loss_mode=future_kl` 时生效） |
 
 缓解矩阵的对角线解读（组合动机的形式化表述）：8 预设 × 4 局限的缓解关系是**稀疏的**——没有任何一个预设同时缓解 A/B/C/D。假如研究员关心 A+D（失败裁决），只能选 RAE 并放弃 GiGPO 的 B 缓解；关心 B+C 则只能选 GiGPO 并接受 A/D 裸奔。**单选世界的最优解永远只覆盖局限空间的一个切片**；P2 组合世界的价值 = 覆盖并集。C 在当前预设下无解——这是留给 §1.6 ③、也是唯一必须 L2 扩展的局限。
 
@@ -388,7 +401,7 @@ flowchart TB
 |---|---|---|---|---|
 | grpo | 无（VERL 组内 z-score 基线，可选 zero_prefix，`advantage.py:81`） | group_n 独立采样 | vanilla clip | clip / lr 全在 L0 面 |
 | arpo | **无**（`advantage.py:74` 直接 return） | 熵门控 fork（`branch_policy.py:35`） | vanilla clip | gate 全在 tir dict（D3/D5） |
-| appo | 分支行 outcome 折扣回写父行（`advantage.py:118`；child/probe 行 \(\hat A=0\)） | BranchSite sites 分支 | 预设 future_kl（`overlay.py:127`）——**未生效（D2）** | reward_scale_discount 等 |
+| appo | 分支行 outcome 折扣回写父行（`advantage.py:118`；child/probe 行 \(\hat A=0\)） | BranchSite sites 分支 | 预设 future_kl（双写到 `actor.policy_loss`，已生效） | reward_scale_discount 等 |
 | aepo | \(\hat A\,(1 + a\, z(\Delta H))\)（`advantage.py:193`） | 熵门控 + 分支预算 | vanilla clip | aepo_beta / entropy_adv_coef 不可见 |
 | igpo | turn 级 IG z-score（`advantage.py:215`） | 无分支增量 | vanilla clip | info_gain_type 不可见 |
 | gigpo | \(a_e + w\,a_s\) 双级优势（`advantage.py:108`） | 依赖 anchor obs_hash（tool+observation 的 SHA1 前 16 位）自然分组（`arpo_rollout.py:15-17`） | vanilla clip | step_advantage_w / gigpo_mode 不可见 |
@@ -406,7 +419,7 @@ token mask 的三种做法（所有 Advantage 改动最终都要落到"哪些 to
 三个关键事实（后续设计反复引用）：
 
 1. **8 预设中 token-level loss 形态只有 2 种**：vanilla clip（全部，vendored `dp_actor.py:393` → `compute_policy_loss`）与 future_kl（FIPO，vendored 已有实现但配置树断链，D2）——**印证 §1.1 论点，也是 §3 组合式架构的立论基础**：组合的自由度天然存在于 Advantage 与采样层。FIPO 的实际公式（vendored `core_algos.py:688-858`）：\(FutureKL_t = \sum_{k \ge t} \gamma^{k-t} M_k \Delta \log p_k\) → \(f_t = {\rm clip}(e^{FutureKL}, 1-\varepsilon, 1+\varepsilon)\) → \(A_t = A_{\rm base}(t) \cdot (1 + b \cdot f_t)\)——即"未来影响调制基优势"，属素材第四节所述 APPO 论文 procedure-level advantage \(\hat A_i = \hat A_i^{\rm base}(1 + b\hat A_i^{\rm fut})\) 的 token 级展开。
-2. **future_kl 是唯一 L3 候选且从未生效**：`apply_train_signal` 写 `algorithm.tir.loss_mode`（`overlay.py:186`），vendored 读 `actor.policy_loss.loss_mode`（`dp_actor.py:393`）——`LossSpec.loss_mode` 的注释自认 `Preset only … until future_kl is wired`（`rl/loss.py:16-17`），契约测试 `mas/tests/test_advantage_numerics.py:462-475` 锁定"未接入"现状。overlay 侧还有一个自恰的降级标记 `tir["loss_applied_to_actor"] = (loss_mode != "future_kl")`（`overlay.py:190`）——写侧自己承认 future_kl 不会到 actor。这意味着 APPO 预设**名实不符**：UI 选 APPO 时研究员以为在训 FIPO，实际跑的是 vanilla clip + 分支 credit 回写。
+2. **future_kl 是唯一 L3 候选**（以下为 RL1 修复前的诊断记录；现状：`apply_train_signal` 已双写 `actor.policy_loss`，`test_appo_arpo_credit.py::TestPresets` 锁定）：`apply_train_signal` 写 `algorithm.tir.loss_mode`（`overlay.py:186`），vendored 读 `actor.policy_loss.loss_mode`（`dp_actor.py:393`）——`LossSpec.loss_mode` 的注释自认 `Preset only … until future_kl is wired`（`rl/loss.py:16-17`），契约测试 `mas/tests/test_advantage_numerics.py:462-475` 锁定"未接入"现状。overlay 侧还有一个自恰的降级标记 `tir["loss_applied_to_actor"] = (loss_mode != "future_kl")`（`overlay.py:190`）——写侧自己承认 future_kl 不会到 actor。这意味着 APPO 预设**名实不符**：UI 选 APPO 时研究员以为在训 FIPO，实际跑的是 vanilla clip + 分支 credit 回写。
 3. **KL 处理的精确现状**（无自研 KL loss 代码，全靠配置映射交给 VERL）：`use_kl_in_reward` 仅缺省置 False（显式配置存活）；`use_kl_loss` 有 flow_grpo 强制 True/0.001 与显式 False 存活两个例外（`overlay.py:144-147` 与重套保护 `overlay.py:171-176`）；`future_kl` 是 preset 占位。三者在 UI 全部不可见（D5）——KL 三态是 L0 参数面必须补全的最后一批"半隐蔽"开关（§4.2）。
 4. **preset 之间无公因子**：GiGPO 的局部优势与 RAE 的裁决逻辑分属两文件、两入口，同批共享需要既能选 base 又能叠算子的管线（§3.1）。互斥分派的代码形状是 8 个 `if algo == ...: return ...`（`advantage.py:71-112`）——每分支返回后彻底退出，无任何显式组合点。
 
@@ -870,7 +883,7 @@ flowchart LR
 - **L1 的菜单即边界**：组合面板的一切可选项来自 §3.1 算子注册表的静态枚举，注册表之外不可输入。这保证 L1 产物永远是"已知原语的重组"——理论安全性继承自每个原语的既有数值/契约测试（§7），不产生新的未测语义。
 - **L2 的研究者通道**：UI 上凡是菜单不可表达的需求（新算子、§3.6 等价表未覆盖的 base×operator 对）统一引导到"提 L2 议案"入口——按 §3.7 的触发条件与准入规则走开发流程，而非在 UI 上私改 yaml 逃生。手改 yaml 技术上永远可行（`_deep_merge` 不拦未知键），但 UI 不为它提供捷径，且 preflight 对 composed 非法形态会失败——歪路可走但没有台阶。
 
-与 §1.2 编号体系的防混淆声明（引主文档 §1.2 末段定论）：创新三层次记作 Level 1/2/3，开放度三层记作 L0/L1/L2——L0 覆盖三层次的全部可调量；L1 只组合 Level 2 级算子与 reward 组件；**Level 3 绝不进组合面板**（误开组合会让研究员无意构造无理论论证的新目标函数，违反 P3）。Level 3 的 UI 呈现只有一个位置：§4.3 面板上对 `loss_mode=future_kl` 的"阶段标注"（它是当前唯一 L3 候选，且 D2 未连通——§2.4）。
+与 §1.2 编号体系的防混淆声明（引主文档 §1.2 末段定论）：创新三层次记作 Level 1/2/3，开放度三层记作 L0/L1/L2——L0 覆盖三层次的全部可调量；L1 只组合 Level 2 级算子与 reward 组件；**Level 3 绝不进组合面板**（误开组合会让研究员无意构造无理论论证的新目标函数，违反 P3）。Level 3 的 UI 呈现只有一个位置：§4.3 面板上对 `loss_mode=future_kl` 的"阶段标注"（它是当前唯一 L3 候选；D2 已于 2026-10-15 修订确认连通，见文首修订记录 1）。
 
 边界即测试边界（§7 主形状的提前引用）：L0 每项参数在 `effective-rl.yaml` 快照中断言存在与落点；L1 每个组合与 §3.6 等价表对照；L2 每个新算子独立成节可独立 GPU 回归。三层是**实现与审计的分层**，不是功能菜单——研究员的 UI 视野里只有"表单"和"组合面板"两个东西。
 

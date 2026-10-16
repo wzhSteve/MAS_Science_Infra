@@ -1,4 +1,9 @@
-"""LangChain @tool wrappers with short Hermes-friendly names."""
+"""LangChain @tool wrappers with short Hermes-friendly names.
+
+Isolation contract:
+  - bing_search / wikipedia_search: query -> top-10 title, URL, truncated description.
+  - web_fetch: url -> page content extraction. Never searches.
+"""
 
 from __future__ import annotations
 
@@ -6,20 +11,27 @@ from langchain_core.tools import tool
 
 from python_tool import execute_python as _execute_python
 
-from .search import web_search as _web_search
+from .search import bing_search as _bing_search
+from .search import fetch_page as _fetch_page
 from .wikipedia import wikipedia_search as _wikipedia_search
 
 
 @tool
-def web_search(query: str) -> str:
-    """Search the public web for facts, news, or pages. Use for open-domain questions."""
-    return _web_search(query)
+def bing_search(query: str) -> str:
+    """Search the web with Bing. Returns up to 10 entries, each with a title, URL, and truncated description. Does not open pages."""
+    return _bing_search(query)
 
 
 @tool
 def wikipedia_search(query: str) -> str:
-    """Look up Wikipedia pages and short extracts. Prefer this for well-known entities."""
+    """Search Wikipedia. Returns up to 10 entries, each with a title, URL, and truncated description. Does not open pages."""
     return _wikipedia_search(query)
+
+
+@tool
+def web_fetch(url: str) -> str:
+    """Open one URL and extract its readable text content. Does not search."""
+    return _fetch_page(url)
 
 
 @tool
@@ -28,5 +40,5 @@ def execute_python(code: str) -> str:
     return _execute_python(code)
 
 
-TOOLS = [web_search, wikipedia_search, execute_python]
+TOOLS = [bing_search, wikipedia_search, web_fetch, execute_python]
 TOOL_MAP = {t.name: t for t in TOOLS}

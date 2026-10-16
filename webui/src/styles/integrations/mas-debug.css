@@ -12,6 +12,17 @@
   .agent-run-io h4 { margin: 0 0 8px; color: var(--text-secondary); font-size: 11px; font-weight: 500; }
   .agent-run-io p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.7; max-height: 220px; overflow-y: auto; }
   .agent-run-tools, .agent-run-preview { padding: 0 14px 10px; color: var(--text-secondary); font-size: 11px; }
+  .agent-run-llm { border-top: 1px solid var(--border-subtle); padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .agent-run-llm-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
+  .agent-run-llm-calls > summary, .agent-run-llm-call details > summary { cursor: pointer; color: var(--text-secondary); font-size: 11px; }
+  .agent-run-llm-call { margin: 8px 0 10px; padding-left: 10px; border-left: 2px solid var(--border-subtle); }
+  .agent-run-llm-call-title { margin: 0 0 4px; font-size: 11px; color: var(--text-secondary); }
+  .agent-run-llm-call pre { margin: 6px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto; background: var(--surface-subtle); border: 1px solid var(--border-subtle); border-radius: 6px; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .agent-run-user-windows { display: flex; flex-direction: column; gap: 8px; }
+  .agent-run-user-windows h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .agent-run-user-windows .field-hint { margin: 0 0 4px; }
+  .agent-run-card--user-window > header .agent-run-state { color: var(--success); }
+  .agent-run-card--user-window > header .agent-run-state.is-failed { color: var(--danger); }
   .agent-run-more { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .debug-log-download { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
   @media (max-width: 767px) {

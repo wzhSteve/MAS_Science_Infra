@@ -5,11 +5,49 @@ import {
 } from '@xyflow/react';
 import type { AgentKind, Palette, WorkflowSpec } from '../../../shared/api/types';
 import type { EdgeKind, EdgePatch, GraphNodeData, GraphNode, GraphEdge, GraphNodePreset, GraphSelection } from '../types';
+import { DEFAULT_PLANNER_PROMPT, DEFAULT_VERIFIER_PROMPT } from './defaultPrompts';
 import { flowToWorkflow, graphEdge, poolNodeId, routerIdFromPool, workflowGraphRevision, workflowToFlow } from './workflowGraph';
 import { createEdgeRules, edgeConnection } from './edgeRules';
 import { defaultHandles, resolveHandles, serializeEdges } from './edgeGeometry';
 
 type Graph = { nodes: GraphNode[]; edges: GraphEdge[] };
+
+function defaultPrompt(kind: AgentKind | undefined): string {
+  if (kind === 'planner') return DEFAULT_PLANNER_PROMPT;
+  if (kind === 'verifier') return DEFAULT_VERIFIER_PROMPT;
+  return '';
+}
+
+function fillEmptyPrompt(node: GraphNode): GraphNode {
+  if (node.type !== 'agent') return node;
+  const prompt = typeof node.data.system_prompt === 'string' ? node.data.system_prompt.trim() : '';
+  if (prompt) return node;
+  const filled = defaultPrompt(node.data.kind);
+  return filled ? { ...node, data: { ...node.data, system_prompt: filled } } : node;
+}
+
+/** Add the standard PEV edges that are still missing. Existing edges stay. */
+export function wireStandardEdges(nodes: GraphNode[], edges: GraphEdge[]): GraphEdge[] {
+  const extra: GraphEdge[] = [];
+  const all = () => [...edges, ...extra];
+  const planner = nodes.find((node) => node.type === 'agent' && node.data.kind === 'planner');
+  const verifier = nodes.find((node) => node.type === 'agent' && node.data.kind === 'verifier');
+  const router = nodes.find((node) => node.type === 'router');
+  if (planner && router && !all().some((edge) => edge.source === planner.id && edge.data?.kind === 'route')) {
+    extra.push(graphEdge(planner.id, router.id, 'route'));
+  }
+  if (planner && verifier && !all().some((edge) => edge.source === verifier.id && edge.target === planner.id && edge.data?.kind === 'feedback')) {
+    extra.push(graphEdge(verifier.id, planner.id, 'feedback'));
+  }
+  if (verifier) {
+    for (const pool of nodes.filter((node) => node.type === 'pool')) {
+      if (!(pool.data.members || []).length) continue;
+      if (all().some((edge) => edge.source === pool.id && edge.data?.kind === 'message')) continue;
+      extra.push(graphEdge(pool.id, verifier.id, 'message'));
+    }
+  }
+  return extra;
+}
 
 export function useGraphEditor(
   workflow: WorkflowSpec,
@@ -170,7 +208,13 @@ export function useGraphEditor(
     const kind = preset.nodeType;
     let id = preset.id;
     if (kind === 'tool' || preset.agentKind === 'tool' || preset.id === 'planner' || preset.agentKind === 'planner') {
-      if (current.nodes.some((n) => n.id === id || (preset.agentKind === 'planner' && n.data.kind === 'planner'))) {
+      const existingPlanner = current.nodes.find((n) => n.data.kind === 'planner');
+      if (current.nodes.some((n) => n.id === id) || (preset.agentKind === 'planner' && existingPlanner)) {
+        if (preset.agentKind === 'planner' && existingPlanner) {
+          const nodes = current.nodes.map(fillEmptyPrompt);
+          const extra = wireStandardEdges(nodes, current.edges);
+          if (extra.length || nodes !== current.nodes) commit({ ...current, nodes, edges: [...current.edges, ...extra] });
+        }
         setNotice(`${preset.id} 已在画布中。`); return;
       }
     } else {
@@ -201,14 +245,12 @@ export function useGraphEditor(
       }
       const nextMembers = [...members, preset.id];
       const routerId = pool.data.routerId || routerIdFromPool(pool.id);
-      commit({
-        ...current,
-        nodes: current.nodes.map((node) => {
-          if (node.id === pool.id) return { ...node, data: { ...node.data, members: nextMembers, candidates: nextMembers } };
-          if (node.id === routerId) return { ...node, data: { ...node.data, candidates: nextMembers } };
-          return node;
-        }),
+      const nodes = current.nodes.map((node) => {
+        if (node.id === pool.id) return { ...node, data: { ...node.data, members: nextMembers, candidates: nextMembers } };
+        if (node.id === routerId) return { ...node, data: { ...node.data, candidates: nextMembers } };
+        return node;
       });
+      commit({ ...current, nodes, edges: [...current.edges, ...wireStandardEdges(nodes, current.edges)] });
       select({ kind: 'node', id: pool.id });
       return pool.id;
     }
@@ -222,7 +264,7 @@ export function useGraphEditor(
           data: {
             label: id, kind: agentKind, role: preset.role || 'agent',
             skills: [],
-            tools: [], memory_scope: 'agent', system_prompt: '', model: 'inherit',
+            tools: [], memory_scope: 'agent', system_prompt: defaultPrompt(agentKind), model: 'inherit',
             trainable: agentKind !== 'verifier', profile: toolProfile, meta: {},
             backend: preset.backend, llm_required: preset.llmRequired, description: preset.description,
             entry: !current.nodes.some((n) => n.type === 'agent'),
@@ -232,11 +274,9 @@ export function useGraphEditor(
       id: poolNodeId(id), type: 'pool' as const, position: { x: position.x + 280, y: position.y },
       data: { label: 'tool-agent pool', members: [] as string[], routerId: id, candidates: [] as string[] },
     } : null;
-    commit({
-      ...current,
-      nodes: pool ? [...current.nodes, node, pool] : [...current.nodes, node],
-      edges: pool ? [...current.edges, graphEdge(id, pool.id, 'route')] : current.edges,
-    });
+    const nodes = pool ? [...current.nodes, node, pool] : [...current.nodes, node];
+    const edges = pool ? [...current.edges, graphEdge(id, pool.id, 'route')] : current.edges;
+    commit({ ...current, nodes, edges: [...edges, ...wireStandardEdges(nodes, edges)] });
     select({ kind: 'node', id });
     return id;
   }, [commit, select]);

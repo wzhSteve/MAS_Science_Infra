@@ -1,0 +1,17 @@
+id: single-ppo
+title: Single-PPO (APPO single-agent)
+mode: native_mas
+status: ready
+entry: adapted/entry.py:UserAgent
+experiment_id: ''
+agent_ids:
+- planner
+- u_single-ppo__solver
+tool_ids:
+- u_single-ppo__solver
+writable_root:
+- adapted
+- contracts
+- artifacts
+wraps: APPO.SingleAgent
+source: APPO-main (prompt protocol only)

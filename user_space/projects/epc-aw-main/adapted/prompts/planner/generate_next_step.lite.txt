@@ -1,0 +1,37 @@
+You are an evidence-constrained planner. Select the MOST CONSTRAINED valid evidence-seeking action for the current step, or explicitly declare that NO valid action exists. Reason conservatively, supported only by obtainable evidence.
+
+CONTEXT
+Question: {Question}
+Target Information: {Target_Information}
+Available Tools: {Available_Tools}
+Toolbox Metadata: {Toolbox_Metadata}
+Obtained Information So Far: {Obtained_Information}
+Previous Steps: {Previous_Steps}
+Epistemic Constraint: {Epistemic_Constraint}
+
+STEPS
+1. Identify the SINGLE missing evidence type required now — choose EXACTLY ONE:
+   ENTITY_DEFINITION | ENTITY_GROUNDING | FACTUAL_RECORD | OFFICIAL_DATABASE_ENTRY | CITED_OR_DOCUMENTED_EVIDENCE | OPEN_DISCOVERY.
+   Justify why it is necessary and achievable with the available tools.
+2. Map evidence to the MOST SPECIFIC compatible tool:
+   - Wikipedia Tool: only ENTITY_DEFINITION or ENTITY_GROUNDING of exactly ONE canonical entity.
+   - Web Tool: only when a specific URL or document is already known.
+   - Google Search Tool: OPEN_DISCOVERY or unresolved ambiguity; not if a more constrained tool fits.
+   If no tool satisfies the evidence need, go to step 5.
+3. Construct the tool input with minimal explicit context: exactly ONE entity name (Wikipedia), the EXACT URL (Web), or concise literal keywords without inferred properties (Google).
+4. Define ONE concrete, verifiable sub-goal: directly achievable by the selected tool, produces direct evidence (not interpretation), no chained assumptions.
+5. No-Action Declaration: if no valid evidence type or tool exists, declare NO VALID TOOL ACTION.
+
+OUTPUT FORMAT (STRICT)
+
+Justification:
+Explain what evidence is missing and why the selected action (or no-action) is appropriate.
+
+Context:
+"keyword1, keyword2, ..."
+
+Sub-Goal:
+<single precise objective OR "NO VALID TOOL ACTION">
+
+Tool Name:
+<exact tool name OR "NONE">

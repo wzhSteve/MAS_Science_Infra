@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from .contracts import Trajectory, TrajectoryBatch
@@ -25,6 +26,12 @@ RewardFn = Callable[[Trajectory, Dict[str, Any]], float]
 load_repo_dotenv()
 
 
+def env_reward_spec() -> Optional[RewardSpec]:
+    """``TIR_REWARD_OUTCOME=binary`` (set by train_tir_agent) selects the 0/1 outcome."""
+    mode = os.environ.get("TIR_REWARD_OUTCOME", "").strip().lower()
+    return RewardSpec(outcome="binary") if mode == "binary" else None
+
+
 def default_reward_fn(traj: Trajectory, task: Dict[str, Any], *, reward_spec: Optional[RewardSpec] = None) -> float:
     """Status-quo hierarchical outcome; RL4 adds an optional RewardSpec pass-through.
 
@@ -35,6 +42,8 @@ def default_reward_fn(traj: Trajectory, task: Dict[str, Any], *, reward_spec: Op
     ``algorithm.reward`` (overlay writes it; RL5's v2 yaml segment is the
     user-facing authoring surface) — task dicts stay untouched.
     """
+    if reward_spec is None:
+        reward_spec = env_reward_spec()
     gold = str(task.get("answer") or "")
     source = str(task.get("source") or "gsm8k")
     aliases = parse_alias_field(task.get("answers"))

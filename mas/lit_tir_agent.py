@@ -271,6 +271,9 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             branch_local_count,
             time.time() - start,
         )
+        from workflow.mas_health import episode_faults
+
+        mas_faults = episode_faults(raw, traj, reward=reward)
         agl.emit_reward(reward)
         archive_id = ""
         snapshot_id = ""
@@ -313,6 +316,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     "tir.n_search": int(n_search),
                     "tir.n_python": int(n_python),
                     "tir.format_ok": bool(format_ok),
+                    "tir.mas_fault": (mas_faults[0][:500] if mas_faults else ""),
                     "tir.obs_hashes": "|".join(hashes),
                     "tir.ig_deltas": "|".join(f"{x:.6f}" for x in ig_list),
                     "tir.h_root": float(raw.h_root),

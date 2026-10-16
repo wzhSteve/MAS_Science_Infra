@@ -15,6 +15,7 @@ import { useConfirm } from '../../shared/feedback/useConfirm';
 import { useNotify } from '../../shared/feedback/useNotify';
 import { errorMessage } from '../../shared/api/http';
 import { GpuStatusControl } from './GpuStatusControl';
+import { AglMetricsLink } from './MetricsLink';
 import { WorkspaceMenu } from './WorkspaceMenu';
 import type { PanelId, ResourceCategory } from '../navigation';
 import type { SettingsSection } from '../../features/settings/model/sections';
@@ -127,6 +128,7 @@ export const WorkspaceHeader = memo(function WorkspaceHeader({ bundle, onReload,
       <Button size="sm" variant="ghost" title="模型与数据" aria-label="模型与数据" onClick={() => onResources('models')}>
         <Database size={15} /><span>模型与数据</span>
       </Button>
+      <AglMetricsLink size="sm" />
       <WorkspaceMenu active={settings === 'diagnostics' ? 'harness' : active} onChange={onChangePanel} />
     </nav>
   </header>;

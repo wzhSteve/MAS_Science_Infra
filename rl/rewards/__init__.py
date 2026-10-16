@@ -3,6 +3,7 @@
 from rl.rewards.outcome import *  # noqa: F403
 from rl.rewards.outcome import (
     accuracy,
+    binary_correct,
     compute_mas_outcome_reward,
     compute_outcome_reward,
     discounted_returns,
@@ -18,6 +19,7 @@ from rl.rewards.outcome import (
 
 __all__ = [
     "accuracy",
+    "binary_correct",
     "compute_mas_outcome_reward",
     "compute_outcome_reward",
     "discounted_returns",

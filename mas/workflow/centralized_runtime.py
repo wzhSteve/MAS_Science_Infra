@@ -4,14 +4,15 @@ Walks the compiled graph with explicit ``AgentMessage`` envelopes:
 planner -> router -> tool-agent(s) -> verifier, one message per edge. Each
 window close appends a MAS-layer blackboard log entry. Multi-router fan-out
 runs the selected tool-agents in parallel. Termination prefers
-``ready_to_stop`` / ``payload.answer``; built-in graphs still stop on
-``plan_step.done=true`` AND ``verify.ok=true``.
+``ready_to_stop`` / ``payload.answer``. A verifier ``COMPLETE`` or ``ok``
+also ends the step; the answer falls back to ``reason`` when ``answer`` is empty.
 
 See docs/MAS_AGENT_LANDING.md §5.
 """
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -127,19 +128,89 @@ def _emit_window(
     kind: str,
     turn: int,
     metrics: Optional[Dict[str, Any]] = None,
+    recorder: Any = None,
     **extra: Any,
 ) -> None:
+    """Append one window_end event and mirror it into the execution recorder.
+
+    The ``{agent}:{turn}:{kind}`` snapshot_ref convention is shared by the
+    window event, the recorder window entry and the child task's resume dict
+    (``ExecutionRecorder.from_task``), so the four-way prefix check in
+    ``execution_tree.assemble_executions`` compares like with like. Recorder
+    metrics get ``fork_node_ids`` (the recorder tail at window close) and
+    ``source_attempt_id`` so branch planning (ActiveSetSession) can anchor
+    children to a real execution prefix (mirrors ``tir_agent.py`` fork
+    bookkeeping). Recorder failures degrade silently: the tree then keeps
+    flagging ``Unconfirmed execution prefix`` instead of breaking the
+    training hot path.
+    """
+    snapshot_ref = f"{agent_id}:{turn}:{kind}"
+    event_id = f"{agent_id}:{turn}:{kind}"
+    event_metrics: Dict[str, Any] = dict(metrics or {})
+    if recorder is not None:
+        try:
+            # Branch bookkeeping (mirrors tir_agent.py:663-665): the sampling
+            # window carries the execution-level fork anchor so child plans
+            # resume from a real prefix node, not a dangling synthetic token.
+            event_metrics.setdefault("fork_node_ids", list(recorder.trace.tail_ids))
+            event_metrics.setdefault("source_attempt_id", recorder.trace.attempt_id)
+        except Exception:  # noqa: BLE001
+            pass
     event: Dict[str, Any] = {
         "agent_id": agent_id,
         "kind": kind,
         "turn": turn,
-        "metrics": dict(metrics or {}),
-        "snapshot_ref": f"{agent_id}:{turn}:{kind}",
-        "event_id": f"{agent_id}:{turn}:{kind}",
+        "metrics": event_metrics,
+        "snapshot_ref": snapshot_ref,
+        "event_id": event_id,
         "messages": list(messages),
     }
     event.update(extra)
     window_events.append(event)
+    _snapshot_branch_messages(messages, rollout_id=_BRANCH_ROLLOUT.get())
+    if recorder is not None:
+        try:
+            # messages == the same prefix snapshot the event carries, so the
+            # parent window's prefix_hash equals the child's resume hash.
+            recorder.window(event_id, snapshot_ref=snapshot_ref, messages=list(messages))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def agentflow_state_from_messages(messages: Any) -> Optional[Dict[str, Any]]:
+    """Last ``agentflow_state`` embedded in a window's message list."""
+    if not isinstance(messages, list):
+        return None
+    found: Optional[Dict[str, Any]] = None
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        payload = msg.get("payload") if isinstance(msg.get("payload"), dict) else {}
+        state = payload.get("agentflow_state")
+        if isinstance(state, dict) and state:
+            found = state
+    return found
+
+
+def _snapshot_branch_messages(messages: List[Dict[str, Any]], *, rollout_id: str = "") -> None:
+    """Persist the window prefix on the episode Archive when it carries AgentFlow state."""
+    if not agentflow_state_from_messages(messages):
+        return
+    archive = _BRANCH_ARCHIVE.get()
+    if archive is None:
+        return
+    try:
+        archive.snapshot(
+            messages=list(messages),
+            meta={"reason": "agentflow_window"},
+            rollout_id=rollout_id or None,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_BRANCH_ARCHIVE: "contextvars.ContextVar[Any]" = contextvars.ContextVar("branch_archive", default=None)
+_BRANCH_ROLLOUT: "contextvars.ContextVar[str]" = contextvars.ContextVar("branch_rollout", default="")
 
 
 def _tool_calls_for_result(msg: AgentMessage, recorded_as: str) -> Optional[List[Dict[str, Any]]]:
@@ -156,6 +227,34 @@ def _tool_calls_for_result(msg: AgentMessage, recorded_as: str) -> Optional[List
     if command:
         call["arguments"] = {"command": command}
     return [call]
+
+
+_SEARCH_TOOL_NAMES = {
+    "Wikipedia_Search_Tool", "Web_Fetch_Tool", "Bing_Search_Tool",
+    "wikipedia_search", "web_fetch", "web_search", "bing_search", "bing",
+}
+_PYTHON_TOOL_NAMES = {"Python_Coder_Tool", "python_coder", "execute_python"}
+
+
+def _is_search_toolmsg(msg: AgentMessage) -> bool:
+    """user_space wraps (e.g. AgentFlow) send tool results from one executor
+    node, so ``msg.src`` is the executor id. The real tool name is carried in
+    ``payload.tool`` / ``payload.tool_name`` / ``trace.tool``."""
+    payload = msg.payload if isinstance(msg.payload, dict) else {}
+    name = str(payload.get("tool") or payload.get("tool_name") or "")
+    if not name:
+        trace = payload.get("trace") if isinstance(payload.get("trace"), dict) else {}
+        name = str(trace.get("tool") or trace.get("tool_name") or "")
+    return name in _SEARCH_TOOL_NAMES
+
+
+def _is_python_toolmsg(msg: AgentMessage) -> bool:
+    payload = msg.payload if isinstance(msg.payload, dict) else {}
+    name = str(payload.get("tool") or payload.get("tool_name") or "")
+    if not name:
+        trace = payload.get("trace") if isinstance(payload.get("trace"), dict) else {}
+        name = str(trace.get("tool") or trace.get("tool_name") or "")
+    return name in _PYTHON_TOOL_NAMES
 
 
 def _record_agent_window(
@@ -214,6 +313,36 @@ def run_centralized_episode(
     execution_recorder: Any = None,
 ):
     """Centralized planner-led walk with explicit AgentMessage envelopes."""
+    from uuid import uuid4
+
+    from .user_gateway.sandbox import bind_episode_id, reset_episode_id
+
+    token = bind_episode_id(uuid4().hex)
+    archive_token = _BRANCH_ARCHIVE.set(archive)
+    rollout_token = _BRANCH_ROLLOUT.set(str(task.get("_rollout_id") or task.get("id") or ""))
+    try:
+        return _run_centralized_episode_body(
+            task, llm, archive, spec, memory, compiled,
+            agent_llms=agent_llms, window_llm=window_llm, execution_recorder=execution_recorder,
+        )
+    finally:
+        _BRANCH_ARCHIVE.reset(archive_token)
+        _BRANCH_ROLLOUT.reset(rollout_token)
+        reset_episode_id(token)
+
+
+def _run_centralized_episode_body(
+    task: Dict[str, Any],
+    llm: Optional[Any],
+    archive,
+    spec,
+    memory,
+    compiled,
+    *,
+    agent_llms: Optional[Mapping[str, Any]] = None,
+    window_llm: Optional[WindowLLM] = None,
+    execution_recorder: Any = None,
+):
     from .runtime import EpisodeRaw, LLMConfig  # local to avoid cycle
     from tools.tool_agents import effective_tier, get_tool_agent, validate_tool_args
 
@@ -268,6 +397,7 @@ def run_centralized_episode(
 
     max_turns = max(4, int(spec.hub.max_feedback_hops or 1) * 3 + 4)
     turn = 0
+    invalid_plans = 0
     last_feedback: Optional[str] = None
     all_messages: List[Dict[str, Any]] = []
     window_events: List[Dict[str, Any]] = []
@@ -309,6 +439,19 @@ def run_centralized_episode(
         except Exception:  # noqa: BLE001
             pass
 
+    # Resume confirmation: a branch rollout must declare its shared prefix
+    # (mirrors runtime.py TirAgent path). ``resume_applied`` fills the child
+    # trace's ``resume.prefix_hash`` before any window/node is recorded, so
+    # the four-way prefix check in execution_tree can match the parent's
+    # window. Best-effort: on failure the child stays "Unconfirmed" instead
+    # of interrupting the episode.
+    resume_messages = task.get("resume_messages")
+    resumed_agentflow = agentflow_state_from_messages(resume_messages)
+    if execution_recorder is not None and resume_messages:
+        try:
+            execution_recorder.resume_applied(resume_messages)
+        except Exception:  # noqa: BLE001
+            pass
 
     while turn < max_turns and not done:
         from .user_gateway.sandbox import eval_cancelled
@@ -317,9 +460,20 @@ def run_centralized_episode(
             error = "用户停止"
             break
         turn += 1
+        try:
+            from .user_gateway.loader import note_window_progress
+
+            note_window_progress(f"planner 第 {turn} 步")
+        except Exception:  # noqa: BLE001
+            pass
         # 1. planner window -> plan_step (user text composed by prompts.py)
         if last_feedback:
-            user = planner_user_text(question=question, feedback=last_feedback)
+            user = planner_user_text(
+                question=question,
+                feedback=last_feedback,
+                candidates=all_cands if router_ids_run else None,
+                direct_executor="" if router_ids_run else direct_executor,
+            )
         else:
             if router_ids_run:
                 user = planner_user_text(question=question, candidates=all_cands)
@@ -337,10 +491,16 @@ def run_centralized_episode(
         try:
             planner_profile = dict(getattr(planner_node, "profile", None) or {})
             if str(planner_profile.get("backend") or "") == "user_space":
+                inbound_payload: Dict[str, Any] = {
+                    "next": "", "args": {}, "sub_goal": "", "done": False,
+                    "question": question, "input": user,
+                }
+                if turn == 1 and resumed_agentflow:
+                    inbound_payload["agentflow_state"] = resumed_agentflow
                 inbound = make_message(
                     task_id=task_id, turn=turn, src="orchestrator", dst="planner",
                     kind="plan_step",
-                    payload={"next": "", "args": {}, "sub_goal": "", "done": False, "question": question, "input": user},
+                    payload=inbound_payload,
                 )
                 from .user_gateway.loader import maybe_invoke_user_node
 
@@ -379,7 +539,7 @@ def run_centralized_episode(
             "sub_goal": str(p_json.get("sub_goal") or ""),
             "done": bool(p_json.get("done")),
         }
-        for extra in ("trace", "answer", "ready_to_stop"):
+        for extra in ("trace", "answer", "ready_to_stop", "agentflow_state"):
             if extra in p_json:
                 p_payload[extra] = p_json[extra]
         try:
@@ -395,11 +555,11 @@ def run_centralized_episode(
             )
             _log_window(archive, "planner", turn, err_msg, err_msg, False)
             all_messages.append(err_msg.model_dump())
-            _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": False})
             _record_agent_window(
                 execution_recorder, agent_id="planner", turn=turn,
                 inputs={"question": question}, output={"error": str(ve)}, failed=True,
             )
+            _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": False}, recorder=execution_recorder)
             continue
 
         if p_payload["done"] and not p_payload.get("next"):
@@ -411,22 +571,25 @@ def run_centralized_episode(
             )
             _log_window(archive, "planner", turn, plan_msg, fa_msg, True)
             all_messages.extend([plan_msg.model_dump(), fa_msg.model_dump()])
-            _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={})
             _record_agent_window(
                 execution_recorder, agent_id="planner", turn=turn,
                 inputs={"question": question}, output={"answer": final_answer, "done": True},
             )
+            _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={}, recorder=execution_recorder)
             done = True
             break
 
         ok, reason = validate_payload("plan_step", plan_msg.payload)
         _log_window(archive, "planner", turn, plan_msg, plan_msg, ok)
         all_messages.append(plan_msg.model_dump())
-        _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": ok})
+        # Record the planner execution node BEFORE the window event so the
+        # event's fork_node_ids anchor to this node: the branch edge must
+        # leave from the planner node that produced the shared prefix.
         _record_agent_window(
             execution_recorder, agent_id="planner", turn=turn,
             inputs={"question": question}, output=p_payload, failed=not ok,
         )
+        _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": ok}, recorder=execution_recorder)
         if not ok:
             last_feedback = f"planner produced invalid plan_step: {reason}"
             continue
@@ -497,6 +660,7 @@ def run_centralized_episode(
                 window_events, all_messages,
                 agent_id=rid, kind="after_agent_turn", turn=turn,
                 metrics={**route_res.metrics, "selected": list(route_res.selected), "strategy": route_res.strategy},
+                recorder=execution_recorder,
             )
             if not route_res.ok:
                 fail_reason = route_res.reason
@@ -513,6 +677,7 @@ def run_centralized_episode(
                 hops.append((invoke_msg, sel, args if isinstance(args, dict) else {}))
         if not hops:
             last_feedback = fail_reason or "no executor window selected"
+            invalid_plans += 1
             src = router_ids_run[0] if router_ids_run else "planner"
             fb = make_message(
                 task_id=task_id, turn=turn, src=src, dst="planner",
@@ -521,7 +686,17 @@ def run_centralized_episode(
                 trace_ref=plan_msg.msg_id,
             )
             all_messages.append(fb.model_dump())
+            try:
+                from .user_gateway.loader import note_window_progress
+
+                note_window_progress(last_feedback)
+            except Exception:  # noqa: BLE001
+                pass
+            if invalid_plans >= 3:
+                error = last_feedback
+                break
             continue
+        invalid_plans = 0
 
         # 3. tool-agent / blank windows -> tool_result (parallel hops, then post-tool blank pipeline)
         def _invoke_blank(aid: str, targs: Dict[str, Any], prev_msg: AgentMessage) -> AgentMessage:
@@ -652,6 +827,13 @@ def run_centralized_episode(
                     payload={"output": f"unknown tool-agent {aid}", "ok": False, "evidence_type": "ERROR", "tier": tier},
                     trace_ref=prev_msg.msg_id,
                 )
+            if tier == "pro" and isinstance(targs, dict):
+                # Workflow YAML can set profile.pro_fetch_n as the default pro
+                # scan depth; explicit args.fetch_top_n always wins (setdefault).
+                # Unreachable when SCIENCE_INFRA_TOOL_KERNEL forces lite and
+                # only applied on the product ToolAgent path (user_space nodes
+                # already returned above).
+                targs.setdefault("fetch_top_n", profile.get("pro_fetch_n") or 3)
             try:
                 out = ta.invoke(targs, tier=tier)
             except Exception as e:  # noqa: BLE001
@@ -715,12 +897,6 @@ def run_centralized_episode(
                 tool_msgs.append(tmsg)
                 in_msg = next((m for m in chain if m.kind == "tool_invoke" and m.dst == tmsg.src), tmsg)
                 _log_window(archive, tmsg.src, turn, in_msg, tmsg, bool(tmsg.payload.get("ok")))
-                _emit_window(
-                    window_events, all_messages,
-                    agent_id=tmsg.src, kind="after_agent_turn", turn=turn,
-                    metrics={"ok": bool(tmsg.payload.get("ok"))},
-                    tool_id=tmsg.src,
-                )
                 recorded = tmsg.src if tmsg.src in allowed_agents else ""
                 if not recorded and execution_recorder is not None:
                     execution_recorder.note_issue(
@@ -730,6 +906,8 @@ def run_centralized_episode(
                     hop = str(invoke.dst) if invoke is not None else ""
                     recorded = hop if hop in allowed_agents else ""
                 if recorded:
+                    # Record the executor node BEFORE the window event so the
+                    # event's fork_node_ids anchor to this node.
                     _record_agent_window(
                         execution_recorder,
                         agent_id=recorded,
@@ -740,9 +918,16 @@ def run_centralized_episode(
                         failed=not bool(tmsg.payload.get("ok")),
                         metrics={"ok": bool(tmsg.payload.get("ok"))},
                     )
-                if tmsg.src in ("wikipedia_search", "bing_search", "web_fetch", "google_search", "web_search"):
+                _emit_window(
+                    window_events, all_messages,
+                    agent_id=tmsg.src, kind="after_agent_turn", turn=turn,
+                    metrics={"ok": bool(tmsg.payload.get("ok"))},
+                    tool_id=tmsg.src,
+                    recorder=execution_recorder,
+                )
+                if tmsg.src in ("wikipedia_search", "bing_search", "web_fetch", "web_search") or _is_search_toolmsg(tmsg):
                     n_search += 1
-                if tmsg.src == "python_coder":
+                if tmsg.src == "python_coder" or _is_python_toolmsg(tmsg):
                     n_python += 1
 
         last_tool = tool_msgs[-1] if tool_msgs else None
@@ -765,7 +950,6 @@ def run_centralized_episode(
             )
             _log_window(archive, "verifier", turn, last_tool, v_msg, v_ok)
             all_messages.append(v_msg.model_dump())
-            _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics={"ok": v_ok})
             if "verifier" in allowed_agents:
                 _record_agent_window(
                     execution_recorder, agent_id="verifier", turn=turn,
@@ -774,6 +958,7 @@ def run_centralized_episode(
                     failed=not v_ok,
                     metrics={"ok": v_ok},
                 )
+            _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics={"ok": v_ok}, recorder=execution_recorder)
         else:
             tool_summary = "\n".join(f"- {m.src}: {m.payload.get('output')}" for m in tool_msgs)
             v_user = (
@@ -813,7 +998,7 @@ def run_centralized_episode(
                 "step_conclusion": str(v_json.get("step_conclusion") or "INCOMPLETE"),
                 "slot_updates": list(v_json.get("slot_updates") or []),
             }
-            for extra in ("trace", "answer", "ready_to_stop", "direct_output"):
+            for extra in ("trace", "answer", "ready_to_stop", "direct_output", "agentflow_state"):
                 if extra in v_json:
                     v_payload[extra] = v_json[extra]
             if "evidence_type" not in v_payload:
@@ -834,7 +1019,6 @@ def run_centralized_episode(
                 last_feedback = f"verifier produced invalid verify: {ve}"
             _log_window(archive, verifier_id, turn, last_tool, v_msg, v_ok)
             all_messages.append(v_msg.model_dump())
-            _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics={"ok": v_ok})
             _record_agent_window(
                 execution_recorder, agent_id=verifier_id, turn=turn,
                 inputs={"sub_goal": p_payload.get("sub_goal")},
@@ -842,6 +1026,7 @@ def run_centralized_episode(
                 failed=not v_ok,
                 metrics={"ok": v_ok},
             )
+            _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics={"ok": v_ok}, recorder=execution_recorder)
 
         # 5. termination / feedback / fact commit
         if v_msg.kind == "verify":
@@ -864,14 +1049,14 @@ def run_centralized_episode(
             or ""
         ).strip()
         ready = bool(v_payload.get("ready_to_stop") or p_payload.get("ready_to_stop"))
-        if ready:
+        conclusion = str(v_payload.get("step_conclusion") or "").upper()
+        subgoal_done = conclusion == "COMPLETE" or bool(v_payload.get("ok"))
+        if ready or subgoal_done:
+            if not answer:
+                answer = str(v_payload.get("reason") or "").strip()
+            if not answer:
+                answer = str(p_payload.get("sub_goal") or "")
             final_answer = answer
-            done = True
-        elif answer and (v_payload.get("ok") or ready):
-            final_answer = answer
-            done = True
-        elif v_msg.payload.get("ok") and p_payload.get("done"):
-            final_answer = answer or str(p_payload.get("sub_goal") or "")
             done = True
         else:
             last_feedback = str(v_msg.payload.get("reason") or last_feedback or "verify_failed")

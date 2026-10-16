@@ -1,0 +1,9 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/rl/verl_backend",
+    "${workspaceFolder}/ref_Rep/APPO-main/APPO/verl_arpo_entropy",
+    "${workspaceFolder}/ref_Rep/APPO-main/ARPO/verl_arpo_entropy"
+  ]
+}

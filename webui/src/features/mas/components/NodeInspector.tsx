@@ -1,5 +1,5 @@
-import { memo, useEffect, useMemo, useState } from 'react';
-import { Bot, Boxes, Flag, Route, Trash2, Wrench, X } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Bot, Boxes, Flag, Route, Trash2, Wrench, X, BookOpen } from 'lucide-react';
 import type { AgentKind, Config, Palette, RouterStrategy } from '../../../shared/api/types';
 import type { GraphNode, GraphNodeData, SelectedGraphNode } from '../types';
 import { Button } from '../../../shared/ui/button';
@@ -15,6 +15,133 @@ import {
   type AgentDefaultModel,
   type AgentModelOption,
 } from '../../resources/components/AgentModelSelect';
+import { masApi, resolveAllowedTools, resolveEnabledTools, type UserProjectRuntimeConfig, type UserProjectFlowDoc } from '../api';
+import { stepsForAgent, FLOW_DOC_PROJECTS, type FlowDocProject, type FlowDocTabId } from './UserProjectFlowDoc';
+
+/** userWrap 节点的 agent 角色 → flow-doc tab 归属。 */
+const nodeFlowAgent = (data: GraphNodeData, nodeId: string): FlowDocTabId | null => {
+  const wraps = String(data.meta?.wraps || '');
+  const role = String(data.role || data.kind || '').toLowerCase();
+  const id = nodeId.toLowerCase();
+  if (role.includes('planner') || wraps.toLowerCase().includes('planner') || id.includes('planner')) return 'planner';
+  if (role.includes('executor') || wraps.toLowerCase().includes('executor') || id.includes('executor')) return 'executor';
+  if (role.includes('diagnos') || role.includes('verif') || wraps.toLowerCase().includes('diagnos')
+    || id.includes('diagnos') || id.includes('verif')) return 'diagnoser';
+  return null;
+};
+
+/** flow-doc 项目 id 兜底：节点 meta 无 user_project 时按 wraps 前缀推断。 */
+const flowProjectForNode = (wraps: string): FlowDocProject | null => {
+  const lower = wraps.toLowerCase();
+  if (lower.startsWith('epc-aw') || lower.startsWith('epc_aw')) return 'epc-aw-main';
+  if (lower.includes('agentflow')) return 'agentflow';
+  return null;
+};
+
+function isUserExecutorNode(data: GraphNodeData, nodeId: string): boolean {
+  const wraps = String(data.meta?.wraps || '');
+  const role = String(data.role || data.kind || '').toLowerCase();
+  const backend = data.backend === 'user_space' || data.profile?.backend === 'user_space'
+    || wraps.startsWith('EPC-AW') || wraps.startsWith('AgentFlow');
+  if (!backend) return false;
+  if (role.includes('executor') || wraps.toLowerCase().includes('executor')) return true;
+  return nodeId.toLowerCase().includes('executor');
+}
+
+export function ExecutorToolPool({ projectId }: { projectId: string }) {
+  const [tools, setTools] = useState<string[]>(() => resolveAllowedTools());
+  const [status, setStatus] = useState<'loading' | 'idle' | 'saving' | 'error'>('loading');
+  const [error, setError] = useState('');
+  const [runtime, setRuntime] = useState<UserProjectRuntimeConfig>({});
+  const catalog = resolveAllowedTools(runtime.allowed_tools);
+
+  useEffect(() => {
+    let cancelled = false;
+    setStatus('loading');
+    void masApi.userProjectRuntime(projectId).then((data) => {
+      if (cancelled) return;
+      setRuntime(data);
+      setTools(resolveEnabledTools(data.enabled_tools, data.allowed_tools));
+      setStatus('idle');
+    }).catch((err: Error) => {
+      if (cancelled) return;
+      setError(err.message || '读取失败');
+      setStatus('error');
+    });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const persist = useCallback(async (nextTools: string[]) => {
+    const enabled = nextTools.length ? nextTools : ['Base_Generator_Tool'];
+    setTools(enabled);
+    setStatus('saving');
+    setError('');
+    try {
+      const { allowed_tools: _catalog, ...payload } = runtime;
+      const saved = await masApi.putUserProjectRuntime(projectId, { ...payload, enabled_tools: enabled });
+      setRuntime({ ...saved, allowed_tools: saved.allowed_tools ?? runtime.allowed_tools });
+      setTools(resolveEnabledTools(saved.enabled_tools, saved.allowed_tools ?? runtime.allowed_tools));
+      setStatus('idle');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败');
+      setStatus('error');
+    }
+  }, [projectId, runtime]);
+
+  const toggle = (tool: string) => {
+    const next = tools.includes(tool) ? tools.filter((item) => item !== tool) : [...tools, tool];
+    void persist(next);
+  };
+
+  return <fieldset className="mas-property-section">
+    <legend>Executor 工具池</legend>
+    <p className="field-hint">与用户库「运行超参」同源，写入 contracts/runtime.yaml。</p>
+    {status === 'loading' ? <p className="field-hint">读取中…</p> : catalog.map((tool) => (
+      <label key={tool} className="mas-checkbox-row">
+        <Checkbox checked={tools.includes(tool)} disabled={status === 'saving'}
+          onChange={() => toggle(tool)} />
+        <span>{tool}</span>
+      </label>
+    ))}
+    {error && <InlineNotice tone="danger">{error}</InlineNotice>}
+  </fieldset>;
+}
+
+function AgentFlowSummary({ projectId, agent }: { projectId: FlowDocProject; agent: FlowDocTabId }) {
+  const [doc, setDoc] = useState<UserProjectFlowDoc | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setFailed(false);
+    // 一次拉全量 flow-doc，本地按 agent 过滤（useMemo），无新 API
+    masApi.userProjectFlowDoc(projectId, controller.signal).then((data) => {
+      if (!controller.signal.aborted) setDoc(data);
+    }).catch(() => {
+      if (!controller.signal.aborted) setFailed(true);
+    });
+    return () => controller.abort();
+  }, [projectId]);
+
+  const steps = useMemo(() => stepsForAgent(doc, agent), [doc, agent]);
+
+  if (failed) return <p className="field-hint">流程文档读取失败，无法展示该 Agent 的流程简述。</p>;
+  if (!doc) return <p className="field-hint">流程简述读取中…</p>;
+  const runnable = steps.filter((step) => step.runtime_active !== false).slice(0, 5);
+  const inactive = steps.filter((step) => step.runtime_active === false);
+  return <div className="mas-flow-summary" aria-label="Agent 流程简述">
+    <div className="mas-flow-summary-chips">
+      {runnable.map((step) => <span className="mas-flow-chip" key={`${step.seq}-${step.method}`}
+        title={`${step.method}：${step.desc}`}>{step.method}</span>)}
+    </div>
+    {inactive.length > 0 && <p className="mas-flow-summary-note">
+      另有 {inactive.length} 步在当前项目运行时不触发（BTS 链）。完整差异见流程文档面板。
+    </p>}
+    <Button size="sm" variant="ghost" onClick={() => { window.dispatchEvent(new CustomEvent('mas:open-flow-doc')); }}>
+      <BookOpen size={13} />查看完整流程文档
+    </Button>
+  </div>;
+}
 
 const AGENT_KINDS: Array<{ value: Exclude<AgentKind, 'tool'>; label: string }> = [
   { value: 'planner', label: 'Planner' },
@@ -121,7 +248,19 @@ export const NodeInspector = memo(function NodeInspector({
   const members = selected.data.members || [];
   const toolChoices = (palette.tool_agents || []).filter((tool) => !members.includes(tool.id));
   const wraps = typeof selected.data.meta?.wraps === 'string' ? selected.data.meta.wraps : '';
-  const userWrap = selected.data.profile?.backend === 'user_space' || selected.data.backend === 'user_space' || wraps.startsWith('EPC-AW.');
+  const userWrap = selected.data.profile?.backend === 'user_space' || selected.data.backend === 'user_space'
+    || wraps.startsWith('EPC-AW') || wraps.startsWith('AgentFlow');
+  const userProjectId = String(
+    selected.data.profile?.user_project
+    || selected.data.meta?.user_project
+    || '',
+  );
+  const showExecutorTools = userWrap && isUserExecutorNode(selected.data, selected.id) && !!userProjectId;
+  // 简述卡：userWrap 节点按 agent 角色（planner/executor/diagnoser）+ flow-doc 项目展示流程 chip
+  const flowAgent = userWrap ? nodeFlowAgent(selected.data, selected.id) : null;
+  const flowProjectId = (FLOW_DOC_PROJECTS as readonly string[]).includes(userProjectId)
+    ? (userProjectId as FlowDocProject)
+    : flowProjectForNode(wraps);
   const tools = Array.from(new Set([...(palette.tools || []), ...(selected.data.tools || [])]));
   const agents = nodes.filter((node) => node.type === 'agent' && node.data.kind !== 'tool');
   const routerCandidates = selected.data.candidates || selected.data.members || [];
@@ -208,20 +347,27 @@ export const NodeInspector = memo(function NodeInspector({
           <p className="field-hint">Router 的下游固定是 tool-agent pool。点击 pool 增加或删除成员。当前成员：{(routerCandidates.length ? routerCandidates.join('、') : '无')}。</p>
           <JsonObjectField label="Router meta" value={selected.data.meta || {}} onChange={(meta) => onPatch({ meta })} />
         </div>
-      </> : userWrap ? <div className="mas-property-section">
-        <p className="field-hint">
-          用户封装节点{wraps ? ` · ${wraps}` : ''}。
-          代码在 <code>user_space/projects/{String(selected.data.profile?.user_project || '')}</code>，只能由悬浮辅助 AI 修改。
-          工具在 executor 窗口内部执行，不在画布上绑定。采样点仍可挂在此节点上。
-        </p>
-        <dl className="mas-settings-details">
-          <dt>显示名</dt><dd>{selected.data.label || selected.id}</dd>
-          <dt>角色</dt><dd>{selected.data.role || selected.data.kind || 'agent'}</dd>
-          <dt>窗口</dt><dd className="mono">{selected.id}</dd>
-          <dt>训练</dt><dd>{selected.data.trainable === false ? '已冻结' : '参与训练'}</dd>
-          <dt>模型</dt><dd>继承实验配置</dd>
-        </dl>
-      </div> : <>
+      </> : userWrap ? <>
+        <div className="mas-property-section">
+          <p className="field-hint">
+            用户封装节点{wraps ? ` · ${wraps}` : ''}。
+            代码在 <code>user_space/projects/{userProjectId}</code>，只能由悬浮辅助 AI 修改。
+            工具在 executor 窗口内部执行，不在画布上绑定。采样点仍可挂在此节点上。
+          </p>
+          <dl className="mas-settings-details">
+            <dt>显示名</dt><dd>{selected.data.label || selected.id}</dd>
+            <dt>角色</dt><dd>{selected.data.role || selected.data.kind || 'agent'}</dd>
+            <dt>窗口</dt><dd className="mono">{selected.id}</dd>
+            <dt>训练</dt><dd>{selected.data.trainable === false ? '已冻结' : '参与训练'}</dd>
+            <dt>模型</dt><dd>继承实验配置</dd>
+          </dl>
+        </div>
+        {flowAgent && flowProjectId && <div className="mas-property-section">
+          <h3>流程简述 · {flowAgent}</h3>
+          <AgentFlowSummary projectId={flowProjectId} agent={flowAgent} />
+        </div>}
+        {showExecutorTools && <ExecutorToolPool projectId={userProjectId} />}
+      </> : <>
         <div className="mas-property-section">
           <FormField label="Agent 类型">
             <Select value={selected.data.kind || 'blank'} onChange={(event) =>

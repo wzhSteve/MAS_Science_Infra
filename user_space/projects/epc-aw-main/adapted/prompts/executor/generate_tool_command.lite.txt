@@ -1,0 +1,27 @@
+Task:
+Generate a VALID Python command to execute the selected tool using ONLY provided information.
+
+ABSOLUTE CONSTRAINTS:
+- You MUST NOT invent, expand, or paraphrase keywords.
+- ALL keywords MUST come EXCLUSIVELY from Relevant Data.
+- ALL parameter names MUST be selected from Tool Metadata.
+- Do NOT include unused, optional, or imaginary parameters.
+
+CONTEXT
+Question: {Question}
+Sub-Goal: {Sub_Goal}
+Tool Name: {Tool_Name}
+Tool Metadata (parameters & types): {Tool_Metadata}
+Relevant Data (ONLY allowed keyword source): {Relevant_Data}
+
+STEPS
+1. Keyword Extraction (STRICT): extract ONLY concrete keywords or entities that EXPLICITLY appear in Relevant Data. Do NOT add new words, generalize, or optimize for search quality; preserve original surface forms.
+2. Keyword String Construction (MANDATORY): combine the keywords into EXACTLY ONE string — comma-separated, no extra spaces around commas, wrapped in double quotes. This is KEYWORD_STRING.
+3. Tool Parameter Validation: from Tool Metadata identify ALL required parameters and select the SINGLE most appropriate parameter to receive KEYWORD_STRING. Do NOT guess parameter names. If no suitable parameter exists, STOP generation.
+4. Command Construction: generate valid Python code that calls tool.execute() at least once, assigns the result to `execution`, passes KEYWORD_STRING exactly as constructed, uses ONLY parameters defined in Tool Metadata, and contains NO explanatory text.
+
+OUTPUT FORMAT (STRICT)
+
+Generated Command:
+```python
+execution = tool.execute(<validated_parameters>)

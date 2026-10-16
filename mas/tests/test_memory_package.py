@@ -246,7 +246,7 @@ class TestArchiveRoot(unittest.TestCase):
 
 
 class TestPlannerCtx(unittest.TestCase):
-    """Phase 6 planner_ctx (MAS_design §5): opt-in hub-memory injection.
+    """Phase 6 planner_ctx (MAS_design §6): opt-in hub-memory injection.
 
     ``latest`` -> first planner window user text carries the most recent
     shared-hub memory item (marked ``[Previous episode memory]``),

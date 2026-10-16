@@ -10,8 +10,8 @@ projects:
   mode: native_mas
   status: ready
   experiment_id: alpha
-- id: hive
-  title: HIVE PEV wrap
+- id: single-ppo
+  title: Single-PPO (APPO single-agent)
   mode: native_mas
   status: ready
   experiment_id: ''

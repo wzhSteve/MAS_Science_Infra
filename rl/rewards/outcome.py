@@ -146,6 +146,31 @@ def accuracy(
     return f1_score(text, golds)
 
 
+def binary_correct(
+    prediction: Optional[str],
+    gold: str,
+    *,
+    source: str,
+    aliases: Optional[Sequence[str]] = None,
+) -> float:
+    """0/1 correctness (Flow-GRPO outcome). gsm8k → numeric match; QA → normalized
+    exact match or the gold appearing as a whole phrase in the extracted answer."""
+    if prediction is None:
+        return 0.0
+    text = extract_answer_text(str(prediction)) or strip_thinking(str(prediction))
+    golds = [gold] + [str(a) for a in (aliases or []) if str(a)]
+    if source == "gsm8k":
+        return 1.0 if any(numeric_match(text, g) for g in golds) else 0.0
+    pred = normalize_qa(text)
+    if not pred:
+        return 0.0
+    for g in golds:
+        ng = normalize_qa(g)
+        if ng and (pred == ng or f" {ng} " in f" {pred} "):
+            return 1.0
+    return 0.0
+
+
 def compute_outcome_reward(
     prediction: Optional[str],
     gold: str,
@@ -175,6 +200,8 @@ def compute_outcome_reward(
     if reward_spec is not None:
         # --- component path (switchable / weightable) --------------------
         spec = reward_spec
+        if spec.outcome == "binary":
+            return binary_correct(prediction, gold, source=source, aliases=aliases)
         # format_penalty: gate BEFORE accuracy unless switched off.
         if format_ok:
             gained = accuracy(prediction, gold, source=source, aliases=aliases)

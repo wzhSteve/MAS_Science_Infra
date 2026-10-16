@@ -63,7 +63,7 @@ flowchart LR
 |------|------|------|--------|
 | Collect / 批量测试 | `science-infra collect` 或 `POST /api/mas/eval-runs` | live 且有 router 时走 [`centralized_runtime.py`](../mas/workflow/centralized_runtime.py)；**mock 不走 centralized** | 无 |
 | 单题调试 | `POST /api/mas/rollout-runs` | 同上，产物在 `artifacts/rollout-runs/` | 无 |
-| 训练 | `POST /api/rl/runs` → [`train_tir_agent.py`](../mas/train_tir_agent.py) | [`LitTirAgent.rollout`](../mas/lit_tir_agent.py) 只调 `run_episode`（单 hub TirAgent）+ YAML 声明的 BranchSite | 有（arpo/aepo/rae） |
+| 训练 | `POST /api/rl/runs` → [`train_tir_agent.py`](../mas/train_tir_agent.py) | 单 hub TirAgent，或 Mode B-window（AgentFlow 等 user_space 窗口，只训 planner）。BranchSite 两波采样；窗口图的 ARPO 用消息里的 `agentflow_state` 续写 | 有（`arpo` / `appo` / `aepo` / `rae`）。`grpo` / `flow_grpo` 只有独立条，图上不连分支边 |
 
 另有平行栈 [`legacy/structagent/train_mas_agent.py`](../legacy/structagent/train_mas_agent.py)（StructAgent JSON chat）。产品 UI 不走这条，命令行可单独启。
 
@@ -79,7 +79,9 @@ user_space：上传或 Assistant scaffold 把 HIVE / EPC-AW 收成 PEV 窗口，
 
 锚点：`after_agent_turn`（planner / blank / router）、`after_verifier`、`on_edge`。旧 YAML 里的 `after_tool` 不再作为设计期机会。
 
-训练算法 [`VALID_ALGOS`](../science_infra/control/experiments.py)：`grpo, arpo, aepo, igpo, gigpo, rae`。UI 采样模式 `appo` 保存时映射为 `arpo`（[`normalizeRlPayload.ts`](../webui/src/features/rl/model/normalizeRlPayload.ts)）。
+训练算法 [`VALID_ALGOS`](../science_infra/control/experiments.py)：`grpo, arpo, appo, aepo, igpo, gigpo, rae, flow_grpo`。`appo` 是独立预设（ARPO 分支 + future-KL 损失，见 RL_design §1.3），`flow_grpo` 是 AgentFlow 的 planner-only、0/1 结局奖励 GRPO（Mode B-window，见 MAS_design §8.5）。rl.yaml 显式写的 `algo` 优先于 workflow 的 `sampling.mode`。
+
+默认工具五件套（[`PALETTE_TOOL_IDS`](../mas/tools/tool_agents.py)）：`base_generator`、`python_coder`、`bing_search`、`wikipedia_search`、`web_fetch`。AgentFlow 窗口上的 ARPO 站点锚在真实 agent（planner / executor / verifier），不锚 hub。采样结束后 vLLM `sleep` 会先取消残留请求，最多等 90 秒，避免策略更新前永久卡住。`mas/workflow/mas_health.py` 在 `training/mas_fault=1` 时拒绝把该步当成有效更新。
 
 树落盘：Daemon 写出 `artifacts/mas/local_expansion/tree_*.json`（旧 `mas/.local_expansion/` 只读 fallback）。前端主路径是 `GET /api/rl/runs/{runId}/rollout-trees`。`GET /api/mas/rollout-trees` 仍扫描全局目录，给调试用。
 

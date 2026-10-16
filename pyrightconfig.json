@@ -1,0 +1,23 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "executionEnvironments": [
+    {
+      "root": "ref_Rep/APPO-main/ARPO/verl_arpo_entropy",
+      "extraPaths": ["."]
+    },
+    {
+      "root": "ref_Rep/APPO-main/APPO/verl_arpo_entropy",
+      "extraPaths": ["."]
+    },
+    {
+      "root": "rl/verl_backend",
+      "extraPaths": ["."]
+    },
+    {
+      "root": ".",
+      "extraPaths": ["rl/verl_backend"]
+    }
+  ]
+}

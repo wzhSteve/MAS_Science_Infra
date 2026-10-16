@@ -38,7 +38,7 @@ class LLMBinding(BaseModel):
 class MemorySpec(BaseModel):
     agent: str = "messages"
     system: str = "none"
-    # Phase 6 opt-in planner memory context (MAS_design §5): "latest" injects
+    # Phase 6 opt-in planner memory context (MAS_design §6): "latest" injects
     # the most recent shared-hub memory item into the first planner window of
     # each episode (with MEMORY_READ / MEMORY_WRITE events mirroring
     # runtime.py). Default "none" = byte-identical to pre-Phase-6 behaviour
@@ -114,7 +114,7 @@ class MASSpec(BaseModel):
     topology: str = "centralized"
     hub: HubSpec = Field(default_factory=HubSpec)
     tools: List[str] = Field(
-        default_factory=lambda: ["wikipedia_search", "google_search", "web_search", "python_coder", "think"]
+        default_factory=lambda: ["base_generator", "python_coder", "bing_search", "wikipedia_search", "web_fetch"]
     )
     llm: LLMBinding = Field(default_factory=LLMBinding)
     memory: MemorySpec = Field(default_factory=MemorySpec)
@@ -154,6 +154,8 @@ def load_spec(path: Optional[str] = None) -> MASSpec:
         raw = _parse_simple_yaml(text)
     if not isinstance(raw, dict):
         raise ValueError(f"spec must be a mapping: {p}")
+    # Canvas / template display name; not part of MASSpec (see templates.py).
+    raw.pop("label", None)
     # Normalize edge keys from / from_ / source
     edges = raw.get("edges")
     if isinstance(edges, list):
@@ -172,6 +174,7 @@ def load_spec(path: Optional[str] = None) -> MASSpec:
                 item["to"] = item.pop("target")
             norm.append(item)
         raw["edges"] = norm
+    raw.pop("label", None)  # canvas display name; templates.py already strips it
     _normalize_schema03(raw)
     return MASSpec.model_validate(raw)
 

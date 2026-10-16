@@ -56,8 +56,9 @@ class TestStudioPaletteAndSampling(unittest.TestCase):
 
         from science_infra.control.app import create_app
 
-        ensure_experiment("demo")
-        workflow = load_bundle("demo")["workflow"]
+        import yaml
+
+        workflow = yaml.safe_load((TIR / "tests" / "fixtures" / "centralized_router.yaml").read_text(encoding="utf-8"))
         sampling = dict(workflow.get("sampling") or {})
         sampling["mode"] = "arpo"
         workflow["sampling"] = sampling
@@ -73,7 +74,7 @@ class TestStudioPaletteAndSampling(unittest.TestCase):
         for item in opps:
             agent_id = str((item.get("anchor") or {}).get("agent_id") or item.get("node_id") or "")
             self.assertFalse(
-                agent_id in {"wikipedia_search", "google_search", "web_search", "python_coder", "think"},
+                agent_id in {"wikipedia_search", "bing_search", "web_search", "python_coder", "think"},
                 f"tool node should not be a sampling candidate: {agent_id}",
             )
 
@@ -143,7 +144,7 @@ class TestStudioRolloutAndEval(unittest.TestCase):
 
 class TestStudioAssistantJail(unittest.TestCase):
     def test_assistant_write_stays_in_user_space(self):
-        from science_infra.control.assistant import assistant_tools
+        from ai_assistant import assistant_tools
         from workflow.user_gateway.registry import create_project
         from workflow.user_gateway.tools import clear_user_tools
 

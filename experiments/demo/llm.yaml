@@ -1,3 +1,7 @@
-kind: api
-model: qwen3.5-27b
-base_url: https://www.dmxapi.cn/v1/
+kind: local
+model: Qwen3-4B
+base_url: http://127.0.0.1:8000/v1
+port: 8000
+model_path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+gpu_memory_utilization: 0.9
+api_key_set: false

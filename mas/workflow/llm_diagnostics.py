@@ -54,7 +54,7 @@ def summarize_execution_error(error: Exception, api_key: str | None = None) -> s
 def log_model_route(label: str, endpoint: str, model: str) -> None:
     proxies = getproxies()
     host = urlsplit(endpoint).hostname or ""
-    logger.warning(
+    logger.debug(
         "[TIR-DIAG route] %s pid=%s model=%s endpoint=%s env_proxies=%s "
         "no_proxy_set=%s env_bypass_hint=%s",
         label, os.getpid(), _summary(model, 160), safe_url(endpoint),

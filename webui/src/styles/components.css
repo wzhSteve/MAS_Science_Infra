@@ -91,8 +91,18 @@
   .dialog-overlay { position: fixed; inset: 0; z-index: 70; background: #20252b55; }
   .dialog-content { position: fixed; z-index: 71; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 28px; box-shadow: 0 12px 40px #20252b26; }
   .eval-dialog { width: min(640px, calc(100vw - 32px)); }
+  .tool-test-dialog { width: min(640px, calc(100vw - 32px)); }
   .eval-split, .eval-limit { display: grid; gap: 8px; margin: 12px 0; font-size: 13px; }
   .eval-split label { display: flex; gap: 8px; align-items: flex-start; }
+  .tool-test-field { display: grid; gap: 8px; margin: 12px 0; font-size: 13px; }
+  .tool-test-tier { border: 0; padding: 0; margin: 12px 0; }
+  .tool-test-tier legend { padding: 0; margin-bottom: 8px; }
+  .tool-test-tier-option { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; padding: 5px 12px; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .tool-test-tier-option.is-selected { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+  .tool-test-tier-option.is-disabled { color: var(--text-secondary); background: var(--surface-subtle); cursor: not-allowed; }
+  .tool-test-result { display: grid; gap: 8px; margin: 12px 0; }
+  .tool-test-result-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tool-test-output { margin: 0; padding: 12px; max-height: 260px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface-subtle); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
   .eval-results ul { display: grid; gap: 6px; margin: 8px 0; padding: 0; list-style: none; max-height: 240px; overflow: auto; }
   .eval-results button { display: grid; gap: 2px; width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 0; cursor: pointer; }
   .eval-results span { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

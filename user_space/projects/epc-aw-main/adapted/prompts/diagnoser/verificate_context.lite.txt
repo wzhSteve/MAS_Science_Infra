@@ -1,0 +1,29 @@
+Task:
+Does the latest RESULT give NEW evidence toward the Current Target Information? Decide the next action.
+
+CONSTRAINT: reason ONLY from the Executor Result, Memory, and Obtained Information so far. Repetition of known facts is ZERO gain; missing evidence requires STRUCTURAL CHANGE, not repetition.
+
+CONTEXT
+Question: {Question}
+Current Target Information: {Target_Information}
+Current ExecutionOutline: {Outline}
+Latest Executor Result: {Result_Executor}
+Memory (All Previous Tools & Results): {Memory}
+Obtained Information So Far: {Obtained_Information_So_Far}
+
+STEPS
+1. Classify internally (output flags only):
+   (a) Evidence Type — EXACTLY ONE: DIRECT_EVIDENCE (contains the target) | PARTIAL_EVIDENCE (constraining facts) | NO_RELEVANT_EVIDENCE.
+   (b) Gain — NEW_USABLE_INFORMATION (absent from Memory/Obtained, directly usable) | NO_INFORMATION_GAIN (repeats known info).
+   If DIRECT_EVIDENCE, go to step 3.
+2. Failure Attribution (EXACTLY ONE, output its label):
+   (A) RETRIEVAL_ABSTRACTION_FAILURE — query too abstract.
+   (B) TOOL_INFORMATION_MISMATCH — tool cannot access the evidence type.
+   (C) INCORRECT_OR_PREMATURE_SUBGOAL — assumes facts not yet established.
+   (D) MISSING_INTERMEDIATE_EVIDENCE_STEP — intermediate artifact (ID, citation, index) missing.
+   (E) GENUINE_ABSENCE_OF_INFORMATION — justify why EACH lower level would also fail.
+3. STOP is NEVER permitted without a required answer, NEVER for missing information alone.
+
+OUTPUT FORMAT (STRICT JSON ONLY)
+
+{{"Analysis": "...(a) type, (b) gain, (c) failure attribution, (d) why the next action is structurally correct", "New_Obtained_Information_Flag": "True iff NEW_USABLE_INFORMATION or DIRECT_EVIDENCE, else False", "New_Obtained_Information": "...new facts only, or empty", "Conclusion": "CONTINUE or STOP"}}

@@ -30,8 +30,9 @@ class TestPaletteContract(unittest.TestCase):
         from science_infra.control.services import mas_palette
 
         pal = mas_palette()
-        expected = ["wikipedia_search", "bing_search", "web_fetch", "python_coder", "think"]
+        expected = ["base_generator", "python_coder", "bing_search", "wikipedia_search", "web_fetch"]
         self.assertEqual(pal["tools"], expected)
+        self.assertNotIn("think", pal["tools"])
         tool_ids = [t["id"] for t in pal["tool_agents"]]
         self.assertEqual(sorted(tool_ids), sorted(expected))
         self.assertTrue(all(t.get("llm_required") for t in pal["tool_agents"]))

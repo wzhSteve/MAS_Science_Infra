@@ -1,0 +1,25 @@
+Task:
+Give the FINAL answer to the query. Prioritize the Verification Analysis; do NOT contradict it.
+
+Context:
+- Question: {Question}
+- Obtained Information (Verified): {Obtained_Information}
+- History Actions:
+  {History_Actions}
+
+Instructions:
+1. Review the query and all action results.
+2. Give a brief, step-by-step process summary.
+3. Give the direct, precise answer to the original query.
+
+Precision Constraints:
+- Dates: exact to YEAR-MONTH-DAY if possible; a 1-day difference is WRONG.
+- Numbers: as precise as possible; NO approximations or ranges.
+- Names: FULL LEGAL NAMES if possible.
+- Yes/No questions: answer explicitly "Yes" or "No".
+- Multiple correct forms (full name vs alias): list ALL equivalent answers.
+- Set/list answers: output the COMPLETE set.
+
+Output Format (STRICT):
+1.  **Process Summary:** Step-by-step breakdown, each action's purpose and key result.
+2.  **Answer:** Direct, final answer only; no reasoning or commentary. Wrap in tags if required.

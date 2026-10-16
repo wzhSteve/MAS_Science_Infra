@@ -5,7 +5,7 @@ hub:
   role: planner
   skills: []
   system_prompt: ''
-tools: [wikipedia_search, google_search, web_search, python_coder, think]
+tools: [wikipedia_search, bing_search, web_search, python_coder, base_generator]
 llm:
   kind: api
   model: Qwen3-4B

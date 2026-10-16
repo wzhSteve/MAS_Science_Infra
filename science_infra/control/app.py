@@ -33,7 +33,7 @@ from science_infra.control.dataset_resources import router as dataset_resource_r
 from science_infra.control.training_logs import router as training_logs_router, training_run
 from science_infra.control.rollout_trees import router as rollout_trees_router
 from science_infra.control.rollout_runs import router as rollout_runs_router
-from science_infra.control.assistant import router as assistant_router
+from ai_assistant import router as assistant_router
 from science_infra.control.model_resources import ResourceError
 from science_infra.control.readiness import model_readiness
 from science_infra.control.training import training_preflight
@@ -110,6 +110,13 @@ class LlmOptionsBody(BaseModel):
     port: Optional[int] = None
 
 
+class ToolAgentTestBody(BaseModel):
+    agent_id: str
+    tier: str = "lite"
+    args: Dict[str, Any] = Field(default_factory=dict)
+    fetch_top_n: Optional[int] = None
+
+
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -182,6 +189,28 @@ def create_app() -> FastAPI:
     def agl_health() -> Dict[str, Any]:
         return services.agl_health()
 
+    def _agl_offline_response(request: Request, origin_path: str) -> Optional[Response]:
+        """Serve built dashboard files and historical metrics when the store is down."""
+        if request.method not in ("GET", "HEAD"):
+            return None
+        if services.is_agl_metrics_api(origin_path):
+            from fastapi.responses import JSONResponse
+
+            experiment_id = request.query_params.get("experiment") or None
+            payload = services.local_training_metrics(experiment_id=experiment_id)
+            if request.method == "HEAD":
+                return Response(status_code=200, media_type="application/json")
+            return JSONResponse(payload)
+        static = services.read_agl_static(origin_path)
+        if static is None:
+            return None
+        body, media = static
+        if request.method == "HEAD":
+            body = b""
+        if media == "text/html":
+            body = services.rewrite_agl_payload(body, media)
+        return Response(content=body, media_type=media)
+
     async def _proxy_agl(request: Request, origin_path: str) -> Response:
         import httpx
 
@@ -203,7 +232,14 @@ def create_app() -> FastAPI:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 r = await client.request(request.method, dest, headers=headers, content=body or None)
         except Exception as e:
+            fallback = _agl_offline_response(request, origin_path)
+            if fallback is not None:
+                return fallback
             raise HTTPException(502, f"AGL dashboard unavailable ({origin}): {e}") from e
+        if r.status_code >= 400:
+            fallback = _agl_offline_response(request, origin_path)
+            if fallback is not None:
+                return fallback
         if (
             r.status_code == 404
             and request.method in ("GET", "HEAD")
@@ -282,6 +318,20 @@ def create_app() -> FastAPI:
     def palette() -> Dict[str, Any]:
         return services.mas_palette()
 
+    @app.post("/api/mas/tool-agents/test")
+    def tool_agent_test(body: ToolAgentTestBody) -> Dict[str, Any]:
+        try:
+            return services.run_tool_agent_test(
+                body.agent_id,
+                tier=body.tier,
+                args=body.args,
+                fetch_top_n=body.fetch_top_n,
+            )
+        except KeyError as e:
+            raise HTTPException(404, f"unknown tool-agent {body.agent_id}") from e
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
     @app.get("/api/mas/user-projects/{project_id}/runtime")
     def get_user_project_runtime(project_id: str) -> Dict[str, Any]:
         from science_infra.control.user_projects import get_project_runtime
@@ -303,6 +353,15 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "用户项目不存在") from error
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/mas/user-projects/{project_id}/flow-doc")
+    def get_user_project_flow_doc(project_id: str) -> Dict[str, Any]:
+        from science_infra.control.user_projects import get_project_flow_doc
+
+        try:
+            return get_project_flow_doc(project_id)
+        except FileNotFoundError as error:
+            raise HTTPException(404, "用户项目不存在或无流程文档") from error
 
     @app.post("/api/mas/sampling/preview")
     def preview_sampling(body: SectionBody) -> Dict[str, Any]:
@@ -356,6 +415,9 @@ def create_app() -> FastAPI:
                     if not isinstance(nodes, list) or not nodes or not any(
                         str(n.get("node_id") or "") for n in nodes if isinstance(n, dict)
                     ):
+                        continue
+                    tid = str(tree.get("tree_id") or "")
+                    if tid and tid in daemon_trees:
                         continue
                     expansion_trees.append({"file": f.name, "tree": tree})
         seen_ids = set(daemon_trees)

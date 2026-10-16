@@ -4,8 +4,8 @@ entry_agent: planner
 hub:
   role: planner
   skills: []
-  max_feedback_hops: 6
-  system_prompt: AgentFlow planner window. Output JSON next/args/sub_goal/done.
+  max_feedback_hops: 10
+  system_prompt: AgentFlow planner window (Planner.generate_next_step).
 tools: []
 agents:
 - id: planner
@@ -13,7 +13,7 @@ agents:
   role: planner
   label: agentflow_planner
   trainable: true
-  system_prompt: Wrap AgentFlow Planner.generate_next_step. next is the executor window.
+  system_prompt: Wrap AgentFlow Planner.analyze_query + generate_next_step. next is the executor window.
   tools: []
   profile:
     backend: user_space
@@ -27,7 +27,7 @@ agents:
   role: executor
   label: agentflow_executor
   trainable: false
-  system_prompt: Wrap AgentFlow Executor window (tool command + execute).
+  system_prompt: Wrap AgentFlow Executor (generate_tool_command + execute_tool_command) and Memory.add_action.
   profile:
     backend: user_space
     user_project: agentflow
@@ -41,14 +41,14 @@ agents:
   role: verifier
   label: agentflow_verifier
   trainable: false
-  system_prompt: Wrap AgentFlow Diagnoser.verificate_context.
+  system_prompt: Wrap AgentFlow Verifier.verificate_context; on STOP Planner.generate_direct_output.
   profile:
     backend: user_space
     user_project: agentflow
   meta:
     origin: user
     user_project: agentflow
-    wraps: AgentFlow.Diagnoser
+    wraps: AgentFlow.Verifier
 routers: []
 edges:
 - from: planner

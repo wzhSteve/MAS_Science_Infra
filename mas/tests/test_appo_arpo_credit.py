@@ -17,7 +17,7 @@ for path in (str(ROOT), str(MAS)):
         sys.path.insert(0, path)
 
 
-FIVE_TOOLS = ["wikipedia_search", "bing_search", "web_fetch", "python_coder", "think"]
+FIVE_TOOLS = ["wikipedia_search", "bing_search", "web_fetch", "python_coder", "base_generator"]
 
 
 def _credit_batch() -> DataProto:
@@ -147,7 +147,7 @@ class TestFiveToolEpisode(unittest.TestCase):
             "bing_search": {"query": "q"},
             "web_fetch": {"url": "https://example.com"},
             "python_coder": {"code": "result=42"},
-            "think": {"thought": "note"},
+            "base_generator": {"query": "note"},
         }
         spec = _spec("tir_five_tools")
         for tool_id, args in calls.items():

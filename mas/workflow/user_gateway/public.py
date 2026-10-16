@@ -78,6 +78,28 @@ def report_progress(text: str) -> None:
     note_window_progress(str(text or ""))
 
 
+def current_episode_id() -> str:
+    """Unique id of the running episode ("" outside the centralized runtime)."""
+    from .sandbox import current_episode_id as _current
+
+    return _current()
+
+
+def frozen_llm_scope(role: str) -> Any:
+    """Context manager for LLM calls that are environment, not policy.
+
+    Calls inside it sit under an ``agent__frozen__<role>`` span, so a trainer
+    whose ``agent_match`` names only the trainable window drops them.
+    """
+    from contextlib import nullcontext
+
+    try:
+        from rl_agent_span import maybe_agent_window_span
+    except Exception:  # noqa: BLE001
+        return nullcontext()
+    return maybe_agent_window_span(f"frozen__{role}")
+
+
 def load_upload(project_id: str, rel_path: str) -> str:
     """Read a file from the project's locked ``upload/`` tree."""
     from .paths import assert_in_user_space, project_dir
@@ -94,6 +116,8 @@ __all__ = [
     "DEFAULT_OUTPUT_SCHEMA",
     "UserWindowRunner",
     "as_payload",
+    "current_episode_id",
+    "frozen_llm_scope",
     "input_text",
     "load_upload",
     "make_message",

@@ -12,7 +12,7 @@ tools:
   - bing_search
   - web_fetch
   - python_coder
-  - think
+  - base_generator
 agents:
   - id: planner
     kind: planner
@@ -23,8 +23,8 @@ agents:
       - bing_search
       - web_fetch
       - python_coder
-      - think
-    system_prompt: "你是唯一的解题策略。逐步推理，需要事实时选择 wikipedia_search、bing_search 或 web_fetch，需要计算时选择 python_coder，需要整理已有信息时选择 think。每一步只输出 JSON：next, args, sub_goal, done。得到足够证据后把最终答案放进 done=true 的 JSON。"
+      - base_generator
+    system_prompt: "你是唯一的解题策略。逐步推理，需要事实时选择 wikipedia_search、bing_search 或 web_fetch，需要计算时选择 python_coder，需要整理已有信息时选择 base_generator。每一步只输出 JSON：next, args, sub_goal, done。得到足够证据后把最终答案放进 done=true 的 JSON。"
   - id: wikipedia_search
     kind: tool
     trainable: false
@@ -37,7 +37,7 @@ agents:
   - id: python_coder
     kind: tool
     trainable: false
-  - id: think
+  - id: base_generator
     kind: tool
     trainable: false
 routers:
@@ -47,7 +47,7 @@ routers:
       - bing_search
       - web_fetch
       - python_coder
-      - think
+      - base_generator
     strategy: from_plan
     output_contract: json
 edges:
@@ -67,7 +67,7 @@ edges:
     to: python_coder
     kind: tool_call
   - from: planner
-    to: think
+    to: base_generator
     kind: tool_call
 sampling:
   mode: grpo_n
@@ -110,9 +110,9 @@ sampling:
         type: entropy_delta
         params: {use_official_arpo_gate: true, branch_probability: 0.5, entropy_weight: 0.2}
       priority: 10
-    - id: site_think
+    - id: site_base_generator
       enabled: true
-      anchor: {kind: after_tool, agent_id: planner, tool_id: think}
+      anchor: {kind: after_tool, agent_id: planner, tool_id: base_generator}
       when: first
       gate:
         type: entropy_delta

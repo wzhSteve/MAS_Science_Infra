@@ -151,16 +151,16 @@ class TestGpuApi(unittest.TestCase):
         self.assertIn("ok", body)
         self.assertEqual(body.get("ui_path"), "/agl/metrics")
 
-        html = b'<script src="/assets/index.js"></script><fetch("/v1/agl/health")>'
+        html = b'<script src="/assets/index.js"></script><script src="/agl/assets/app.js"></script>'
         out = rewrite_agl_payload(html, "text/html").decode()
-        self.assertIn("/agl/assets/", out)
-        self.assertIn("/agl/v1/", out)
-        js = b'{path:"/",element:X},{path:"metrics"};to:"/metrics";url:"v1/agl/resources"'
+        self.assertIn('src="/agl/assets/index.js"', out)
+        self.assertEqual(out.count("/agl/assets/app.js"), 1)
+        js = b'{path:"/",element:X};to:"/metrics";url:"v1/agl/resources"'
         out_js = rewrite_agl_payload(js, "application/javascript").decode()
-        self.assertIn('{path:"/agl",element:', out_js)
-        self.assertIn('to:"/agl/metrics"', out_js)
-        self.assertIn("/agl/v1/agl/resources", out_js)
-        self.assertNotIn('{path:"/",element:', out_js)
+        self.assertIn('{path:"/",element:', out_js)
+        self.assertIn('to:"/metrics"', out_js)
+        self.assertIn("v1/agl/resources", out_js)
+        self.assertNotIn("/agl/v1/", out_js)
 
     def test_run_sh_help_train_flags(self):
         import subprocess

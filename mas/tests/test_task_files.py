@@ -17,7 +17,8 @@ from science_infra.control.rollout_runs import registered_dataset  # noqa: E402
 from science_infra.control.services import sample_parquet_tasks  # noqa: E402
 from science_infra.control.task_files import load_task_rows  # noqa: E402
 
-HIVE = REPO / "ref_Rep" / "HIVE" / "test"
+# EPC-AW (project upload/) ships the same HIVE-format benchmark JSON.
+HIVE = REPO / "user_space" / "projects" / "epc-aw-main" / "upload" / "EPC-AW-main" / "test"
 
 
 class TestHiveTaskRows(unittest.TestCase):

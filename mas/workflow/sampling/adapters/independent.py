@@ -11,7 +11,7 @@ from workflow.sampling.contracts import SamplingDecision, SamplingOpportunity, S
 
 class IndependentSamplingAdapter(SamplingStrategyAdapter):
     id = "independent"
-    aliases = ("grpo", "grpo_n", "igpo", "gigpo")
+    aliases = ("grpo", "grpo_n", "igpo", "gigpo", "flow_grpo")
 
     def opportunities(self, workflow: Any) -> Iterable[SamplingOpportunity]:
         return ()

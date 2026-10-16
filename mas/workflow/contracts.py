@@ -159,7 +159,9 @@ def barriers_to_default_sites(barriers: List[str]) -> List[BranchSite]:
 class SamplePolicy(BaseModel):
     """MAS-declared multi-sampling policy (executed by RL daemon / Collector)."""
 
-    mode: str = "grpo_n"  # grpo_n | arpo | aepo | appo | rae
+    # grpo_n | arpo | aepo | appo | rae. Only picks the training algo when rl.yaml
+    # has no explicit ``algo``; the explicit algo always wins (see apply_sample_policy).
+    mode: str = "grpo_n"
     group_n: int = 1
     beam_size: int = 1
     initial_rollouts: int = 1

@@ -60,6 +60,9 @@ else
     echo "+ uv pip install -e ./agent-lightning --no-deps"
     uv pip install -e "${ROOT}/agent-lightning" --python "${DST}/bin/python" --no-deps
   fi
+
+  echo "+ uv pip install -e ./rl/verl_backend --no-deps (MAS 自带 verl fork，含 future_kl/branching)"
+  uv pip install -e "${ROOT}/rl/verl_backend" --python "${DST}/bin/python" --no-deps
 fi
 
 echo

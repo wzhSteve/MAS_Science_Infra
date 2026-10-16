@@ -195,10 +195,6 @@ def scaffold_native_mas(project_id: str, *, title: Optional[str] = None) -> Dict
     from .detect import detect_mas_family
 
     family = detect_mas_family(project_id, title)
-    if family == "hive":
-        from .hive import scaffold_hive_pev
-
-        return scaffold_hive_pev(project_id, title=title)
     if family == "epc_aw":
         from .epc_aw import scaffold_epc_aw_pev
 
@@ -280,10 +276,6 @@ def scaffold_native_mas(project_id: str, *, title: Optional[str] = None) -> Dict
 
 
 def scaffold_project(project_id: str, mode: str, *, title: Optional[str] = None) -> Dict[str, Any]:
-    if mode in ("hive_pev", "hive"):
-        from .hive import scaffold_hive_pev
-
-        return scaffold_hive_pev(project_id, title=title)
     if mode in ("epc_aw", "epc_aw_pev"):
         from .epc_aw import scaffold_epc_aw_pev
 

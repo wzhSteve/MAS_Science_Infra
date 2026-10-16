@@ -13,6 +13,7 @@ TirAgentModeDaemon.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from copy import deepcopy
 from datetime import datetime
@@ -175,6 +176,37 @@ def trainable_ids_from_spec(spec_path: str) -> list[str]:
     return trainable_agents(load_spec(spec_path))
 
 
+def reward_outcome_for(config: Dict[str, Any], tir_algo: str) -> str:
+    """``algorithm.reward.outcome`` (written by the overlay) wins; flow_grpo falls back to 0/1."""
+    sec = (config.get("algorithm") or {}).get("reward") or {}
+    explicit = str(sec.get("outcome") or "").strip().lower() if isinstance(sec, dict) else ""
+    if explicit:
+        return explicit
+    return "binary" if tir_algo == "flow_grpo" else "hierarchical"
+
+
+def window_agent_match(spec_path: Optional[str], active_agents: list[str]) -> Optional[str]:
+    """Planner-only span filter for Mode B-window graphs; Tir hub keeps every span.
+
+    Window LLM calls nest under ``agent__<window id>``; frozen calls made inside a
+    trainable window nest under ``agent__frozen__<role>`` and so fall outside the
+    match. ``TIR_AGENT_MATCH=0`` disables the filter.
+    """
+    if not spec_path or not active_agents:
+        return None
+    if os.environ.get("TIR_AGENT_MATCH", "").strip().lower() in ("0", "false", "no", "off"):
+        return None
+    from workflow.runtime import agent_window_rollout
+    from workflow.spec import load_spec
+
+    try:
+        if not agent_window_rollout(load_spec(spec_path)):
+            return None
+    except Exception:
+        return None
+    return agent_span_pattern(active_agents)
+
+
 def train(
     config: Dict[str, Any],
     n_runners: int,
@@ -207,6 +239,9 @@ def train(
     tir_algo = str(config.get("algorithm", {}).get("tir_algo") or "grpo")
     tir_cfg = dict(config.get("algorithm", {}).get("tir") or {})
     os.environ["TIR_ALGO"] = tir_algo
+    reward_outcome = reward_outcome_for(config, tir_algo)
+    os.environ["TIR_REWARD_OUTCOME"] = reward_outcome
+    print(f"reward outcome={reward_outcome}")
     print(f"tir_algo={tir_algo} (Hydra adv_estimator stays grpo)")
 
     from agentlightning.utils.training_metrics_sink import ensure_metrics_env
@@ -236,15 +271,21 @@ def train(
             trainer_cls=TirAgentLightningTrainer,
             daemon_cls=daemon_cls,
         )
-    agent_match = agent_span_pattern(active_agents)
+    agent_match = window_agent_match(spec_path, active_agents)
+    # Skip LLM spans with empty prompt/response token_ids so VERL's
+    # remove-padding path never sees a 0-length sequence (Qwen3 reshape crash).
+    adapter_kwargs: Dict[str, Any] = {"_skip_empty_token_spans": True}
+    if agent_match:
+        adapter_kwargs["agent_match"] = agent_match
     trainer = agl.Trainer(
         n_runners=n_runners,
         algorithm=algorithm,
-        adapter={"agent_match": agent_match} if agent_match else None,
+        adapter=adapter_kwargs,
     )
     if active_agents:
         print(
-            f"Adapter agent match: {agent_match!r} (MAS agents {active_agents!r})"
+            f"Adapter: skip_empty_token_spans=True "
+            f"agent_match={agent_match!r} agents={active_agents!r}"
         )
 
     train_path = _resolve_parquet_path(config["data"]["train_files"], "train.parquet")
@@ -309,7 +350,59 @@ def _load_workflow_sampling(
     return raw.get("sampling")
 
 
+def _bypass_proxy_for_local_vllm() -> None:
+    """Rollout vLLM is on this machine. An ambient HTTP proxy must not intercept it."""
+    import socket
+
+    hosts = ["127.0.0.1", "localhost"]
+    try:
+        hosts.append(socket.gethostbyname(socket.gethostname()))
+    except OSError:
+        pass
+    for raw in (os.environ.get("HOSTNAME", ""),):
+        if raw:
+            hosts.append(raw)
+    try:
+        import subprocess
+
+        out = subprocess.check_output(["hostname", "-I"], text=True, timeout=2)
+        hosts.extend(part for part in out.split() if part)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    current = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    parts = [item.strip() for item in current.split(",") if item.strip()]
+    for host in hosts:
+        if host and host not in parts:
+            parts.append(host)
+    value = ",".join(parts)
+    os.environ["NO_PROXY"] = value
+    os.environ["no_proxy"] = value
+    print(f"NO_PROXY={value}")
+
+
+def _quiet_third_party_logs() -> None:
+    """Library warnings are not training failures. Keep errors."""
+    import warnings
+
+    warnings.filterwarnings("ignore")
+    os.environ["PYTHONWARNINGS"] = "ignore"
+    os.environ.setdefault("RAY_DISABLE_DOCKER_CPU_WARNING", "1")
+    os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+
+    class _DropWarnings(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return record.levelno != logging.WARNING
+
+    root = logging.getLogger()
+    root.addFilter(_DropWarnings())
+    for name in ("vllm", "ray", "agentops", "LiteLLM", "litellm", "httpx", "torch"):
+        logging.getLogger(name).addFilter(_DropWarnings())
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+
 def main() -> None:
+    _quiet_third_party_logs()
+    _bypass_proxy_for_local_vllm()
     parser = argparse.ArgumentParser(description="Train TIR agent with VERL + tir_algo overlay")
     parser.add_argument("config", choices=["fast", "a800", "a800_2gpu"])
     parser.add_argument("--algo", type=str, default="grpo", choices=list(VALID_ALGOS))
@@ -347,10 +440,12 @@ def main() -> None:
     rl_path = args.rl_yaml or args.config_yaml
     algo = args.algo
     sampling = None
+    explicit_algo = None
     if rl_path:
         rl_raw = load_rl_yaml(rl_path)
-        if rl_raw.get("algo"):
-            algo = str(rl_raw["algo"]).lower()
+        explicit_algo = rl_raw.get("algo") or (rl_raw.get("algorithm") or {}).get("tir_algo")
+        if explicit_algo:
+            algo = str(explicit_algo).lower()
         if algo not in VALID_ALGOS:
             raise SystemExit(f"Unknown algo in rl yaml: {algo}")
         sampling = _load_workflow_sampling(rl_path, args.workflow_yaml)
@@ -366,7 +461,10 @@ def main() -> None:
         # Re-apply algo overlay fields that may have been overwritten
         config = apply_train_signal(config, signal)
         if sampling is not None:
-            config = apply_sample_policy(config, sampling)
+            mode = str((sampling.get("mode") if isinstance(sampling, dict) else "") or "").lower()
+            config = apply_sample_policy(config, sampling, algo=algo if explicit_algo else None)
+            if explicit_algo and mode and {"grpo_n": "grpo"}.get(mode, mode) != algo:
+                print(f"rl.yaml algo={algo} overrides workflow.sampling.mode={mode} (sampling only sets group_n/sites)")
             algo = str(config.get("algorithm", {}).get("tir_algo") or algo).lower()
             signal = TrainSignal(
                 advantage=AdvantageSpec(name=algo, use_critic=False),
@@ -396,14 +494,45 @@ def main() -> None:
     else:
         n_runners = 4
 
-    vis = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
-    if vis:
-        n_vis = len([x for x in vis.split(",") if x.strip() != ""])
-        if n_vis > 0:
-            config["trainer"]["n_gpus_per_node"] = n_vis
-            print(f"CUDA_VISIBLE_DEVICES={vis} → trainer.n_gpus_per_node={n_vis}")
+    # a800_2gpu always trains on both cards. Ambient CUDA_VISIBLE_DEVICES=0
+    # (common from run.sh defaults / notebook kernels) must not shrink us to 1.
+    if args.config == "a800_2gpu":
+        vis_raw = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+        n_vis = len([x for x in vis_raw.split(",") if x.strip() != ""]) if vis_raw else 0
+        if n_vis < 2:
+            was = vis_raw if vis_raw else "<unset>"
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+            print(f"a800_2gpu: forcing CUDA_VISIBLE_DEVICES=0,1 (was {was!r})")
+        config["trainer"]["n_gpus_per_node"] = 2
+        print(
+            f"CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} "
+            f"→ trainer.n_gpus_per_node=2"
+        )
+    else:
+        vis = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+        if vis:
+            n_vis = len([x for x in vis.split(",") if x.strip() != ""])
+            if n_vis > 0:
+                config["trainer"]["n_gpus_per_node"] = n_vis
+                print(f"CUDA_VISIBLE_DEVICES={vis} → trainer.n_gpus_per_node={n_vis}")
 
     config = ensure_trainer_horizon(config)
+    # Branching guard: ARPO/APPO silently produce branch_local_count=0 when
+    # rollout.n collapses the per-root sampling_budget to <=1 (see
+    # rl/hooks/daemon.py _preinject_expand_fields). Fail fast instead of a
+    # silent no-branch run.
+    tir_algo = str(config.get("algorithm", {}).get("tir_algo") or algo).lower()
+    if tir_algo in ("arpo", "appo"):
+        group_n = int(config.get("actor_rollout_ref", {}).get("rollout", {}).get("n") or 1)
+        initial = int(config.get("algorithm", {}).get("tir", {}).get("initial_rollouts") or 1)
+        budget = max(1, (group_n + initial - 1) // max(1, initial))
+        if budget <= 1:
+            raise SystemExit(
+                f"{tir_algo} sampling_budget<=1 (rollout.n={group_n}, "
+                f"initial_rollouts={initial}); branch expansion would be disabled. "
+                "Set actor_rollout_ref.rollout.n >= 4 and initial_rollouts >= 2."
+            )
+        print(f"{tir_algo} budget check: rollout.n={group_n} initial_rollouts={initial} → sampling_budget={budget}")
     print(
         "trainer horizon: "
         f"total_epochs={config.get('trainer', {}).get('total_epochs')} "

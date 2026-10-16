@@ -27,7 +27,7 @@ from workflow.spec import AgentNodeSpec  # noqa: E402
 
 class TestFiveToolAgents(unittest.TestCase):
     def test_five_ids_registered(self):
-        for aid in ("wikipedia_search", "google_search", "web_search", "python_coder", "think"):
+        for aid in ("base_generator", "wikipedia_search", "bing_search", "web_search", "python_coder", "think"):
             self.assertIn(aid, TOOL_AGENTS)
             self.assertEqual(TOOL_AGENTS[aid].kind, "tool")
             self.assertEqual(TOOL_AGENTS[aid].id, aid)
@@ -43,7 +43,7 @@ class TestFiveToolAgents(unittest.TestCase):
         self.assertTrue(ta.llm_required)
 
     def test_google_and_web_have_distinct_schemas(self):
-        self.assertNotIn("url", TOOL_AGENT_ARGS_SCHEMAS["google_search"].get("required", []))
+        self.assertNotIn("url", TOOL_AGENT_ARGS_SCHEMAS["bing_search"].get("required", []))
         self.assertIn("url", TOOL_AGENT_ARGS_SCHEMAS["web_search"]["required"])
         ok, _ = validate_tool_args("web_search", {"query": "q"})
         self.assertFalse(ok)

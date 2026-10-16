@@ -18,6 +18,8 @@ const __dirname = path.dirname(__filename);
 const projectRoot = __dirname;
 const appRoot = path.resolve(projectRoot, 'public');
 export default defineConfig({
+  // Served by Science Control under /agl. Storybook/vitest keep site-root paths.
+  base: process.env.VITEST ? '/' : '/agl/',
   root: appRoot,
   plugins: [react(), tsconfigPaths()],
   publicDir: path.resolve(projectRoot, 'static'),

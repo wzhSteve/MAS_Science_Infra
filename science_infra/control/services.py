@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import shutil
 import socket
@@ -16,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+import httpx
 import psutil
 
 from science_infra.control.events import BUS
@@ -623,21 +625,14 @@ def agl_health() -> Dict[str, Any]:
         return out
 
 
-_AGL_SPA_TOS = (
-    "/rollouts",
-    "/metrics",
-    "/science",
-    "/resources",
-    "/traces",
-    "/runners",
-    "/settings",
-)
-
-
 def rewrite_agl_payload(body: bytes, content_type: str) -> bytes:
-    """Prefix /assets, /v1 and SPA routes so the dashboard works behind /agl."""
+    """Prefix bare ``/assets/`` so an older dashboard bundle still loads behind ``/agl``.
+
+    Route paths and ``/v1/agl`` are left alone. The dashboard is built with Vite
+    ``base: /agl/`` and a router basename, and it calls same-origin ``/v1/agl/*``.
+    """
     ct = (content_type or "").lower()
-    if not any(x in ct for x in ("text/html", "javascript", "text/css", "application/json")):
+    if not any(x in ct for x in ("text/html", "javascript", "text/css")):
         return body
     try:
         text = body.decode("utf-8")
@@ -646,18 +641,35 @@ def rewrite_agl_payload(body: bytes, content_type: str) -> bytes:
     text = text.replace("/agl/assets/", "\x00AGL_ASSETS\x00")
     text = text.replace("/assets/", "/agl/assets/")
     text = text.replace("\x00AGL_ASSETS\x00", "/agl/assets/")
-    text = text.replace("/agl/v1/", "\x00AGL_V1\x00")
-    text = text.replace("/v1/", "/agl/v1/")
-    text = text.replace("/agl/v1/", "\x00AGL_V1\x00")
-    text = text.replace("v1/agl/", "/agl/v1/agl/")
-    text = text.replace("\x00AGL_V1\x00", "/agl/v1/")
-    text = text.replace("http://127.0.0.1:4747", "/agl").replace("http://localhost:4747", "/agl")
-    text = text.replace('{path:"/",element:', '{path:"/agl",element:')
-    text = text.replace("{path:'/',element:", "{path:'/agl',element:")
-    for route in _AGL_SPA_TOS:
-        text = text.replace(f'to:"{route}"', f'to:"/agl{route}"')
-        text = text.replace(f"to:'{route}'", f"to:'/agl{route}'")
     return text.encode("utf-8")
+
+
+def is_agl_metrics_api(origin_path: str) -> bool:
+    """True for the training-metrics API, not the dashboard ``/metrics`` page."""
+    path = origin_path.strip("/")
+    return path == "v1/agl/metrics" or path.endswith("/v1/agl/metrics")
+
+
+def read_agl_static(origin_path: str) -> Optional[tuple]:
+    """Built dashboard bytes for a proxied ``/agl/<path>`` when the store is down."""
+    if not agl_dashboard_built():
+        return None
+    rel = origin_path.lstrip("/")
+    root = agl_dashboard_dir().resolve()
+    if rel.startswith("assets/"):
+        target = (root / rel).resolve()
+        if root != target and root not in target.parents:
+            return None
+        if not target.is_file():
+            return None
+        media = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        return target.read_bytes(), media
+    if rel in ("",) or is_agl_spa_path(origin_path):
+        index = root / "index.html"
+        if not index.is_file():
+            return None
+        return index.read_bytes(), "text/html"
+    return None
 
 
 def mas_palette() -> Dict[str, Any]:
@@ -670,7 +682,9 @@ def mas_palette() -> Dict[str, Any]:
     except Exception:
         skills = ["verifier"]
         roles = ["planner", "verifier"]
-    tools = ["wikipedia_search", "bing_search", "web_fetch", "python_coder", "think"]
+    from tools.tool_agents import PALETTE_TOOL_IDS
+
+    tools = list(PALETTE_TOOL_IDS)
     edge_kinds = ["message", "tool_call", "feedback", "route", "sample_barrier"]
     # agent-framework W2: unified agent palette (schema 0.3). The UI renders a
     # single "Agent" drag category from these kind templates; legacy roles/tools
@@ -696,6 +710,15 @@ def mas_palette() -> Dict[str, Any]:
         },
     ]
     tool_agents = []
+    # Bing and Wikipedia do not open result pages, so they have no pro tier.
+    _TIERED_TOOL_IDS: set = set()
+
+    def _default_fetch_n() -> int:
+        try:
+            return max(1, int(os.getenv("MAS_PRO_FETCH_N", "3") or 3))
+        except (TypeError, ValueError):
+            return 3
+
     try:
         from tools.tool_agents import PALETTE_TOOL_IDS, TOOL_AGENTS
 
@@ -704,17 +727,29 @@ def mas_palette() -> Dict[str, Any]:
             _ta = TOOL_AGENTS.get(tid)
             if _ta is None:
                 continue
+            _has_tiers = tid in _TIERED_TOOL_IDS
             tool_agents.append(
                 {
                     "id": _ta.id,
                     "backend": _ta.backend,
                     "llm_required": bool(_ta.llm_required),
                     "description": str(_ta.description or ""),
+                    "has_tiers": _has_tiers,
+                    "tiers": ["lite", "pro"] if _has_tiers else [],
+                    "default_fetch_n": _default_fetch_n() if _has_tiers else 0,
                 }
             )
     except Exception:
         tool_agents = [
-            {"id": t, "backend": "llm", "llm_required": True, "description": ""}
+            {
+                "id": t,
+                "backend": "llm",
+                "llm_required": True,
+                "description": "",
+                "has_tiers": t in _TIERED_TOOL_IDS,
+                "tiers": ["lite", "pro"] if t in _TIERED_TOOL_IDS else [],
+                "default_fetch_n": _default_fetch_n() if t in _TIERED_TOOL_IDS else 0,
+            }
             for t in tools
         ]
     user_projects = _mas_palette_user_projects()
@@ -757,6 +792,80 @@ def _mas_palette_user_projects() -> List[Dict[str, Any]]:
         return palette_user_projects()
     except Exception:
         return []
+
+
+def run_tool_agent_test(
+    agent_id: str,
+    *,
+    tier: Optional[str] = None,
+    args: Optional[Dict[str, Any]] = None,
+    fetch_top_n: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Invoke a tool-agent directly for the UI test dialog.
+
+    Resolves the tier, runs ``TOOL_AGENTS[agent_id].invoke`` and reports
+    ``resolved_tier`` parsed from the ``tier=`` marker in the output. Errors
+    are captured into ``ok=False`` instead of raising so the UI can render
+    them. Unknown agent ids raise ``KeyError`` for the caller to map to 404.
+    """
+    import time
+
+
+    _ensure_tir_on_path()
+    from tools.tool_agents import TOOL_AGENTS, validate_tool_args
+
+    agent = TOOL_AGENTS.get(agent_id)
+    if agent is None:
+        raise KeyError(agent_id)
+
+    requested = str(tier or "lite").strip().lower()
+    if requested not in ("lite", "pro"):
+        raise ValueError(f"tier must be 'lite' or 'pro', got {tier!r}")
+    payload: Dict[str, Any] = dict(args or {})
+    # Request-level schema check (design §6.1): invalid args are a client
+    # error (HTTP 400) raised before any invoke; runtime invoke failures stay
+    # ok=False / HTTP 200 on purpose.
+    args_ok, args_reason = validate_tool_args(agent_id, payload)
+    if not args_ok:
+        raise ValueError(f"invalid args for {agent_id}: {args_reason}")
+    if fetch_top_n is not None and requested == "pro":
+        # Clamp to the 1-10 contract window (design §5.2) BEFORE merging into
+        # the copied args dict; None / non-int values stay unmerged so the
+        # pro_tools default chain (args -> MAS_PRO_FETCH_N -> 3) applies.
+        try:
+            top_n = int(fetch_top_n)
+        except (TypeError, ValueError):
+            top_n = None
+        if top_n is not None:
+            payload["fetch_top_n"] = max(1, min(10, top_n))
+
+    start = time.perf_counter()
+    try:
+        output = str(agent.invoke(payload, tier=requested))
+        ok = True
+    except Exception as exc:  # noqa: BLE001
+        output = f"error: {exc}"
+        ok = False
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+
+    # Output contract: every agent prefixes its first line with "tier=<lite|pro>"
+    # (pro_tools additionally marks degradations with "pro_fallback").
+    resolved = requested
+    first_line = output.split("\n", 1)[0].strip()
+    if first_line.startswith("tier="):
+        marker = first_line[5:].split()[0].strip().lower() if first_line[5:].split() else ""
+        if marker in ("lite", "pro"):
+            resolved = marker
+    if not ok:
+        resolved = requested
+
+    return {
+        "requested_tier": requested,
+        "resolved_tier": resolved,
+        "output": output,
+        "elapsed_ms": elapsed_ms,
+        "ok": ok,
+    }
 
 
 def sample_parquet_tasks(
@@ -983,36 +1092,169 @@ def run_diagnose(exp_id: str, *, metrics_path: Optional[str] = None) -> Dict[str
     return {"path": str(out), "hypotheses": rows, "n": len(rows)}
 
 
-def _offline_step_rewards(limit: int = 200) -> List[Dict[str, Any]]:
-    """Step-level reward series from the last train run's metrics.jsonl.
+_LOSS_FIELDS = (
+    ("actor/pg_loss", "pg_loss"),
+    ("actor/entropy_loss", "entropy_loss"),
+    ("actor/kl_loss", "kl_loss"),
+)
 
-    Path resolution order:
-    1. ``AGL_METRICS_JSONL`` env (if the service itself was started with it).
-    2. Scan train run stdout logs (newest first) for an ``AGL_METRICS_JSONL=``
-       line — the training glue prints it at startup.
-    3. Glob ``mas/checkpoints/AgentLightning/*/metrics.jsonl`` (newest first).
+
+def _metric_float(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metric_step(rec: Dict[str, Any], fallback: int) -> int:
+    for key in ("training/global_step", "step"):
+        raw = rec.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return fallback
+
+
+def _bump_index(index: int, previous: Optional[int]) -> int:
+    # Restarted runs may repeat global_step (1, 2, 1). Keep the x-axis monotonic.
+    if previous is not None and index <= previous:
+        return previous + 1
+    return index
+
+
+def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Split jsonl / store rows into reward, validation reward, and loss series."""
+    step_rewards: List[Dict[str, Any]] = []
+    val_rewards: List[Dict[str, Any]] = []
+    step_losses: List[Dict[str, Any]] = []
+    last_reward: Optional[int] = None
+    last_val: Optional[int] = None
+    last_loss: Optional[int] = None
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        reward = _metric_float(rec.get("training/reward"))
+        if reward is None:
+            reward = _metric_float(rec.get("critic/rewards/mean"))
+        if reward is not None:
+            index = _bump_index(_metric_step(rec, len(step_rewards) + 1), last_reward)
+            last_reward = index
+            step_rewards.append({"index": index, "reward": reward})
+        val = _metric_float(rec.get("val/reward"))
+        if val is not None:
+            index = _bump_index(_metric_step(rec, len(val_rewards) + 1), last_val)
+            last_val = index
+            val_rewards.append({"index": index, "reward": val})
+        loss_point: Dict[str, Any] = {}
+        for src, dest in _LOSS_FIELDS:
+            num = _metric_float(rec.get(src))
+            if num is not None:
+                loss_point[dest] = num
+        if loss_point:
+            index = _bump_index(_metric_step(rec, len(step_losses) + 1), last_loss)
+            last_loss = index
+            loss_point["index"] = index
+            step_losses.append(loss_point)
+    return {
+        "step_rewards": step_rewards,
+        "val_rewards": val_rewards,
+        "step_losses": step_losses,
+    }
+
+
+def _empty_metrics() -> Dict[str, Any]:
+    return {
+        "step_rewards": [],
+        "val_rewards": [],
+        "step_losses": [],
+        "rows": [],
+        "path": None,
+        "score": 0,
+    }
+
+
+def _read_metrics_file(path: str, limit: int = 2000) -> Dict[str, Any]:
+    rows: List[Dict[str, Any]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                if "step" not in rec and rec.get("training/global_step") is not None:
+                    try:
+                        rec = {**rec, "step": int(rec["training/global_step"])}
+                    except (TypeError, ValueError):
+                        pass
+                rows.append(rec)
+    except OSError:
+        return _empty_metrics()
+    if limit > 0 and len(rows) > limit:
+        rows = rows[-limit:]
+    parsed = _parse_metrics_records(rows)
+    score = len(parsed["step_rewards"]) + len(parsed["val_rewards"]) + len(parsed["step_losses"])
+    return {**parsed, "rows": rows, "path": os.path.abspath(path), "score": score}
+
+
+def _metrics_candidate_paths(
+    experiment_id: Optional[str] = None,
+    experiment_name: Optional[str] = None,
+) -> tuple:
+    """Return ``(ordered existing paths, pinned paths)``.
+
+    Pinned paths belong to this experiment: stdout ``AGL_METRICS_JSONL=`` lines
+    and checkpoint dirs whose name contains ``experiment_name``.
     """
     import glob as _glob
     import re as _re
 
     candidates: List[str] = []
-    env_path = os.environ.get("AGL_METRICS_JSONL", "").strip()
-    if env_path:
-        candidates.append(env_path)
+    pinned: set = set()
     pat = _re.compile(r"^AGL_METRICS_JSONL=(\S+)", _re.MULTILINE)
-    for row in PROCS.list_runs():
-        if row.get("kind") != "train":
-            continue
+    runs = [r for r in PROCS.list_runs(experiment_id) if r.get("kind") == "train"]
+    runs = sorted(runs, key=lambda r: float(r.get("started_at") or 0.0), reverse=True)
+    for row in runs:
         lp = row.get("log_path") or ""
         try:
             text = Path(lp).read_text(encoding="utf-8", errors="replace")[:200_000]
         except OSError:
             continue
-        m = pat.search(text)
-        if m:
-            candidates.append(m.group(1))
+        match = pat.search(text)
+        if match:
+            path = os.path.abspath(match.group(1))
+            candidates.append(path)
+            pinned.add(path)
+
+    env_path = os.environ.get("AGL_METRICS_JSONL", "").strip()
+    if env_path:
+        candidates.append(os.path.abspath(env_path))
+
     repo = Path(__file__).resolve().parents[2]
-    candidates.extend(sorted(_glob.glob(str(repo / "mas" / "checkpoints" / "AgentLightning" / "*" / "metrics.jsonl")), key=lambda p: os.path.getmtime(p), reverse=True))
+    globbed = sorted(
+        _glob.glob(str(repo / "mas" / "checkpoints" / "AgentLightning" / "*" / "metrics.jsonl"))
+        + _glob.glob(str(repo / "checkpoints" / "AgentLightning" / "*" / "metrics.jsonl")),
+        key=lambda p: os.path.getmtime(p),
+        reverse=True,
+    )
+    if experiment_name:
+        preferred = [p for p in globbed if experiment_name in Path(p).parent.name]
+        for path in preferred:
+            pinned.add(os.path.abspath(path))
+        candidates.extend(preferred)
+    candidates.extend(globbed)
+
+    ordered: List[str] = []
     seen = set()
     for cand in candidates:
         cand = os.path.abspath(cand)
@@ -1020,42 +1262,65 @@ def _offline_step_rewards(limit: int = 200) -> List[Dict[str, Any]]:
             seen.add(cand)
             continue
         seen.add(cand)
-        out: List[Dict[str, Any]] = []
+        ordered.append(cand)
+    return ordered, pinned
+
+
+def _select_metrics_file(
+    *,
+    experiment_id: Optional[str] = None,
+    experiment_name: Optional[str] = None,
+    limit: int = 2000,
+) -> Dict[str, Any]:
+    """Pick the fullest metrics.jsonl for this experiment.
+
+    A named experiment never falls through to another experiment's file.
+    Among pinned files, the one with the most reward/loss points wins.
+    """
+    ordered, pinned = _metrics_candidate_paths(experiment_id, experiment_name)
+    if experiment_name or pinned:
+        pool = [path for path in ordered if path in pinned] if experiment_name else ordered
+        if experiment_name and not pool:
+            return _empty_metrics()
+    else:
+        pool = ordered
+    best: Optional[Dict[str, Any]] = None
+    best_key: Optional[tuple] = None
+    for path in pool:
+        parsed = _read_metrics_file(path, limit=limit)
         try:
-            with open(cand, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(rec, dict):
-                        continue
-                    val = rec.get("training/reward")
-                    if val is None:
-                        continue
-                    try:
-                        step_idx = int(rec.get("training/global_step") or len(out) + 1)
-                        # Metrics from restarted runs may repeat global_step
-                        # (e.g. 1,2,1 after a crash); keep the series monotonic
-                        # so the chart x-axis stays well-formed.
-                        if out and step_idx <= out[-1]["index"]:
-                            step_idx = out[-1]["index"] + 1
-                        out.append(
-                            {
-                                "index": step_idx,
-                                "reward": float(val),
-                            }
-                        )
-                    except (TypeError, ValueError):
-                        continue
+            mtime = os.path.getmtime(path)
         except OSError:
+            mtime = 0.0
+        key = (int(parsed["score"]), mtime)
+        if best is None or best_key is None or key > best_key:
+            best = parsed
+            best_key = key
+    return best or _empty_metrics()
+
+
+def _select_recent_metrics(*, limit: int = 2000) -> Dict[str, Any]:
+    """Fullest file among the few newest checkpoints.
+
+    A one-line file touched last must not hide the completed run beside it,
+    and an older unrelated file with more rows must not win on length alone.
+    """
+    ordered, _pinned = _metrics_candidate_paths()
+    parsed: List[Dict[str, Any]] = []
+    for path in ordered:
+        item = _read_metrics_file(path, limit=limit)
+        if int(item["score"]) <= 0:
             continue
-        if out:
-            return out[-limit:]
-    return []
+        try:
+            item["mtime"] = os.path.getmtime(path)
+        except OSError:
+            item["mtime"] = 0.0
+        parsed.append(item)
+    parsed.sort(key=lambda item: float(item["mtime"]), reverse=True)
+    recent = parsed[:5]
+    if not recent:
+        return _empty_metrics()
+    return max(recent, key=lambda item: (int(item["score"]), float(item["mtime"])))
 
 
 def fetch_agl_training_metrics() -> Dict[str, Any]:
@@ -1074,59 +1339,105 @@ def fetch_agl_training_metrics() -> Dict[str, Any]:
         return {}
 
 
-def _agl_reward_series(agl: Dict[str, Any]) -> Dict[str, Any]:
+def _agl_reward_series(
+    agl: Dict[str, Any],
+    *,
+    experiment_id: Optional[str] = None,
+    experiment_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Episode rewards from the store; step reward/loss from the fuller series.
+
+    A handful of live ``final_reward`` rows must not hide the jsonl curves.
+    When both the store and disk have step rows, the longer series is kept.
+    """
     train_rewards: List[Dict[str, Any]] = []
     for i, row in enumerate(agl.get("rollout_rewards") or []):
         if not isinstance(row, dict):
             continue
-        rew = row.get("final_reward")
+        rew = _metric_float(row.get("final_reward"))
         if rew is None:
             continue
-        try:
-            train_rewards.append(
-                {
-                    "index": len(train_rewards) + 1,
-                    "id": str(row.get("rollout_id") or i),
-                    "reward": float(rew),
-                    "status": row.get("status"),
-                    "mode": row.get("mode"),
-                }
-            )
-        except (TypeError, ValueError):
-            continue
-    step_rewards: List[Dict[str, Any]] = []
-    for i, step in enumerate(agl.get("training_steps") or []):
-        if not isinstance(step, dict):
-            continue
-        val = step.get("critic/rewards/mean")
-        if val is None:
-            val = step.get("training/reward")
-        if val is None:
-            continue
-        try:
-            step_rewards.append(
-                {
-                    "index": int(step.get("training/global_step") or i + 1),
-                    "reward": float(val),
-                }
-            )
-        except (TypeError, ValueError):
-            continue
-    offline = False
-    if not train_rewards and not step_rewards:
-        # AGL store is down (training stopped). Fall back to the metrics.jsonl
-        # the training process sinks to disk (path is printed in run stdout
-        # as AGL_METRICS_JSONL=...). Without this, the Monitor reward charts
-        # go blank whenever training is not actively running.
-        offline_series = _offline_step_rewards()
-        if offline_series:
-            step_rewards = offline_series
-            offline = True
+        train_rewards.append(
+            {
+                "index": len(train_rewards) + 1,
+                "id": str(row.get("rollout_id") or i),
+                "reward": rew,
+                "status": row.get("status"),
+                "mode": row.get("mode"),
+            }
+        )
+    live_steps = [step for step in (agl.get("training_steps") or []) if isinstance(step, dict)]
+    live = _parse_metrics_records(live_steps)
+    disk = _select_metrics_file(experiment_id=experiment_id, experiment_name=experiment_name)
+    live_score = len(live["step_rewards"]) + len(live["val_rewards"]) + len(live["step_losses"])
+    use_disk = int(disk["score"]) > 0 and int(disk["score"]) >= live_score
+    chosen = disk if use_disk else live
+    if use_disk and live_score > 0:
+        source = "merged"
+    elif use_disk:
+        source = "offline_metrics_jsonl"
+    elif agl:
+        source = "agl_store"
+    else:
+        source = None
     return {
         "train_rewards": train_rewards,
-        "step_rewards": step_rewards,
+        "step_rewards": chosen["step_rewards"],
+        "val_rewards": chosen["val_rewards"],
+        "step_losses": chosen["step_losses"],
+        "metrics_path": disk.get("path") if use_disk else None,
         "agl_online": bool(agl),
-        "agl_source": "offline_metrics_jsonl" if offline else ("agl_store" if agl else None),
+        "agl_source": source,
+    }
+
+
+def local_training_metrics(
+    *,
+    step_limit: int = 2000,
+    experiment_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dashboard ``GET /v1/agl/metrics`` payload from metrics.jsonl.
+
+    ``experiment_id`` pins the file the same way Monitor does. Without it, the
+    fullest of the most recently touched checkpoints is used.
+    """
+    if step_limit <= 0:
+        step_limit = 2000
+    disk = _empty_metrics()
+    if experiment_id:
+        try:
+            bundle = load_bundle(experiment_id)
+            trainer = (bundle.get("rl") or {}).get("trainer") or {}
+            experiment_name = str(trainer.get("experiment_name") or "") or None
+            disk = _select_metrics_file(
+                experiment_id=experiment_id,
+                experiment_name=experiment_name,
+                limit=step_limit,
+            )
+        except Exception:
+            disk = _empty_metrics()
+    if int(disk.get("score") or 0) <= 0:
+        disk = _select_recent_metrics(limit=step_limit)
+    ordered, _pinned = _metrics_candidate_paths(experiment_id if experiment_id else None)
+    rows = list(disk["rows"][-step_limit:]) if disk.get("rows") else []
+    # A restarted run can append step 1 again. The dashboard charts key on `step`,
+    # so keep that field monotonic or the last update plots on top of step 1.
+    last_step: Optional[int] = None
+    normalized: List[Dict[str, Any]] = []
+    for rec in rows:
+        step = _bump_index(_metric_step(rec, (last_step or 0) + 1), last_step)
+        last_step = step
+        if rec.get("step") != step:
+            rec = {**rec, "step": step}
+        normalized.append(rec)
+    return {
+        "rollout_rewards": [],
+        "training_steps": normalized,
+        "source": {
+            "metrics_jsonl": disk.get("path"),
+            "exists": bool(disk.get("path")),
+            "candidates": ordered[:10],
+        },
     }
 
 
@@ -1135,7 +1446,18 @@ def monitor_model(exp_id: str) -> Dict[str, Any]:
 
     cpath = collect_path(exp_id)
     dpath = diagnose_path(exp_id)
-    agl_series = _agl_reward_series(fetch_agl_training_metrics())
+    bundle = load_bundle(exp_id)
+    rl_cfg = bundle.get("rl") if isinstance(bundle, dict) else {}
+    experiment_name = None
+    try:
+        experiment_name = str((rl_cfg.get("trainer") or {}).get("experiment_name") or "") or None
+    except AttributeError:
+        experiment_name = None
+    agl_series = _agl_reward_series(
+        fetch_agl_training_metrics(),
+        experiment_id=exp_id,
+        experiment_name=experiment_name,
+    )
     if not cpath.is_file():
         model: Dict[str, Any] = {
             "empty": True,
@@ -1174,7 +1496,7 @@ def monitor_model(exp_id: str) -> Dict[str, Any]:
     model["agl_metrics_url"] = bundle["meta"].get("agl_metrics_url")
     model["experiment_id"] = exp_id
     model.update(agl_series)
-    if agl_series.get("train_rewards") or agl_series.get("step_rewards"):
+    if any(agl_series.get(key) for key in ("train_rewards", "step_rewards", "val_rewards", "step_losses")):
         model["empty"] = False
     return model
 
@@ -1190,7 +1512,8 @@ def _sync_workflow_sampling_into_rl(rl: Dict[str, Any], workflow: Dict[str, Any]
         sys.path.insert(0, root)
     from rl.hooks.overlay import apply_sample_policy
 
-    synced = apply_sample_policy(rl, sampling)
+    explicit = rl.get("algo") or (rl.get("algorithm") or {}).get("tir_algo")
+    synced = apply_sample_policy(rl, sampling, algo=str(explicit) if explicit else None)
     tir_algo = str((synced.get("algorithm") or {}).get("tir_algo") or synced.get("algo") or "grpo").lower()
     synced["algo"] = tir_algo
     n = (synced.get("actor_rollout_ref") or {}).get("rollout", {}).get("n")

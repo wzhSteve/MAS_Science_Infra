@@ -16,7 +16,10 @@ from .spec import AgentNodeSpec, MASSpec, RouterSpec
 # Legacy pure-tool ids that are no longer first-class agents (mapped to
 # python_coder in spec._normalize_schema03). Kept only to recognise tool nodes
 # for the multi_agent / hub_subset heuristics; not a trainable blacklist.
-KNOWN_TOOL_IDS = {"web_search", "wikipedia_search", "execute_python", "google_search", "python_coder", "think"}
+KNOWN_TOOL_IDS = {
+    "web_search", "web_fetch", "wikipedia_search", "execute_python",
+    "bing_search", "python_coder", "base_generator", "think",
+}
 KNOWN_ROLES = {
     "planner",
     "verifier",

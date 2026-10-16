@@ -101,6 +101,19 @@ def window_detail_lines(message: Any) -> List[str]:
             lines.append(f"  说明  {_short(reason)}")
     elif kind == "error":
         lines.append(f"  错误  {_short(payload.get('error'))}")
+    llm_calls = trace.get("llm_calls") if isinstance(trace.get("llm_calls"), dict) else {}
+    if isinstance(llm_calls.get("calls"), list) and llm_calls["calls"]:
+        first_prompt = llm_calls["calls"][0].get("prompt_head") if isinstance(llm_calls["calls"][0], dict) else ""
+    else:
+        first_prompt = ""
+    try:
+        count = int(llm_calls.get("count") or 0)
+    except (TypeError, ValueError):
+        count = 0
+    if count > 0:
+        lines.append(f"  模型  {count} 次调用")
+        if first_prompt:
+            lines.append(f"  提示词  {_short(first_prompt)}")
     if trace.get("llm_error"):
         lines.append(f"  模型  {_error_text(trace.get('llm_error'))}")
     return lines

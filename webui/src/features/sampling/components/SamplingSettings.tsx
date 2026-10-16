@@ -146,10 +146,10 @@ export const SamplingSettings = memo(function SamplingSettings({
     grpo_n: 'GRPO', grpo: 'GRPO', arpo: 'ARPO',
     aepo: 'AEPO', appo: 'APPO', rae: 'RAE',
   }[mode] || SAMPLING_MODE_OPTIONS.find((item) => item.value === mode)?.label || mode);
-  const gateLabel = (gate: string) => gate === 'arpo'
-    ? 'Official ARPO Gate'
+  const gateLabel = (gate: string) => gate === 'arpo' || (gate === 'entropy_delta' && officialArpoGate)
+    ? 'Token 熵'
     : gate === 'entropy_delta'
-      ? officialArpoGate ? 'Official ARPO Gate' : 'Legacy ΔH Threshold Gate'
+      ? 'Legacy ΔH Threshold Gate'
       : BRANCH_GATE_OPTIONS.find((item) => item.value === gate)?.label || gate;
   const patchGateParams = (patch: Record<string, unknown>) => {
     if (!selected || !selectedSite) return;
@@ -184,7 +184,7 @@ export const SamplingSettings = memo(function SamplingSettings({
     return <Section title="采样策略">
       {!compact && <p className="field-hint">此实验尚未启用 Workflow Sampling。编辑下列值保存到训练参数；启用后由采样策略统一决定。</p>}
       <div className="form-grid">
-        <FormField label="训练算法">
+        <FormField label="训练算法" hint={algorithm === 'flow_grpo' ? '轨迹奖励广播到 planner turn，不分支。' : undefined}>
           <Select value={algorithm} onChange={event => {
             const algo = event.target.value;
             training.patch(current => ({ ...current, algo, algorithm: { ...current.algorithm, tir_algo: algo } }));
@@ -192,7 +192,6 @@ export const SamplingSettings = memo(function SamplingSettings({
             {Array.from(new Set([algorithm, 'grpo', 'arpo', 'appo', 'aepo', 'igpo', 'gigpo', 'rae', 'flow_grpo'])).map(value =>
               <option key={value} value={value}>{value.toUpperCase()}</option>)}
           </Select>
-          {algorithm === 'flow_grpo' && <p className="field-hint">轨迹奖励广播到 planner turn，不分支。</p>}
         </FormField>
         <FormField label="每题候选数">
           <Input type="number" min={1} step={1} value={group ?? ''} onChange={event => {
