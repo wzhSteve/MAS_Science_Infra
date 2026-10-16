@@ -14,7 +14,7 @@
   Python · FastAPI · React · Agent-Lightning · VERL
 </p>
 
-Science Studio 是多智能体强化学习实验的控制面。界面和命令行读写同一份文件。训练运行时使用 [Agent-Lightning](https://github.com/qihoo360/agent-lightning) 与 [VERL](https://github.com/volcengine/verl)。本仓库把 `agent-lightning/` 当作黑盒，不改它的源码。
+Science Studio 是多智能体强化学习实验的控制面。界面和命令行读写同一份文件。
 
 ## 能做什么
 
