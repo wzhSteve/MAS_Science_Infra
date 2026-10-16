@@ -1,30 +1,72 @@
-# Science Studio
+<p align="center">
+  <img src="docs/images/science-studio-hero.png" alt="Science Studio：YAML 工作流、BranchSite 采样、RL 实验" width="960" />
+</p>
 
-Science Studio 是多智能体强化学习实验的控制面。一个实验是 `experiments/<id>/` 下的五份 YAML（experiment / llm / workflow / rl / harness）。界面和命令行读写同一份文件。画布编辑 Agent 工作流和分支采样站点，不生成 LangGraph 代码。
+<p align="center">
+  <a href="docs/UI_USER_MANUAL.md"><b>使用手册</b></a>
+  &nbsp;·&nbsp;
+  <a href="docs/TECHNICAL_FRAMEWORK.md"><b>技术框架</b></a>
+  &nbsp;·&nbsp;
+  <a href="#快速开始"><b>快速开始</b></a>
+</p>
 
-训练算法是 GRPO 族的 8 个预设：`grpo` / `flow_grpo` / `arpo` / `appo` / `aepo` / `igpo` / `gigpo` / `rae`。采样站点写在 planner、verifier、router 或边上，不按 tool 展开。Collect / 单题调试走编译后的多 Agent 图；训练有两条路径：单 hub TirAgent（可加 YAML 声明的分支采样），以及 user_space 窗口图（Mode B-window，只训 planner，例如 AgentFlow 的 Flow-GRPO）。
+<p align="center">
+  Python · FastAPI · React · Agent-Lightning · VERL
+</p>
 
-训练运行时使用 [Agent-Lightning](https://github.com/qihoo360/agent-lightning) 与 VERL。本仓库不修改 `agent-lightning/` 的源码。
+Science Studio 是多智能体强化学习实验的控制面。界面和命令行读写同一份文件。训练运行时使用 [Agent-Lightning](https://github.com/qihoo360/agent-lightning) 与 [VERL](https://github.com/volcengine/verl)。本仓库把 `agent-lightning/` 当作黑盒，不改它的源码。
 
-更新日期：2026-10-01。
+## 能做什么
+
+- **实验即五份 YAML。** 一个实验是 `experiments/<id>/` 下的 experiment、llm、workflow、rl、harness。界面和命令行读写同一份文件。
+- **画布产出 YAML。** 在画布上编辑 Agent 工作流和分支采样站点，不生成 LangGraph 代码。
+- **八个 GRPO 族预设。** `grpo` / `flow_grpo` / `arpo` / `appo` / `aepo` / `igpo` / `gigpo` / `rae`。
+- **采集和训练分开。** Collect 与单题调试走编译后的多 Agent 图。训练有单 hub TirAgent，以及 user_space 窗口图两条路径。
 
 ## 界面
 
-首页列出实验。模型与数据是独立页。进入实验后，工作区是 **MAS 画布 + 左侧训练配置 + 顶栏保存/测试/训练 + 底部控制台**。LLM、RL、Harness 是画布上的设置区，和 MAS 共用同一份未保存草稿。切设置不会丢掉草稿；换实验才会用磁盘上的 YAML 覆盖。保存动作是顶栏的「保存实验」。
+首页列出实验。模型与数据是独立页。进入实验后，工作区是 **MAS 画布 + 左侧训练配置 + 顶栏保存/测试/训练 + 底部控制台**。LLM、RL、Harness 是画布上的设置区，和 MAS 共用同一份未保存草稿。切换设置保留草稿；更换实验时，用磁盘上的 YAML 覆盖。保存动作是顶栏的「保存实验」。
 
 下面的截图来自本机 Science Studio（实验 `arpo_e2e`）。
 
-![实验首页](docs/images/home.png)
-
-![模型与数据](docs/images/resources.png)
-
-![MAS 工作区](docs/images/workspace.png)
-
-![单题调试](docs/images/debug.png)
-
-![采样结果](docs/images/samples.png)
-
-![Monitor](docs/images/monitor.png)
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/images/home.png" alt="实验首页" />
+      <br />
+      <sub>实验首页。打开已有实验，或新建一个。</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/images/resources.png" alt="模型与数据" />
+      <br />
+      <sub>模型与数据。绑定推理模型和训练集。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/images/workspace.png" alt="MAS 工作区" />
+      <br />
+      <sub>工作区。MAS 画布、左侧训练配置、顶栏操作、底部控制台。</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/images/debug.png" alt="单题调试" />
+      <br />
+      <sub>单题调试。沿编译后的图看一条轨迹。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/images/samples.png" alt="采样结果" />
+      <br />
+      <sub>采样结果。训练产生的分支树。</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/images/monitor.png" alt="Monitor" />
+      <br />
+      <sub>Monitor。实验级 reward。</sub>
+    </td>
+  </tr>
+</table>
 
 ```mermaid
 flowchart LR
@@ -41,11 +83,30 @@ flowchart LR
 
 完整点击说明：[docs/UI_USER_MANUAL.md](docs/UI_USER_MANUAL.md)。
 
-## 怎么跑通一次实验
+## 能力
+
+| 能力 | 说明 |
+|------|------|
+| 画布 | MAS 画布与左侧训练配置共用一份草稿。顶栏保存、测试、训练；底部是控制台。 |
+| 采样站点 | 写在 planner、verifier、router 或边上，不按 tool 展开。 |
+| 算法预设 | `grpo` / `flow_grpo` / `arpo` / `appo` / `aepo` / `igpo` / `gigpo` / `rae`。 |
+| 训练路径 | 单 hub TirAgent，可加 YAML 声明的分支采样。user_space 窗口图（Mode B-window）只训 planner，例如 AgentFlow 的 Flow-GRPO。 |
+| Monitor | 实验级 reward。当前 run 的 stdout 在「查看训练」。分支树在训练记录的「采样结果」。 |
+
+## 快速开始
+
+| 依赖 | 说明 |
+|------|------|
+| GPU + `nvidia-smi` | 只在训练时需要 |
+| Python 3.11 + [uv](https://docs.astral.sh/uv/) | 仓库 `.venv` |
+| Node.js + npm | 构建 `webui/dist` |
+| `data/{train,val}.parquet` | 仓库内是 5 行 GSM8K 小样本；全量在 `data/*.full.parquet.bak` |
+| `LLM/Qwen3-4B` | 本地推理与训练 `model_path` |
+| `.env`（可选） | `OPENAI_API_KEY` / `OPENAI_API_BASE` / `OPENAI_MODEL`；Assistant 另用 `AI_ASSISTANT_*` |
 
 ```bash
 bash scripts/setup_uv_env.sh   # 首次
-./run.sh ui --daemon           # http://127.0.0.1:8787/
+./run.sh ui --daemon           # http://127.0.0.1:8787/    API 文档 /docs
 ```
 
 1. 首页打开实验（例如 `arpo_e2e`），或新建一个。
@@ -77,48 +138,23 @@ nohup python3 scripts/ui_public_forwarder.py --listen 6006 --target 127.0.0.1:87
 
 ## 架构
 
-```mermaid
-flowchart TB
-  subgraph ctrl [Science Studio]
-    ui[画布 · 资源 · 采样结果 · Monitor] --> api[FastAPI REST/SSE]
-  end
-  subgraph mas [MAS]
-    spec[YAML 到 Compiler] --> traj[Trajectory]
-    spec --> sites[BranchSite]
-    spec --> gw[user_space 网关]
-  end
-  subgraph rl [RL hooks]
-    hooks[两波采样 · advantage · 树落盘]
-  end
-  subgraph agl [Agent-Lightning 与 VERL]
-    trainer[LitAgent / Trainer / LightningStore]
-  end
-  api -->|Collect_Eval 编译图| spec
-  api -->|Train 子进程| hooks
-  hooks --> trainer
-  traj --> hooks
-```
+<p align="center">
+  <img src="docs/images/science-studio-architecture.png" alt="同一份实验 YAML，采集与训练是两条运行时" width="960" />
+</p>
+
+同一份五层 YAML。Collect、单题调试和批量测试走编译后的多 Agent 图，不产生训练分支。训练由控制面拉起子进程：单 hub TirAgent，或 user_space 窗口图；本地钩子做采样、reward 和 advantage，再进入 Agent-Lightning 与 VERL。
 
 三条运行时和模块边界：[docs/TECHNICAL_FRAMEWORK.md](docs/TECHNICAL_FRAMEWORK.md)。
 
-## 快速开始
+## 采样
 
-| 依赖 | 说明 |
-|------|------|
-| GPU + `nvidia-smi` | 只在训练时需要 |
-| Python 3.11 + [uv](https://docs.astral.sh/uv/) | 仓库 `.venv` |
-| Node.js + npm | 构建 `webui/dist` |
-| `data/{train,val}.parquet` | 仓库内是 5 行 GSM8K 小样本；全量在 `data/*.full.parquet.bak` |
-| `LLM/Qwen3-4B` | 本地推理与训练 `model_path` |
-| `.env`（可选） | `OPENAI_API_KEY` / `OPENAI_API_BASE` / `OPENAI_MODEL`；Assistant 另用 `AI_ASSISTANT_*` |
+<p align="center">
+  <img src="docs/images/branchsite-sampling.png" alt="BranchSite 采样：两波 rollout 与断点续写" width="960" />
+</p>
 
-```bash
-bash scripts/setup_uv_env.sh
-./run.sh ui --daemon
-# http://127.0.0.1:8787/    API 文档 /docs
-```
+采样站点写在 planner、verifier、router 或边上，不按 tool 展开。第一波是独立 rollout。站点命中后，第二波由 daemon 从断点续写，并补满组。分支树落在该 run 的采样结果里。真分支出现在 `tir_algo` 为 arpo、aepo 或 rae 的训练中。
 
-### `run.sh`
+## 命令
 
 | 命令 | 作用 |
 |------|------|
@@ -132,7 +168,7 @@ bash scripts/setup_uv_env.sh
 | `./run.sh arpo-train-test --steps 3 --timeout 1800` | ARPO 端到端验收（需要 GPU） |
 | `./run.sh traj-test` | 前端 vitest |
 
-## 项目结构
+## 仓库结构
 
 ```text
 ├── science_infra/       # FastAPI、SSE、CLI、实验 bundle
@@ -162,15 +198,13 @@ bash scripts/setup_uv_env.sh
 ./run.sh arpo-train-test --steps 3 --timeout 1800
 ```
 
-域列表和用例数以 `--list` 为准，不要把历史数字当成当前全量。本轮（2026-10-01）`feature-test --all` 与 `smoke` 全绿。
+域列表和用例数以 `--list` 为准。ARPO 三步训练已跑通，细节见 [使用手册](docs/UI_USER_MANUAL.md)。
 
 | 验收 | 覆盖 |
 |------|------|
 | `./run.sh arpo-train-test --steps 3 --timeout 1800` | ARPO：启动、metrics、树落盘 |
 | `scripts/rollout_tree_verify.py` | 树契约、API、节点徽标 |
 | `./run.sh branch-ui-test` | 站点写回 workflow；`--train` 扫 expansion |
-
-GPU 本轮：实验 `arpo_e2e`，run `2d32648f58c0`，`tir_algo=arpo`，3 个 training step 完成（returncode 0）。三步的 `branch_local_count` 为 5 / 3 / 6；`GET /api/rl/runs/2d32648f58c0/rollout-trees` 返回 30 棵树、合计 8 条分支边。截图来自这次 Studio 会话。
 
 ## 文档
 
@@ -208,10 +242,39 @@ GPU 本轮：实验 `arpo_e2e`，run `2d32648f58c0`，`tir_algo=arpo`，3 个 tr
 
 ## 常见问题
 
-- 采集成功但没有分支树。Collect / 单题调试 / 批量测试不产生训练分支。真分支只在 `tir_algo` 为 arpo、aepo 或 rae 的训练里，到 Runs 的采样结果看。
-- 训练结束后 Monitor 曲线空了。实验级曲线会回落到 `mas/checkpoints/AgentLightning/<exp>/metrics.jsonl`。当前 run 的 stdout 在训练日志里，换 run 会清空上一份。
-- 采样结果一直转圈。先换外部浏览器，再用 `curl http://127.0.0.1:8787/api/rl/runs/<runId>/rollout-trees?experiment_id=<id>` 看 API 是否有树。
-- IDE 内嵌页请求卡住。外部浏览器打开；SSE 会占满 webview 的连接池。
-- Assistant 改不了实验 YAML。它只写 `user_space/`；应用到画布后仍须点「保存实验」。
+<details>
+<summary>采集成功但没有分支树</summary>
+
+Collect / 单题调试 / 批量测试不产生训练分支。真分支只在 `tir_algo` 为 arpo、aepo 或 rae 的训练里，到 Runs 的采样结果看。
+
+</details>
+
+<details>
+<summary>训练结束后 Monitor 曲线空了</summary>
+
+实验级曲线会回落到 `mas/checkpoints/AgentLightning/<exp>/metrics.jsonl`。当前 run 的 stdout 在训练日志里，换 run 会清空上一份。
+
+</details>
+
+<details>
+<summary>采样结果一直转圈</summary>
+
+先换外部浏览器，再用 `curl http://127.0.0.1:8787/api/rl/runs/<runId>/rollout-trees?experiment_id=<id>` 看 API 是否有树。
+
+</details>
+
+<details>
+<summary>IDE 内嵌页请求卡住</summary>
+
+外部浏览器打开。SSE 会占满 webview 的连接池。
+
+</details>
+
+<details>
+<summary>Assistant 改不了实验 YAML</summary>
+
+它只写 `user_space/`。应用到画布后仍须点「保存实验」。
+
+</details>
 
 更多见 [docs/UI_USER_MANUAL.md](docs/UI_USER_MANUAL.md)。
