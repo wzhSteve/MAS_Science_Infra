@@ -26,12 +26,12 @@ agents:
   tools: []
   profile:
     backend: user_space
-    user_project: agentflow
+    user_project: simple_pev
   meta:
     origin: user
-    user_project: agentflow
+    user_project: simple_pev
     wraps: AgentFlow.Planner
-- id: u_agentflow__executor
+- id: u_simple_pev__executor
   kind: blank
   role: executor
   label: agentflow_executor
@@ -39,11 +39,11 @@ agents:
   system_prompt: Wrap AgentFlow Executor window (tool command + execute).
   profile:
     backend: user_space
-    user_project: agentflow
+    user_project: simple_pev
     llm_required: false
   meta:
     origin: user
-    user_project: agentflow
+    user_project: simple_pev
     wraps: AgentFlow.Executor
 - id: verifier
   kind: verifier
@@ -53,16 +53,16 @@ agents:
   system_prompt: Wrap AgentFlow Diagnoser.verificate_context.
   profile:
     backend: user_space
-    user_project: agentflow
+    user_project: simple_pev
   meta:
     origin: user
-    user_project: agentflow
+    user_project: simple_pev
     wraps: AgentFlow.Diagnoser
 edges:
 - from: planner
-  to: u_agentflow__executor
+  to: u_simple_pev__executor
   kind: message
-- from: u_agentflow__executor
+- from: u_simple_pev__executor
   to: verifier
   kind: message
 - from: verifier

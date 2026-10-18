@@ -8,8 +8,11 @@ Contract being locked (task3 report anchors):
           zeroes shared-prefix advantages (and returns) of child/probe rows.
 - arpo:  identical to stock GRPO on a mixed parent+child batch. arpo's difference lives in
           branch sampling, NOT in the credit formula (advantage.py:74-75 passthrough).
-- appo:  apply_appo_credit (advantage.py:118-179): branch rows zeroed ENTIRELY (adv+returns),
-          parents gain discount*mean(child outcomes) added inside response_mask.
+- appo:  apply_appo_credit recomputes VERL GRPO separately for init vs branch
+          (core_algos.compute_grpo_outcome_advantage). Branch rows are then
+          zeroed. Their group scalar is averaged onto the parent tokens at and
+          before resume_boundary. discount is γ inside reward-scale M and is
+          a no-op unless appo_branch_score is present.
 - flow_grpo: overlay (overlay.py:133-153) forces use_kl_loss=True + kl_loss_coef=0.001 unless
           the rl-yaml explicitly set use_kl_loss=False; episode outcome broadcast happens
           daemon-side (contrib env_verl daemon.py:754-844: final_reward copied to every turn row).
@@ -266,13 +269,11 @@ class TestArpoIsStockGrpoOnMixedBatch(unittest.TestCase):
 
 
 class TestAppoCreditNumerics(unittest.TestCase):
-    """Scenario (hand-checkable): parent r0 + 2 branches (r1, r2) + 1 lone parent r3,
-    same data_id. outcomes r0=1.0, r1=2.0, r2=4.0, r3=0.5. Base advantages all 1.
+    """parent r0 + two branches + lone parent r3, outcomes 1, 2, 4, 0.5.
 
-    apply_appo_credit(discount=0.9):
-      branch rows 1,2 → advantages=0 (WHOLE row), returns=0
-      parent r0 → 1 + 0.9*mean(2,4) = 1 + 2.7 = 3.7 (inside mask)
-      parent r3 → no children → unchanged
+    Init group {1, 0.5} is normalized on its own. Branch group {2, 4} is
+    normalized on its own; the two z-scores cancel, so the mapped prefix
+    credit is 0 and each parent row equals its init-group scalar.
     """
 
     BATCH_OUTCOMES = [1.0, 2.0, 4.0, 0.5]
@@ -287,37 +288,46 @@ class TestAppoCreditNumerics(unittest.TestCase):
             **kw,
         )
 
-    def test_branch_rows_fully_zeroed_and_parent_gets_discounted_mean(self):
+    def _init_scalars(self):
+        _, _, scalars = _grpo_row_scale([1.0, 0.5])
+        return scalars
+
+    def test_branch_rows_fully_zeroed_and_groups_are_separate(self):
         from rl.hooks.advantage import apply_appo_credit
 
         out = apply_appo_credit(self._mixed_batch(), discount=0.9)
+        init = self._init_scalars()
         for branch_row in (1, 2):
             self.assertTrue(torch.equal(out.batch["advantages"][branch_row], torch.zeros(W)), branch_row)
             self.assertTrue(torch.equal(out.batch["returns"][branch_row], torch.zeros(W)), branch_row)
-        self.assertTrue(torch.equal(out.batch["advantages"][0], torch.full((W,), 3.7)))
-        self.assertTrue(torch.equal(out.batch["returns"][0], torch.ones(W)), "parent returns kept")
-        self.assertTrue(torch.equal(out.batch["advantages"][3], torch.ones(W)))
-        self.assertTrue(torch.equal(out.batch["returns"][3], torch.ones(W)))
+        torch.testing.assert_close(out.batch["advantages"][0], torch.full((W,), init[0]), rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(out.batch["returns"][0], out.batch["advantages"][0], rtol=0, atol=0)
+        torch.testing.assert_close(out.batch["advantages"][3], torch.full((W,), init[1]), rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(out.batch["returns"][3], out.batch["advantages"][3], rtol=0, atol=0)
 
     def test_mask_limits_the_bonus_to_valid_tokens(self):
-        """Parent valid tokens = first 3; bonus lands there, masked tail stays base 1."""
+        """Masked tail stays 0. The init scalar is written only where the mask is 1."""
         from rl.hooks.advantage import apply_appo_credit
 
         mask = torch.ones(4, W)
         mask[0, 3] = 0.0
         batch = self._mixed_batch(mask=mask)
         out = apply_appo_credit(batch, discount=0.9)
-        torch.testing.assert_close(out.batch["advantages"][0], torch.tensor([3.7, 3.7, 3.7, 1.0]), rtol=0, atol=0)
+        scalar = self._init_scalars()[0]
+        torch.testing.assert_close(
+            out.batch["advantages"][0], torch.tensor([scalar, scalar, scalar, 0.0]), rtol=1e-5, atol=1e-6,
+        )
 
-    def test_discount_parameter_flows_through(self):
-        """discount=0.5 → bonus 0.5*mean(2,4)=1.5 → parent 2.5. Locks the param chain."""
+    def test_discount_is_idle_without_branch_scores(self):
+        """γ only enters reward-scale M. Absent scores, 0.5 and 0.9 match."""
         from rl.hooks.advantage import apply_appo_credit
 
-        out = apply_appo_credit(self._mixed_batch(), discount=0.5)
-        self.assertTrue(torch.equal(out.batch["advantages"][0], torch.full((W,), 2.5)))
+        left = apply_appo_credit(self._mixed_batch(), discount=0.5)
+        right = apply_appo_credit(self._mixed_batch(), discount=0.9)
+        torch.testing.assert_close(left.batch["advantages"], right.batch["advantages"], rtol=0, atol=0)
 
     def test_child_role_also_treated_as_branch(self):
-        """Roles child/probe/branch all zeroed (advantage.py:148-150)."""
+        """Roles child/probe/branch are the branch group and are zeroed after mapping."""
         from rl.hooks.advantage import apply_appo_credit
 
         batch = _role_batch(
@@ -331,15 +341,17 @@ class TestAppoCreditNumerics(unittest.TestCase):
         out = apply_appo_credit(batch, discount=0.9)
         self.assertTrue(torch.equal(out.batch["advantages"][1], torch.zeros(W)))
         self.assertTrue(torch.equal(out.batch["advantages"][2], torch.zeros(W)))
-        self.assertTrue(torch.equal(out.batch["advantages"][0], torch.full((W,), 1 + 0.9 * 4.0)))
+        torch.testing.assert_close(
+            out.batch["advantages"][0], torch.full((W,), 1.0 / (1 + EPS)), rtol=1e-5, atol=1e-6,
+        )
 
     def test_full_appo_path_carries_discount_from_config(self):
-        """apply_tir_advantages(algo=appo) reads tir.reward_scale_discount → apply_appo_credit
-        (advantage.py:76-80). Same scenario directly through the dispatch."""
+        """apply_tir_advantages(algo=appo) still routes into apply_appo_credit."""
         out = _apply(self._mixed_batch(), "appo", tir={"reward_scale_discount": 0.9})
+        init = self._init_scalars()
         self.assertTrue(torch.equal(out.batch["advantages"][1], torch.zeros(W)))
         self.assertTrue(torch.equal(out.batch["advantages"][2], torch.zeros(W)))
-        self.assertTrue(torch.equal(out.batch["advantages"][0], torch.full((W,), 3.7)))
+        torch.testing.assert_close(out.batch["advantages"][0], torch.full((W,), init[0]), rtol=1e-5, atol=1e-6)
 
     def test_overlay_default_discount_chain(self):
         """Config chain: overlay('appo') defaults reward_scale_discount=0.9 (overlay.py:127-131);

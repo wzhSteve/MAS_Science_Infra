@@ -87,6 +87,10 @@ export const RolloutResults = memo(function RolloutResults({ rollout, workflowCh
     [historical, context, workflow, workflowChanged]);
   const elapsed = summary?.finished_at
     ? (Date.parse(summary.finished_at) - Date.parse(summary.started_at)) / 1000 : null;
+  useEffect(() => {
+    if (!active || !summary?.trajectory_id || data || traceLoading || traceError) return;
+    void readTrajectory();
+  }, [active, summary?.trajectory_id, data, traceLoading, traceError, readTrajectory]);
   return <div className="mas-run-results mas-rollout-results">
     <RolloutHistory history={history} currentRunId={rollout.attempt?.summary?.run_id} openRequest={historyRequest} active={active} />
     {history.loading && <p className="mas-console-empty" role="status">正在读取历史运行…</p>}
@@ -111,38 +115,14 @@ export const RolloutResults = memo(function RolloutResults({ rollout, workflowCh
       </div>
     </header>
     <ol className="mas-result-timeline">
-      <li className="mas-result-step">
+      {summary && <li className="mas-result-step">
         <span className="mas-result-step-marker" aria-hidden="true">01</span>
         <section className="mas-result-card">
           <header className="mas-result-card-heading">
-            <h3>本次提交的任务</h3>
-            <Button size="sm" variant="ghost" onClick={() => { rollout.setQuestion(run.question); onUseQuestion(); }}>使用此问题</Button>
-          </header>
-          <div className="mas-result-card-body"><p className="mas-result-text">{run.question}</p></div>
-        </section>
-      </li>
-      <li className="mas-result-step">
-        <span className="mas-result-step-marker" aria-hidden="true">02</span>
-        <section className="mas-result-card mas-result-card--answer">
-          <header className="mas-result-card-heading">
-            <h3>{summary?.final_answer && summary.status !== 'succeeded' ? '终止前保留的答案' : '最终答案'}</h3>
-          </header>
-          <div className="mas-result-card-body">
-            {run.error && <RunErrorDetails message={run.error} unknown={run.status === 'unknown'} />}
-            {summary?.error && <RunErrorDetails message={summary.error.message} stage={summary.error.stage} code={summary.error.code} />}
-            {summary?.final_answer ? <p className="mas-result-text">{summary.final_answer}</p>
-              : <p className="mas-result-placeholder" role="status">{!historical && rollout.running ? '正在执行，等待答案…' : '暂无最终答案'}</p>}
-          </div>
-        </section>
-      </li>
-      {summary && <li className="mas-result-step">
-        <span className="mas-result-step-marker" aria-hidden="true">03</span>
-        <section className="mas-result-card">
-          <header className="mas-result-card-heading">
-            <h3>Agent 执行过程</h3>
+            <h3>执行轨迹</h3>
             <Button size="sm" onClick={() => void readTrajectory()} loading={traceLoading}
               disabled={traceLoading || !summary.trajectory_id}>
-              <FileJson size={14} aria-hidden="true" />{traceError ? '重试读取过程' : data ? '刷新 Agent 过程' : '查看 Agent 输入输出'}
+              <FileJson size={14} aria-hidden="true" />{traceError ? '重试读取过程' : '刷新'}
             </Button>
           </header>
           <div className="mas-result-card-body">
@@ -150,11 +130,27 @@ export const RolloutResults = memo(function RolloutResults({ rollout, workflowCh
             {data ? <Suspense fallback={<p className="mas-result-placeholder" role="status">正在加载轨迹视图…</p>}>
               <TrajectoryDetails key={data.run.run_id} data={data} experimentId={rollout.experimentId} onLocate={onLocate} active={active} />
             </Suspense> : !traceError && <p className="mas-result-placeholder" role="status">
-              {traceLoading ? '正在读取执行过程…' : summary.trajectory_id ? '点击「查看 Agent 输入输出」展开执行过程。' : '未生成过程记录'}
+              {traceLoading ? '正在读取执行过程…' : '未生成过程记录'}
             </p>}
           </div>
         </section>
       </li>}
+      <li className="mas-result-step">
+        <span className="mas-result-step-marker" aria-hidden="true">02</span>
+        <section className="mas-result-card mas-result-card--answer">
+          <header className="mas-result-card-heading">
+            <h3>{summary?.final_answer && summary.status !== 'succeeded' ? '终止前保留的答案' : '最终答案'}</h3>
+            <Button size="sm" variant="ghost" onClick={() => { rollout.setQuestion(run.question); onUseQuestion(); }}>使用此问题</Button>
+          </header>
+          <div className="mas-result-card-body">
+            {run.error && <RunErrorDetails message={run.error} unknown={run.status === 'unknown'} />}
+            {summary?.error && <RunErrorDetails message={summary.error.message} stage={summary.error.stage} code={summary.error.code} />}
+            <p className="mas-result-text">{run.question}</p>
+            {summary?.final_answer ? <p className="mas-result-text">{summary.final_answer}</p>
+              : <p className="mas-result-placeholder" role="status">{!historical && rollout.running ? '正在执行，等待答案…' : '暂无最终答案'}</p>}
+          </div>
+        </section>
+      </li>
     </ol>
     {summary && <div className="mas-result-secondary">
       <details className="mas-result-record"><summary>运行身份、模型与记录状态</summary>

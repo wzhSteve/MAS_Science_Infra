@@ -38,6 +38,7 @@ agent-lightning/docs
 
 # Exclude datasets, runtime screenshots, and model weights
 /data/*.parquet
+/data/*.jsonl
 /agent-lightning/examples/ARPO/ARPO/rl_datasets/
 /agent-lightning/examples/ARPO/LLaMA-Factory/arpo_train_sft/dataset/
 /agent-lightning/examples/CD_TAA/solver_cache/

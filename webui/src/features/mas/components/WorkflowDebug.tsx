@@ -55,7 +55,7 @@ const DebugSession = memo(function DebugSession({ experimentId, draft, active, m
 });
 
 export const WorkflowDebug = memo(function WorkflowDebug(props: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [mockVisited, setMockVisited] = useState(props.mode === 'mock');
   useEffect(() => { if (props.mode === 'mock') setMockVisited(true); }, [props.mode]);
   return <aside id="workflow-debug" className={`workflow-debug${expanded ? ' is-expanded' : ''}`} hidden={!props.open}

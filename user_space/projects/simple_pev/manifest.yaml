@@ -1,0 +1,18 @@
+id: simple_pev
+title: simple_PEV
+mode: native_mas
+status: ready
+entry: adapted/entry.py:UserAgent
+experiment_id: ''
+agent_ids:
+- planner
+- u_simple_pev__executor
+- verifier
+tool_ids:
+- u_simple_pev__executor
+writable_root:
+- adapted
+- contracts
+- artifacts
+wraps: simple_PEV
+source: upload/AgentFlow-main/agentflow

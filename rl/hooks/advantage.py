@@ -562,15 +562,43 @@ def _missing_batch_keys(
     return missing
 
 
-def apply_appo_credit(batch: DataProto, *, discount: float = 0.9) -> DataProto:
-    """Branch rows leave the actor. Their outcome is written back onto the parent.
+def _is_branch_role(role: Any) -> bool:
+    return str(role or "parent").lower() in ("child", "probe", "branch")
 
-    ``future_kl`` is stored on the training config and is not applied here.
+
+def _split_index(raw: Any, width: int) -> int:
+    try:
+        idx = int(raw)
+    except (TypeError, ValueError):
+        return width - 1
+    if idx < 0:
+        return width - 1
+    return min(idx, width - 1)
+
+
+def apply_appo_credit(batch: DataProto, *, discount: float = 0.9) -> DataProto:
+    """Dual-group GRPO, then map branch credit onto the parent prefix.
+
+    Init and branch rows are normalized separately with the VERL GRPO rule
+    (a group of one keeps ``score / (1 + 1e-6)``). Branch rows are then
+    zeroed, including ``loss_mask`` when that column exists, so they do not
+    enter the actor. Each branch scalar is averaged onto the parent tokens
+    at and before the split index (``appo_branch_token``, else
+    ``resume_boundary``).
+
+    ``discount`` is the reward-scale γ inside M, applied before the group
+    norm when ``appo_branch_score`` is present. It does not rescale the
+    mapped advantage.
     """
     if "advantages" not in batch.batch:
         return batch
-    adv = batch.batch["advantages"].clone()
-    n = int(adv.shape[0])
+    from verl.trainer.ppo.core_algos import compute_grpo_outcome_advantage
+
+    from .appo_branching import average_reward_scales
+
+    template = batch.batch["advantages"]
+    n = int(template.shape[0])
+    width = int(template.shape[1])
     ntb = batch.non_tensor_batch
     roles = _as_list(ntb.get("rollout_role"))
     data_ids = _as_list(ntb["data_id_list"] if "data_id_list" in ntb else ntb.get("uid"))
@@ -579,50 +607,111 @@ def apply_appo_credit(batch: DataProto, *, discount: float = 0.9) -> DataProto:
     else:
         rollout_ids = _as_list(ntb.get("rollout_id"))
     parent_links = _as_list(ntb.get("resume_parent_id"))
+    token_idx = _as_list(ntb.get("appo_branch_token"))
+    boundaries = _as_list(ntb.get("resume_boundary"))
+    branch_scores = _as_list(ntb.get("appo_branch_score"))
     if "response_mask" in batch.batch:
-        mask = batch.batch["response_mask"].to(dtype=adv.dtype)
+        mask = batch.batch["response_mask"].to(dtype=template.dtype)
     else:
-        mask = torch.ones_like(adv)
-    if "token_level_scores" in batch.batch:
-        outcomes = batch.batch["token_level_scores"].sum(-1).detach()
+        mask = torch.ones_like(template)
+    if "token_level_rewards" in batch.batch:
+        rewards = batch.batch["token_level_rewards"].clone()
+    elif "token_level_scores" in batch.batch:
+        rewards = batch.batch["token_level_scores"].clone()
     else:
-        outcomes = adv.new_zeros(n)
+        rewards = torch.zeros_like(template)
 
     branch_rows: List[int] = []
     parent_rows: List[int] = []
     for i in range(n):
-        role = str(roles[i] if i < len(roles) and roles[i] is not None else "parent").lower()
-        if role in ("child", "probe", "branch"):
+        role = roles[i] if i < len(roles) else "parent"
+        if _is_branch_role(role):
             branch_rows.append(i)
-            adv[i] = 0
         else:
             parent_rows.append(i)
 
-    grouped: Dict[tuple, List[float]] = defaultdict(list)
+    if branch_scores:
+        by_parent: Dict[int, List[int]] = defaultdict(list)
+        id_to_row = {}
+        for i in parent_rows:
+            rid = str(rollout_ids[i]) if i < len(rollout_ids) and rollout_ids[i] else ""
+            did = str(data_ids[i]) if i < len(data_ids) and data_ids[i] is not None else ""
+            if rid:
+                id_to_row[(did, rid)] = i
+        for i in branch_rows:
+            did = str(data_ids[i]) if i < len(data_ids) and data_ids[i] is not None else ""
+            parent_id = str(parent_links[i]) if i < len(parent_links) and parent_links[i] else ""
+            parent = id_to_row.get((did, parent_id))
+            if parent is not None:
+                by_parent[parent].append(i)
+        for parent, children in by_parent.items():
+            splits = []
+            scores = []
+            for child in children:
+                raw_split = token_idx[child] if child < len(token_idx) and token_idx[child] not in ("", None) else (
+                    boundaries[child] if child < len(boundaries) else width - 1
+                )
+                splits.append(_split_index(raw_split, width))
+                score = branch_scores[child] if child < len(branch_scores) else 0.0
+                try:
+                    scores.append(float(score or 0.0))
+                except (TypeError, ValueError):
+                    scores.append(0.0)
+            scaled = average_reward_scales(width, splits, scores, float(discount))
+            rewards[parent] = rewards[parent] * rewards.new_tensor(scaled)
+
+    index = np.empty(n, dtype=object)
+    for i in range(n):
+        did = str(data_ids[i]) if i < len(data_ids) and data_ids[i] is not None else ""
+        kind = "branch" if i in set(branch_rows) else "init"
+        index[i] = f"{did}|{kind}"
+    adv, _returns = compute_grpo_outcome_advantage(
+        rewards, mask, index, norm_adv_by_std_in_grpo=True,
+    )
+    adv = adv.clone()
+    scalars: List[float] = []
+    for i in range(n):
+        valid = mask[i] > 0
+        if bool(valid.any()):
+            scalars.append(float(adv[i, valid][0]))
+        else:
+            scalars.append(0.0)
+    for i in branch_rows:
+        adv[i] = 0
+
+    id_to_row = {}
+    for i in parent_rows:
+        rid = str(rollout_ids[i]) if i < len(rollout_ids) and rollout_ids[i] else ""
+        did = str(data_ids[i]) if i < len(data_ids) and data_ids[i] is not None else ""
+        if rid:
+            id_to_row[(did, rid)] = i
+    buckets: Dict[tuple, List[float]] = defaultdict(list)
     for i in branch_rows:
         did = str(data_ids[i]) if i < len(data_ids) and data_ids[i] is not None else ""
         parent_id = str(parent_links[i]) if i < len(parent_links) and parent_links[i] else ""
-        grouped[(did, parent_id)].append(float(outcomes[i]))
-
-    scale = float(discount)
-    for i in parent_rows:
-        did = str(data_ids[i]) if i < len(data_ids) and data_ids[i] is not None else ""
-        rid = str(rollout_ids[i]) if i < len(rollout_ids) and rollout_ids[i] else ""
-        vals = list(grouped.get((did, rid), []))
-        if not vals:
-            for (group_id, parent_id), group_vals in grouped.items():
-                if group_id == did and (parent_id == "" or rid == "" or parent_id == rid):
-                    vals.extend(group_vals)
-        if not vals:
+        parent = id_to_row.get((did, parent_id))
+        if parent is None:
             continue
-        bonus = scale * (sum(vals) / len(vals))
-        adv[i] = adv[i] + bonus * mask[i]
+        raw_split = token_idx[i] if i < len(token_idx) and token_idx[i] not in ("", None) else (
+            boundaries[i] if i < len(boundaries) else width - 1
+        )
+        split = _split_index(raw_split, width)
+        for t in range(split + 1):
+            if float(mask[parent, t]) == 0.0:
+                continue
+            buckets[(parent, t)].append(scalars[i])
+    for (row, t), vals in buckets.items():
+        adv[row, t] = adv[row, t] + (sum(vals) / len(vals))
+
     batch.batch["advantages"] = adv
-    if "returns" in batch.batch:
-        returns = batch.batch["returns"].clone()
+    batch.batch["returns"] = adv.clone()
+    if "token_level_rewards" in batch.batch:
+        batch.batch["token_level_rewards"] = rewards
+    if "loss_mask" in batch.batch and branch_rows:
+        loss_mask = batch.batch["loss_mask"].clone()
         for i in branch_rows:
-            returns[i] = 0
-        batch.batch["returns"] = returns
+            loss_mask[i] = 0
+        batch.batch["loss_mask"] = loss_mask
     return batch
 
 

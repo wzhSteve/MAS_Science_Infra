@@ -192,6 +192,33 @@ class ActiveSetSession:
         agg = aggregate_probes(probes, h_pi=h_pi, u_threshold=thr)
         return float(agg.h_branch)
 
+    def _appo_token_meta(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """Record the planner token APPO would split on, when the window has entropies."""
+        raw = metrics.get("token_entropies") if isinstance(metrics, dict) else None
+        if not isinstance(raw, list) or not raw:
+            return {}
+        try:
+            entropy = [float(x) for x in raw]
+        except (TypeError, ValueError):
+            return {}
+        future = metrics.get("token_future_values")
+        future_vals = None
+        if isinstance(future, list) and len(future) == len(entropy):
+            try:
+                future_vals = [float(x) for x in future]
+            except (TypeError, ValueError):
+                future_vals = None
+        from rl.hooks.appo_branching import branching_scores, select_branch_tokens
+
+        chosen = select_branch_tokens(entropy, future_vals, k=1)
+        if not chosen:
+            return {}
+        scores = branching_scores(entropy, future_vals)
+        return {
+            "appo_branch_token": int(chosen[0]),
+            "appo_branch_score": float(scores[chosen[0]]) if scores else 0.0,
+        }
+
     def plan_forks_from_raw(
         self,
         raw: Any,
@@ -309,6 +336,7 @@ class ActiveSetSession:
                 "role": "child",
                 "resume_boundary": resume_boundary_from_messages(expansion.resume_messages),
                 "boundary_unit": "messages",
+                **self._appo_token_meta(window.metrics),
                 "p_plus": site.reward.p_plus,
                 "k_min": site.reward.k_min,
                 "epsilon_f": site.reward.epsilon_f,

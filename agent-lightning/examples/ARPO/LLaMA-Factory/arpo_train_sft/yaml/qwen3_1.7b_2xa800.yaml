@@ -1,0 +1,38 @@
+### model
+model_name_or_path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-1.7B
+trust_remote_code: true
+flash_attn: fa2
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: /root/autodl-tmp/MAS_Science_Infra/agent-lightning/examples/ARPO/LLaMA-Factory/examples/deepspeed/ds_z3_config.json
+
+### dataset
+dataset_dir: /root/autodl-tmp/MAS_Science_Infra/agent-lightning/examples/ARPO/LLaMA-Factory/arpo_train_sft/dataset_info
+dataset: final_5w4_still
+template: qwen
+cutoff_len: 15000
+max_samples: 1000000
+overwrite_cache: true
+preprocessing_num_workers: 16
+
+### output
+output_dir: /root/autodl-tmp/MAS_Science_Infra/checkpoints/arpo_sft_1.7b
+logging_steps: 10
+save_steps: 2000
+save_total_limit: 2
+plot_loss: true
+overwrite_output_dir: true
+report_to: "none"
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 7.0e-6
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000

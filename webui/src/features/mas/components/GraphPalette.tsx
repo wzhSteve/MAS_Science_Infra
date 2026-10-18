@@ -25,13 +25,19 @@ function isUserSpaceNode(node: GraphNode): boolean {
     || wraps.startsWith('EPC-AW') || wraps.startsWith('AgentFlow');
 }
 
-function hasRuntimePanel(family: string, wraps: string): boolean {
-  if (family === 'epc_aw' || family === 'agentflow') return true;
-  const w = wraps.toLowerCase();
-  return w.includes('epc-aw') || w.includes('epc_aw') || w.includes('agentflow');
+function isSimplePev(family: string, wraps: string, id = ''): boolean {
+  const blob = `${family} ${wraps} ${id}`.toLowerCase();
+  return blob.includes('simple_pev') || blob.includes('simple-pev');
 }
 
-function familyLabel(family: string, wraps: string, title: string): string {
+function hasRuntimePanel(family: string, wraps: string, id = ''): boolean {
+  if (family === 'epc_aw' || family === 'agentflow') return true;
+  const w = `${wraps} ${id}`.toLowerCase();
+  return w.includes('epc-aw') || w.includes('epc_aw') || w.includes('agentflow') || isSimplePev(family, wraps, id);
+}
+
+function familyLabel(family: string, wraps: string, title: string, id = ''): string {
+  if (isSimplePev(family, wraps, id) || isSimplePev('', title, id)) return 'simple_PEV';
   if (family === 'agentflow' || wraps.toLowerCase().includes('agentflow')) return 'AgentFlow';
   if (family === 'epc_aw' || wraps.toLowerCase().includes('epc')) return 'EPC-AW';
   return title || '用户项目';
@@ -212,10 +218,12 @@ export const GraphPalette = memo(function GraphPalette({ palette, nodes, poolMem
         const ready = project.status === 'ready' && project.workflow;
         const wraps = String(project.wraps || '');
         const family = project.family
+          || (isSimplePev('', wraps, project.id) ? 'agentflow' : '')
           || (wraps.toLowerCase().includes('agentflow') ? 'agentflow' : '')
           || (wraps.includes('EPC-AW') ? 'epc_aw' : '');
-        const showRuntime = hasRuntimePanel(family, wraps);
-        const badge = family === 'agentflow' ? 'AgentFlow · 用户封装'
+        const showRuntime = hasRuntimePanel(family, wraps, project.id);
+        const badge = isSimplePev(family, wraps, project.id) ? 'simple_PEV · 用户封装'
+          : family === 'agentflow' ? 'AgentFlow · 用户封装'
           : family === 'epc_aw' ? 'EPC-AW · 用户封装'
           : project.mode === 'native_mas' ? '整图导入 · Mode 2' : 'I/O 模块 · Mode 1';
         return <div key={project.id} className="mas-library-user-block">

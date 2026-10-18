@@ -282,6 +282,36 @@ def _record_agent_window(
     )
 
 
+def _window_preview(msg: Any) -> Dict[str, Any]:
+    """Fields the debug UI prints when the chat-normalised message list dropped msg_id."""
+    body = msg.payload if isinstance(getattr(msg, "payload", None), dict) else {}
+    def clip(value: Any, limit: int = 4000) -> str:
+        text = str(value or "")
+        return text if len(text) <= limit else text[:limit] + "…"
+    output = body.get("output") or body.get("answer") or body.get("direct_output") or body.get("sub_goal") or ""
+    trace = body.get("trace") if isinstance(body.get("trace"), dict) else None
+    preview = {
+        "window_kind": getattr(msg, "kind", "") or "",
+        "output": clip(output),
+        "tool": body.get("tool") or body.get("tool_name") or "",
+        "command": clip(body.get("command") or "", 1000),
+        "sub_goal": clip(body.get("sub_goal") or "", 500),
+        "reason": clip(body.get("reason") or "", 1000),
+    }
+    if body.get("ready_to_stop") is True:
+        preview["ready_to_stop"] = True
+    if trace:
+        calls = (trace.get("llm_calls") or {}).get("calls") if isinstance(trace.get("llm_calls"), dict) else None
+        preview["trace"] = {
+            "tool": trace.get("tool"),
+            "sub_goal": trace.get("sub_goal"),
+            "command": trace.get("command"),
+            "conclusion": trace.get("conclusion"),
+            "llm_calls": {"count": len(calls or []), "calls": list(calls or [])[:4]},
+        }
+    return {key: value for key, value in preview.items() if value not in ("", None, {})}
+
+
 def _log_window(archive, agent_id: str, turn: int, in_msg: AgentMessage, out_msg: AgentMessage, ok: bool) -> None:
     archive.append(
         ExecutionEvent(
@@ -295,6 +325,7 @@ def _log_window(archive, agent_id: str, turn: int, in_msg: AgentMessage, out_msg
                 "output_msg_id": out_msg.msg_id,
                 "ok": ok,
                 "payload_digest": out_msg.payload_digest(),
+                **_window_preview(out_msg),
             },
         )
     )
@@ -315,17 +346,20 @@ def run_centralized_episode(
     """Centralized planner-led walk with explicit AgentMessage envelopes."""
     from uuid import uuid4
 
+    from .llm_scope import bind_rollout_llm, reset_rollout_llm
     from .user_gateway.sandbox import bind_episode_id, reset_episode_id
 
     token = bind_episode_id(uuid4().hex)
     archive_token = _BRANCH_ARCHIVE.set(archive)
     rollout_token = _BRANCH_ROLLOUT.set(str(task.get("_rollout_id") or task.get("id") or ""))
+    llm_token = bind_rollout_llm(llm)
     try:
         return _run_centralized_episode_body(
             task, llm, archive, spec, memory, compiled,
             agent_llms=agent_llms, window_llm=window_llm, execution_recorder=execution_recorder,
         )
     finally:
+        reset_rollout_llm(llm_token)
         _BRANCH_ARCHIVE.reset(archive_token)
         _BRANCH_ROLLOUT.reset(rollout_token)
         reset_episode_id(token)
@@ -453,6 +487,19 @@ def _run_centralized_episode_body(
         except Exception:  # noqa: BLE001
             pass
 
+    h_root_entropy = None
+    turn_entropy = None
+    turn_token_entropies: List[float] = []
+
+    def _entropy_metrics(ok_flag: bool) -> Dict[str, Any]:
+        metrics: Dict[str, Any] = {"ok": ok_flag}
+        if turn_entropy is not None and h_root_entropy is not None:
+            metrics["h_root"] = h_root_entropy
+            metrics["h_tool"] = turn_entropy
+        if turn_token_entropies:
+            metrics["token_entropies"] = list(turn_token_entropies)
+        return metrics
+
     while turn < max_turns and not done:
         from .user_gateway.sandbox import eval_cancelled
 
@@ -519,6 +566,12 @@ def _run_centralized_episode_body(
         except Exception as e:  # noqa: BLE001
             error = f"planner window failed: {e}"
             break
+        from .token_entropy import entropy_from_trace, token_entropies_from_trace
+
+        turn_entropy = entropy_from_trace(p_json.get("trace"))
+        turn_token_entropies = token_entropies_from_trace(p_json.get("trace"))
+        if turn_entropy is not None and h_root_entropy is None:
+            h_root_entropy = turn_entropy
         nxt = p_json.get("next")
         if nxt is None:
             nxt = ""
@@ -575,7 +628,7 @@ def _run_centralized_episode_body(
                 execution_recorder, agent_id="planner", turn=turn,
                 inputs={"question": question}, output={"answer": final_answer, "done": True},
             )
-            _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={}, recorder=execution_recorder)
+            _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics=_entropy_metrics(True), recorder=execution_recorder)
             done = True
             break
 
@@ -589,7 +642,7 @@ def _run_centralized_episode_body(
             execution_recorder, agent_id="planner", turn=turn,
             inputs={"question": question}, output=p_payload, failed=not ok,
         )
-        _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics={"ok": ok}, recorder=execution_recorder)
+        _emit_window(window_events, all_messages, agent_id="planner", kind="after_agent_turn", turn=turn, metrics=_entropy_metrics(ok), recorder=execution_recorder)
         if not ok:
             last_feedback = f"planner produced invalid plan_step: {reason}"
             continue
@@ -958,7 +1011,7 @@ def _run_centralized_episode_body(
                     failed=not v_ok,
                     metrics={"ok": v_ok},
                 )
-            _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics={"ok": v_ok}, recorder=execution_recorder)
+            _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics=_entropy_metrics(v_ok), recorder=execution_recorder)
         else:
             tool_summary = "\n".join(f"- {m.src}: {m.payload.get('output')}" for m in tool_msgs)
             v_user = (
@@ -1026,7 +1079,7 @@ def _run_centralized_episode_body(
                 failed=not v_ok,
                 metrics={"ok": v_ok},
             )
-            _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics={"ok": v_ok}, recorder=execution_recorder)
+            _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics=_entropy_metrics(v_ok), recorder=execution_recorder)
 
         # 5. termination / feedback / fact commit
         if v_msg.kind == "verify":

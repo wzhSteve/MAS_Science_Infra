@@ -45,7 +45,7 @@ export const PRESET_LABELS: Record<string, string> = {
 export const PRESET_TAGLINES: Record<string, string> = {
   grpo: '同 prompt 组内相对优势',
   arpo: '熵门控自适应分支采样',
-  appo: '程序级分支 + 分支行结局折扣回写父行',
+  appo: '程序级分支 + 双组优势，信用只回写分裂点前缀',
   aepo: '低熵位置的优势差分放大',
   igpo: 'turn 级信息增益组内 z-score',
   gigpo: '全局组内 + 局部 step 组双级优势',

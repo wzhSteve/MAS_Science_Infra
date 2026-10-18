@@ -144,8 +144,20 @@ function readUserWindows(events: EventView[], rawMessages: unknown[]): UserWindo
     const outId = text(payload.output_msg_id);
     const msg = outId ? byMsgId.get(outId) : undefined;
     const msgPayload = record(msg?.payload);
-    const kind = text(msg?.kind) || text(payload.agent_id) || 'window';
-    const output = text(msgPayload.output);
+    const kind = text(msg?.kind) || text(payload.window_kind) || text(payload.agent_id) || 'window';
+    const output = text(msgPayload.output) || text(payload.output) || text(payload.sub_goal) || text(msgPayload.sub_goal);
+    let trace = readWindowTrace(msgPayload) ?? readWindowTrace(payload);
+    if (trace) {
+      trace.fields.tool = trace.fields.tool || text(payload.tool);
+      trace.fields.command = trace.fields.command || text(payload.command);
+      trace.fields.subGoal = trace.fields.subGoal || text(payload.sub_goal);
+    } else if (text(payload.tool) || text(payload.command) || text(payload.sub_goal)) {
+      trace = {
+        llmCount: 0,
+        calls: [],
+        fields: { tool: text(payload.tool), command: text(payload.command), subGoal: text(payload.sub_goal) },
+      };
+    }
     windows.push({
       key: `${event.key}:${text(payload.agent_id) || 'window'}:${payload.turn ?? 0}`,
       eventId: event.key,
@@ -154,12 +166,29 @@ function readUserWindows(events: EventView[], rawMessages: unknown[]): UserWindo
       ok: payload.ok !== false && msgPayload.ok !== false,
       kind,
       output,
-      readyToStop: msgPayload.ready_to_stop === true ? true : undefined,
-      reason: text(msgPayload.reason) ?? text(msgPayload.error),
-      trace: readWindowTrace(msgPayload) ?? readWindowTrace(payload),
+      readyToStop: msgPayload.ready_to_stop === true || payload.ready_to_stop === true ? true : undefined,
+      reason: text(msgPayload.reason) ?? text(payload.reason) ?? text(msgPayload.error),
+      trace,
     });
   }
   return windows.sort((a, b) => (a.turn - b.turn) || a.eventId.localeCompare(b.eventId));
+}
+
+type RoleColumn = 'planner' | 'executor' | 'verifier';
+
+const ROLE_COLUMNS: Array<{ id: RoleColumn; title: string }> = [
+  { id: 'planner', title: 'Planner' },
+  { id: 'executor', title: 'Executor' },
+  { id: 'verifier', title: 'Verifier' },
+];
+
+function windowColumn(window: UserWindowView): RoleColumn | 'other' {
+  const id = window.agentId.toLowerCase();
+  const kind = window.kind.toLowerCase();
+  if (kind === 'plan_step' || id === 'planner' || id.includes('planner')) return 'planner';
+  if (kind === 'verify' || id === 'verifier' || id.includes('verifier') || id.includes('diagnos')) return 'verifier';
+  if (kind === 'tool_result' || kind === 'error' || id.includes('executor')) return 'executor';
+  return 'other';
 }
 
 function UserWindowCard({ window }: { window: UserWindowView }) {
@@ -168,6 +197,7 @@ function UserWindowCard({ window }: { window: UserWindowView }) {
   if (trace?.fields.tool) details.push(`工具 ${trace.fields.tool}`);
   if (trace?.fields.subGoal) details.push(`目标 ${trace.fields.subGoal}`);
   if (trace?.fields.command) details.push(`命令 ${trace.fields.command}`);
+  if (trace?.fields.conclusion) details.push(`结论 ${trace.fields.conclusion}`);
   if (window.reason) details.push(`说明 ${window.reason}`);
   const state = window.kind === 'verify'
     ? window.readyToStop ? '可以停止' : '继续'
@@ -175,25 +205,39 @@ function UserWindowCard({ window }: { window: UserWindowView }) {
   return <article className="agent-run-card agent-run-card--user-window">
     <header>
       <span className="agent-run-icon"><Bot size={16} /></span>
-      <strong>{window.agentId}</strong>
-      <span className="field-hint">第{window.turn}轮 · {WINDOW_KIND_LABELS[window.kind] ?? '窗口'}</span>
+      <strong>第{window.turn}轮</strong>
+      <span className="field-hint">{WINDOW_KIND_LABELS[window.kind] ?? window.kind}</span>
       <span className={`agent-run-state${window.ok ? '' : ' is-failed'}`}>{state}</span>
     </header>
-    <div className="agent-run-io">
-      {window.output && <section><h4>窗口输出</h4><p>{summary(window.output)}</p></section>}
-      {details.length > 0 && <section><h4>窗口摘要</h4><p>{details.join('\n')}</p></section>}
-    </div>
+    {details.length > 0 && <p className="agent-run-role-meta">{details.join('\n')}</p>}
+    {window.output
+      ? <pre className="agent-run-role-output">{window.output}</pre>
+      : <p className="field-hint agent-run-role-meta">这一轮没有窗口输出。</p>}
     {trace && <WindowTraceBlock trace={trace} />}
   </article>;
 }
 
 function UserWindowTimeline({ windows }: { windows: UserWindowView[] }) {
+  const grouped: Record<RoleColumn | 'other', UserWindowView[]> = {
+    planner: [], executor: [], verifier: [], other: [],
+  };
+  for (const window of windows) grouped[windowColumn(window)].push(window);
   return <div className="agent-run-user-windows" aria-label="用户封装窗口">
-    <h3>用户封装执行窗口</h3>
-    <p className="field-hint">每次窗口收尾记录：工具链、BTS 评分、LLM 调用次数与提示词摘要。</p>
-    <ol className="agent-run-timeline">
-      {windows.map(window => <li key={window.key}><UserWindowCard window={window} /></li>)}
-    </ol>
+    <h3>执行轨迹</h3>
+    <p className="field-hint">Planner、Executor、Verifier 各自一栏。输出是该窗口的完整记录，在栏内滚动。</p>
+    <div className="agent-run-role-board">
+      {ROLE_COLUMNS.map(column => <section key={column.id} className="agent-run-role-col" aria-label={column.title}>
+        <header><h4>{column.title}</h4><span className="field-hint">{grouped[column.id].length} 步</span></header>
+        <div className="agent-run-role-body">
+          {grouped[column.id].length
+            ? grouped[column.id].map(window => <UserWindowCard key={window.key} window={window} />)
+            : <p className="field-hint">这一栏还没有记录。</p>}
+        </div>
+      </section>)}
+    </div>
+    {grouped.other.length > 0 && <ol className="agent-run-timeline">
+      {grouped.other.map(window => <li key={window.key}><UserWindowCard window={window} /></li>)}
+    </ol>}
   </div>;
 }
 

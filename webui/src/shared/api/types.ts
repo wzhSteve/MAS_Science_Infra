@@ -462,7 +462,7 @@ export interface RunSummary {
 
 export interface RunDetail extends RunSummary { log_tail?: string }
 export interface Hypothesis { plugin: string; event_id?: string; message: string; [key: string]: unknown }
-export interface RewardPoint { index: number; reward: number }
+export interface RewardPoint { index: number; reward: number; branch_count?: number }
 export interface LossPoint {
   index: number;
   pg_loss?: number;
@@ -495,6 +495,8 @@ export interface MonitorResponse {
   step_rewards?: RewardPoint[];
   val_rewards?: RewardPoint[];
   step_losses?: LossPoint[];
+  tir_algo?: string | null;
+  branch_local_count?: number | null;
   metrics_path?: string | null;
   train_signal?: TrainSignal;
   agl_online?: boolean;

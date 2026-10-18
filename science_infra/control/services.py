@@ -1135,16 +1135,26 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
     last_reward: Optional[int] = None
     last_val: Optional[int] = None
     last_loss: Optional[int] = None
+    latest_algo: Optional[str] = None
+    latest_branch: Optional[float] = None
     for rec in records:
         if not isinstance(rec, dict):
             continue
+        algo = rec.get("training/tir_algo")
+        if isinstance(algo, str) and algo.strip():
+            latest_algo = algo.strip()
         reward = _metric_float(rec.get("training/reward"))
         if reward is None:
             reward = _metric_float(rec.get("critic/rewards/mean"))
         if reward is not None:
             index = _bump_index(_metric_step(rec, len(step_rewards) + 1), last_reward)
             last_reward = index
-            step_rewards.append({"index": index, "reward": reward})
+            point = {"index": index, "reward": reward}
+            branch = _metric_float(rec.get("training/branch_local_count"))
+            if branch is not None:
+                point["branch_count"] = branch
+                latest_branch = branch
+            step_rewards.append(point)
         val = _metric_float(rec.get("val/reward"))
         if val is not None:
             index = _bump_index(_metric_step(rec, len(val_rewards) + 1), last_val)
@@ -1164,6 +1174,8 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
         "step_rewards": step_rewards,
         "val_rewards": val_rewards,
         "step_losses": step_losses,
+        "tir_algo": latest_algo,
+        "branch_local_count": latest_branch,
     }
 
 
@@ -1172,6 +1184,8 @@ def _empty_metrics() -> Dict[str, Any]:
         "step_rewards": [],
         "val_rewards": [],
         "step_losses": [],
+        "tir_algo": None,
+        "branch_local_count": None,
         "rows": [],
         "path": None,
         "score": 0,
@@ -1203,8 +1217,23 @@ def _read_metrics_file(path: str, limit: int = 2000) -> Dict[str, Any]:
     if limit > 0 and len(rows) > limit:
         rows = rows[-limit:]
     parsed = _parse_metrics_records(rows)
+    if not parsed.get("tir_algo"):
+        parsed["tir_algo"] = _algo_from_metrics_path(path)
     score = len(parsed["step_rewards"]) + len(parsed["val_rewards"]) + len(parsed["step_losses"])
     return {**parsed, "rows": rows, "path": os.path.abspath(path), "score": score}
+
+
+def _algo_from_metrics_path(path: str) -> Optional[str]:
+    """Recover the preset name from ``.../{experiment}_{algo}/metrics.jsonl``.
+
+    ``training/tir_algo`` is logged as a numeric enum, so the dashboard reads
+    the checkpoint directory. ``flow_grpo`` is matched before ``grpo``.
+    """
+    name = Path(path).parent.name
+    for algo in ("flow_grpo", "gigpo", "igpo", "aepo", "appo", "arpo", "rae", "grpo"):
+        if name == algo or name.endswith(f"_{algo}"):
+            return algo
+    return None
 
 
 def _metrics_candidate_paths(
@@ -1233,6 +1262,10 @@ def _metrics_candidate_paths(
         match = pat.search(text)
         if match:
             path = os.path.abspath(match.group(1))
+            # An older log can name another experiment's file. A named
+            # experiment only pins paths that actually belong to it.
+            if experiment_name and experiment_name not in path:
+                continue
             candidates.append(path)
             pinned.add(path)
 
@@ -1385,6 +1418,8 @@ def _agl_reward_series(
         "step_rewards": chosen["step_rewards"],
         "val_rewards": chosen["val_rewards"],
         "step_losses": chosen["step_losses"],
+        "tir_algo": chosen.get("tir_algo"),
+        "branch_local_count": chosen.get("branch_local_count"),
         "metrics_path": disk.get("path") if use_disk else None,
         "agl_online": bool(agl),
         "agl_source": source,

@@ -18,11 +18,21 @@
   .agent-run-llm-call { margin: 8px 0 10px; padding-left: 10px; border-left: 2px solid var(--border-subtle); }
   .agent-run-llm-call-title { margin: 0 0 4px; font-size: 11px; color: var(--text-secondary); }
   .agent-run-llm-call pre { margin: 6px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto; background: var(--surface-subtle); border: 1px solid var(--border-subtle); border-radius: 6px; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .agent-run-user-windows { display: flex; flex-direction: column; gap: 8px; }
+  .agent-run-user-windows { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   .agent-run-user-windows h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
-  .agent-run-user-windows .field-hint { margin: 0 0 4px; }
+  .agent-run-user-windows > .field-hint { margin: 0 0 4px; }
+  .agent-run-role-board { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .agent-run-role-col { min-width: 0; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--canvas); overflow: hidden; }
+  .agent-run-role-col > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); background: var(--surface); }
+  .agent-run-role-col > header h4 { margin: 0; font-size: 12px; font-weight: 600; }
+  .agent-run-role-body { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+  .agent-run-role-meta { margin: 0; padding: 8px 12px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
+  .agent-run-role-output { margin: 0; padding: 8px 12px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.65; font-family: inherit; }
   .agent-run-card--user-window > header .agent-run-state { color: var(--success); }
   .agent-run-card--user-window > header .agent-run-state.is-failed { color: var(--danger); }
+  @container workflow-debug (min-width: 720px) {
+    .agent-run-role-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
+  }
   .agent-run-more { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .debug-log-download { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
   @media (max-width: 767px) {

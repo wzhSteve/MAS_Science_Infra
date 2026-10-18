@@ -904,10 +904,21 @@ def build_training_plan(exp_id: str) -> TrainingPlan:
                 site.anchor.kind == "after_agent_turn" and site.anchor.agent_id == "planner"
                 for site in enabled_sites
             )
-            if algorithm == "arpo" and not planner_site:
+            # Window ARPO continues into the trainable Planner. after_verifier
+            # already includes the tool result in the prefix; after_agent_turn
+            # on the planner is the other legal continuation.
+            verifier_site = any(
+                site.anchor.kind == "after_verifier" for site in enabled_sites
+            )
+            if algorithm == "arpo" and not (planner_site or verifier_site):
                 record(
                     "window_planner_site", "Planner 分支", "error",
-                    "AgentFlow 窗口上的 ARPO 需要一个 after_agent_turn / planner 站点，才能从该步续写。",
+                    "AgentFlow 窗口上的 ARPO 需要 after_verifier，或 after_agent_turn / planner，才能续写下一轮 Planner。",
+                )
+            elif algorithm == "arpo" and verifier_site:
+                record(
+                    "window_planner_site", "Planner 分支", "pass",
+                    "Verifier 结束后续写下一轮 Planner。",
                 )
             elif algorithm == "arpo":
                 record("window_planner_site", "Planner 分支", "pass", "planner 回合后可续写。")
@@ -1154,6 +1165,11 @@ def _launch_training(
             TIR_ROLLOUT_TREE_DIR=str(run_dir / "rollout-trees"),
             TIR_EXECUTION_TREE_VERSION="3",
         )
+        # A single external fetch timeout must not abort a multi-step run.
+        # The step still records training/mas_fault. Unset keeps the default.
+        health = os.environ.get("TIR_MAS_HEALTH", "").strip()
+        if health:
+            env["TIR_MAS_HEALTH"] = health
         _write_yaml(rl_path, plan.rl)
         _write_yaml(workflow_path, plan.bundle["workflow"])
         train_script = tir_agent_root() / "train_tir_agent.py"

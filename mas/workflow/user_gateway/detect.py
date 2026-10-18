@@ -27,7 +27,10 @@ def detect_mas_family(project_id: str, title: str = "", wraps: str = "") -> str:
     hint = f"{project_id} {title} {wraps}".lower().replace("-", "_")
     upload = project_dir(project_id) / "upload"
     blob = _walk_markers(upload)
-    if "agentflow" in hint or "agent_flow" in hint or "agentflow" in blob:
+    if (
+        "agentflow" in hint or "agent_flow" in hint or "agentflow" in blob
+        or "simple_pev" in hint
+    ):
         return "agentflow"
     if "epc_aw" in blob or "epc_aw" in hint or "epcaw" in hint.replace("_", ""):
         return "epc_aw"

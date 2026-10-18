@@ -25,15 +25,18 @@ _REJECTED_TOOLS = frozenset({"Google_Search_Tool", "Ground_Google_Search_Tool"})
 # Fix F-1: flow-doc (project flow documentation from each project's upload/ tree)
 # ---------------------------------------------------------------------------
 
+_AGENTFLOW_FLOW_DOC = {
+    # Official prompts are f-strings inside the model classes.
+    "source_root": "user_space/projects/agentflow/upload/AgentFlow-main/agentflow/agentflow",
+    "prompts_rel": "models",
+    "prompt_files": "planner.py,executor.py,verifier.py",
+    "title": "AgentFlow",
+    "diagnosis_method": "",
+}
+
 FLOW_DOC_SOURCES: Dict[str, Dict[str, str]] = {
-    "agentflow": {
-        # Official prompts are f-strings inside the model classes.
-        "source_root": "user_space/projects/agentflow/upload/AgentFlow-main/agentflow/agentflow",
-        "prompts_rel": "models",
-        "prompt_files": "planner.py,executor.py,verifier.py",
-        "title": "AgentFlow",
-        "diagnosis_method": "",
-    },
+    "agentflow": dict(_AGENTFLOW_FLOW_DOC),
+    "simple_pev": {**_AGENTFLOW_FLOW_DOC, "title": "simple_PEV"},
     "epc-aw-main": {
         "source_root": "user_space/projects/epc-aw-main/upload/EPC-AW-main",
         "prompts_rel": "MAS/epc_aw/prompts",
@@ -229,8 +232,8 @@ def get_project_flow_doc(project_id: str) -> Dict[str, Any]:
         "project_id": project_id,
         "title": str(row.get("title") or cfg["title"]),
         "source_root": cfg["source_root"],
-        "agents": [dict(agent) for agent in (AGENTFLOW_AGENTS if project_id == "agentflow" else FLOW_AGENTS)],
-        "steps": _agentflow_steps() if project_id == "agentflow" else _flow_steps(
+        "agents": [dict(agent) for agent in (AGENTFLOW_AGENTS if project_id in ("agentflow", "simple_pev") else FLOW_AGENTS)],
+        "steps": _agentflow_steps() if project_id in ("agentflow", "simple_pev") else _flow_steps(
             cfg["diagnosis_method"],
             runtime_uses_bts=FLOW_DOC_RUNTIME_USES_BTS.get(project_id, True),
         ),

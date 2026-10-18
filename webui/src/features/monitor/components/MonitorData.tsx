@@ -36,6 +36,8 @@ export const MonitorSummary = memo(function MonitorSummary({ model }: { model: M
       <div className="metric"><dt className="metric-label">Loss 记录数</dt><dd className="metric-value">{lossPoints}</dd></div>
       <div className="metric"><dt className="metric-label">最新 training/reward</dt><dd className="metric-value">{formatScalar(latestReward)}</dd></div>
       <div className="metric"><dt className="metric-label">最新 Loss</dt><dd className="metric-value">{formatScalar(latestLoss)}</dd></div>
+      <div className="metric"><dt className="metric-label">算法</dt><dd className="metric-value">{model?.tir_algo || '—'}</dd></div>
+      <div className="metric"><dt className="metric-label">分支计数</dt><dd className="metric-value">{formatScalar(model?.branch_local_count ?? null)}</dd></div>
     </dl>
   );
 });

@@ -1,5 +1,10 @@
 version: 1
 projects:
+- id: simple_pev
+  title: simple_PEV
+  mode: native_mas
+  status: ready
+  experiment_id: ''
 - id: agentflow
   title: AgentFlow
   mode: native_mas

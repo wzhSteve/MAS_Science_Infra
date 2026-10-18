@@ -105,7 +105,9 @@ class TestCredit(unittest.TestCase):
 
         out = apply_appo_credit(_credit_batch(), discount=0.9)
         self.assertTrue(torch.equal(out.batch["advantages"][1], torch.zeros(4)))
-        self.assertTrue(torch.allclose(out.batch["advantages"][0], torch.full((4,), 2.8)))
+        torch.testing.assert_close(
+            out.batch["advantages"][0], torch.full((4,), 3.0 / (1 + 1e-6)), rtol=1e-5, atol=1e-6,
+        )
         self.assertTrue(torch.equal(out.batch["returns"][1], torch.zeros(4)))
 
 
@@ -259,7 +261,9 @@ class TestCreditEdges(unittest.TestCase):
         out = self._through("appo", batch, reward_scale_discount=0.9)
         self.assertTrue(torch.equal(out.batch["advantages"][1], torch.zeros(4)))
         self.assertTrue(torch.equal(out.batch["advantages"][2], torch.zeros(4)))
-        self.assertTrue(torch.allclose(out.batch["advantages"][0], torch.full((4,), 3.7)))
+        torch.testing.assert_close(
+            out.batch["advantages"][0], torch.full((4,), 1.0 / (1 + 1e-6)), rtol=1e-5, atol=1e-6,
+        )
 
     def test_unrelated_task_is_not_credited(self):
         batch = _batch_from(
@@ -270,14 +274,18 @@ class TestCreditEdges(unittest.TestCase):
             parents=["", "r0"],
         )
         out = self._through("appo", batch)
-        self.assertTrue(torch.equal(out.batch["advantages"][0], torch.ones(4)))
+        torch.testing.assert_close(
+            out.batch["advantages"][0], torch.full((4,), 1.0 / (1 + 1e-6)), rtol=1e-5, atol=1e-6,
+        )
 
     def test_mask_limits_writeback(self):
         mask = torch.tensor([[1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0]])
         batch = _batch_from(["parent", "child"], [0.0, 2.0], parents=["", "r0"], rollout_ids=["r0", "c1"], mask=mask)
         out = self._through("appo", batch, reward_scale_discount=0.9)
-        self.assertTrue(torch.allclose(out.batch["advantages"][0, :2], torch.full((2,), 2.8)))
-        self.assertTrue(torch.equal(out.batch["advantages"][0, 2:], torch.ones(2)))
+        torch.testing.assert_close(
+            out.batch["advantages"][0, :2], torch.full((2,), 2.0 / (1 + 1e-6)), rtol=1e-5, atol=1e-6,
+        )
+        self.assertTrue(torch.equal(out.batch["advantages"][0, 2:], torch.zeros(2)))
 
     def test_grpo_still_zeros_only_the_prefix(self):
         batch = _credit_batch()

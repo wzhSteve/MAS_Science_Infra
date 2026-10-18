@@ -3,7 +3,7 @@ import { ArrowRight, BookOpen, ChevronDown, RefreshCw, X } from 'lucide-react';
 import { masApi, type UserProjectFlowDoc } from '../api';
 import { Button } from '../../../shared/ui/button';
 
-export const FLOW_DOC_PROJECTS = ['agentflow', 'epc-aw-main'] as const;
+export const FLOW_DOC_PROJECTS = ['simple_pev', 'agentflow', 'epc-aw-main'] as const;
 export type FlowDocProject = typeof FLOW_DOC_PROJECTS[number];
 
 /** 每个 step 可能是共享步骤（agent: "planner/executor/diagnoser"），按包含关系归入各 agent tab。 */
@@ -11,6 +11,7 @@ export const FLOW_DOC_TABS = ['planner', 'executor', 'diagnoser'] as const;
 export type FlowDocTabId = typeof FLOW_DOC_TABS[number];
 
 const PROJECT_LABELS: Record<FlowDocProject, string> = {
+  simple_pev: 'simple_PEV',
   agentflow: 'AgentFlow',
   'epc-aw-main': 'EPC-AW',
 };
@@ -22,7 +23,7 @@ const TAB_LABELS: Record<FlowDocTabId, string> = {
 };
 
 const tabLabel = (project: FlowDocProject, tab: FlowDocTabId) =>
-  project === 'agentflow' && tab === 'diagnoser' ? 'Verifier 校验器' : TAB_LABELS[tab];
+  (project === 'agentflow' || project === 'simple_pev') && tab === 'diagnoser' ? 'Verifier 校验器' : TAB_LABELS[tab];
 
 /** step.agent / prompt.agent 字段 → tab 归属（复用 flow-doc 面板中 agentBadge 的包含式判定）。 */
 export const agentBadge = (agent: string): FlowDocTabId => {
@@ -82,7 +83,7 @@ function PromptList({ doc, tab }: { doc: UserProjectFlowDoc; tab: FlowDocTabId }
 }
 
 export function UserProjectFlowDoc({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [projectId, setProjectId] = useState<FlowDocProject>('agentflow');
+  const [projectId, setProjectId] = useState<FlowDocProject>('simple_pev');
   const [tab, setTab] = useState<FlowDocTabId>('planner');
   const [doc, setDoc] = useState<UserProjectFlowDoc | null>(null);
   const [loading, setLoading] = useState(false);

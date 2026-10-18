@@ -391,7 +391,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 sample["action_key"] = plan_meta.get("action_key")
             if plan_meta.get("reward_scheme") is not None:
                 sample["reward_scheme"] = plan_meta.get("reward_scheme")
-            for field in ("window_id", "event_id", "snapshot_ref", "decision", "fork_node_ids", "source_attempt_id"):
+            for field in ("window_id", "event_id", "snapshot_ref", "decision", "fork_node_ids", "source_attempt_id", "appo_branch_token", "appo_branch_score"):
                 if plan_meta.get(field) is not None:
                     sample[field] = plan_meta[field]
             try:
@@ -557,7 +557,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                         sample["action_key"] = plan_meta.get("action_key")
                     if plan_meta.get("reward_scheme") is not None:
                         sample["reward_scheme"] = plan_meta.get("reward_scheme")
-                    for field in ("window_id", "event_id", "snapshot_ref", "decision", "fork_node_ids", "source_attempt_id"):
+                    for field in ("window_id", "event_id", "snapshot_ref", "decision", "fork_node_ids", "source_attempt_id", "appo_branch_token", "appo_branch_score"):
                         if plan_meta.get(field) is not None:
                             sample[field] = plan_meta[field]
                     try:
@@ -836,6 +836,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
             site_ids: List[str] = []
             verdicts: List[str] = []
             bounds: List[int] = []
+            branch_tokens: List[Any] = []
+            branch_scores: List[Any] = []
             action_keys: List[str] = []
             schemes: List[str] = []
             successes: List[bool] = []
@@ -867,6 +869,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
                     bounds.append(int(meta.get("resume_boundary") or sample.get("resume_boundary") or 0))
                 except (TypeError, ValueError):
                     bounds.append(0)
+                branch_tokens.append(sample.get("appo_branch_token", ""))
+                branch_scores.append(sample.get("appo_branch_score", ""))
 
             # Fill verdicts: prefer explicit meta, else adjudicate rae_adjudicate groups.
             explicit = []
@@ -912,6 +916,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
             data_proto.non_tensor_batch["site_id_list"] = np.array(site_ids, dtype=object)
             data_proto.non_tensor_batch["verdict_list"] = np.array(verdicts, dtype=object)
             data_proto.non_tensor_batch["resume_boundary"] = np.array(bounds, dtype=object)
+            data_proto.non_tensor_batch["appo_branch_token"] = np.array(branch_tokens, dtype=object)
+            data_proto.non_tensor_batch["appo_branch_score"] = np.array(branch_scores, dtype=object)
             data_proto.non_tensor_batch["action_key_list"] = np.array(action_keys, dtype=object)
             # RL2 (a): 11th injected column. resume_parent_id previously lived
             # only in sample dicts / annotations (never in non_tensor_batch),
