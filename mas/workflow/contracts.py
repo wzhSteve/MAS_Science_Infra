@@ -201,6 +201,7 @@ class Trajectory(BaseModel):
     format_ok: bool = False
     n_search: int = 0
     n_python: int = 0
+    n_fetch: int = 0
     archive: Optional[ArchiveRef] = None
     branch_points: List[BranchPoint] = Field(default_factory=list)
     branch_parent_id: Optional[str] = None
@@ -215,6 +216,7 @@ class Trajectory(BaseModel):
         self.meta["format_ok"] = bool(self.format_ok)
         self.meta["n_search"] = int(self.n_search)
         self.meta["n_python"] = int(self.n_python)
+        self.meta["n_fetch"] = int(self.n_fetch)
 
 
 class TrajectoryBatch(BaseModel):

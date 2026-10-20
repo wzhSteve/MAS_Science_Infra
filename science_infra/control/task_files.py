@@ -55,8 +55,61 @@ def _task_id(row: Dict[str, Any]) -> str:
     return ""
 
 
+def _as_mapping(value: Any) -> Dict[str, Any]:
+    """Accept a dict or a stringified dict from a parquet struct column."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("{") and text.endswith("}"):
+            try:
+                parsed = ast.literal_eval(text)
+            except (SyntaxError, ValueError):
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+    return {}
+
+
+def _gold_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        if not parts:
+            return ""
+        return parts[0] if len(parts) == 1 else " | ".join(parts)
+    return str(value).strip()
+
+
+def fill_open_task_fields(row: Dict[str, Any]) -> None:
+    """Fill empty question/answer/source from the verl 10k schema.
+
+    ``train_10k.parquet`` and ``valid.parquet`` store the question in
+    ``extra_info.question`` and the label in ``reward_model.ground_truth``.
+    Rows that already carry those fields are left alone. The UI test path
+    and the training dataloader both go through this mapping.
+    """
+    extra = _as_mapping(row.get("extra_info"))
+    reward = _as_mapping(row.get("reward_model"))
+    if not str(row.get("question") or row.get("query") or "").strip():
+        question = str(extra.get("question") or "").strip()
+        if question:
+            row["question"] = question
+    if not str(row.get("answer") or "").strip():
+        gold = _gold_text(reward.get("ground_truth"))
+        if gold:
+            row["answer"] = gold
+    if not str(row.get("source") or "").strip():
+        source = str(row.get("data_source") or "").strip()
+        if source:
+            row["source"] = source
+
+
 def normalize_task_row(row: Dict[str, Any], path: Path) -> Dict[str, Any]:
     """Map one parquet or JSON record onto id/question/answer/answers/source."""
+    row = dict(row)
+    fill_open_task_fields(row)
     question = str(row.get("question") or row.get("query") or "")
     listed = row.get("answers")
     if isinstance(listed, str):
@@ -74,7 +127,7 @@ def normalize_task_row(row: Dict[str, Any], path: Path) -> Dict[str, Any]:
     else:
         answer, answers = _answers(row.get("answer"))
     source = str(row.get("source") or "").strip() or _default_source(path)
-    task = dict(row)
+    task = row
     task.update({
         "id": _task_id(row),
         "question": question,

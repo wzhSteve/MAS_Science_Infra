@@ -1147,13 +1147,13 @@ _WEB_TEXT_LIMIT = 1200
 def _proxy_candidates() -> List[Optional[Dict[str, str]]]:
     """SSH RemoteForward / local Clash first, then a direct connection."""
     raws: List[str] = []
-    for key in ("WEB_SEARCH_PROXY", "GOOGLE_CHROME_PROXY", "CHROME_PROXY"):
+    for key in ("SCIENCE_INFRA_PROXY", "WEB_SEARCH_PROXY", "GOOGLE_CHROME_PROXY", "CHROME_PROXY"):
         value = (os.environ.get(key) or "").strip()
         if value and "://" not in value:
             value = "http://" + value
         if value and value not in raws:
             raws.append(value)
-    default = "http://127.0.0.1:7890"
+    default = "http://127.0.0.1:17890"
     if default not in raws:
         raws.append(default)
     ordered: List[Optional[Dict[str, str]]] = [{"http": raw, "https": raw} for raw in raws]
@@ -1276,7 +1276,7 @@ def _strip_tags(text: str) -> str:
 def _bing_hits(query: str) -> str:
     """Bing web search: top-10 (title, url) pairs. Does not open the URLs.
 
-    Delegates to the mas.tools.search Bing kernel (same 7890 proxy chain as
+    Delegates to the mas.tools.search Bing kernel (same SCIENCE_INFRA_PROXY chain as
     _fast_get's environment) so both projects share one SERP implementation.
     No Wikipedia fallback: a Bing failure is an explicit failure.
     """

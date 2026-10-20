@@ -39,6 +39,17 @@ agl.setup_logging(apply_to=[__name__])
 logger = logging.getLogger(__name__)
 
 
+def hydrate_rl_task(task: Dict[str, Any]) -> None:
+    """Fill question/answer/source from the 10k parquet schema when absent.
+
+    Training rollouts receive the row after ``load_task_rows``. This second
+    pass covers a runner that still sees the raw parquet columns.
+    """
+    from science_infra.control.task_files import fill_open_task_fields
+
+    fill_open_task_fields(task)
+
+
 class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
     """Training wrapper: shared run_episode + canonical RewardFn + emit_*."""
 
@@ -68,6 +79,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
         resources: agl.NamedResources,
         rollout: agl.Rollout,
     ) -> float | None:
+        hydrate_rl_task(task)
         question = str(task["question"])
         ground_truth = str(task.get("answer") or "")
         source = str(task.get("source") or "gsm8k")
@@ -247,6 +259,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
         reward = float(default_reward_fn(traj, task_run))
         n_search = traj.n_search
         n_python = traj.n_python
+        n_fetch = int(getattr(traj, "n_fetch", 0) or 0)
         format_ok = traj.format_ok
         prediction = traj.final_answer
         hashes = list(raw.obs_hashes)
@@ -259,7 +272,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             golds = [ground_truth] + [a for a in aliases if a and a != ground_truth]
             ig_list = ig_deltas_from_messages(raw.lc_messages, golds)
         logger.info(
-            "[Rollout %s] src=%s pred=%r gt=%r fmt=%s R=%.3f search=%d py=%d branch_local=%d t=%.2fs",
+            "[Rollout %s] src=%s pred=%r gt=%r fmt=%s R=%.3f search=%d fetch=%d py=%d branch_local=%d t=%.2fs",
             rollout_id,
             source,
             prediction,
@@ -267,6 +280,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             format_ok,
             reward,
             n_search,
+            n_fetch,
             n_python,
             branch_local_count,
             time.time() - start,
@@ -315,6 +329,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     "tir.source": source,
                     "tir.n_search": int(n_search),
                     "tir.n_python": int(n_python),
+                    "tir.n_fetch": int(n_fetch),
                     "tir.format_ok": bool(format_ok),
                     "tir.mas_fault": (mas_faults[0][:500] if mas_faults else ""),
                     "tir.obs_hashes": "|".join(hashes),

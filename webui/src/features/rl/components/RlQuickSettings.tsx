@@ -7,11 +7,12 @@ import { Input } from '../../../shared/ui/input';
 import { Select } from '../../../shared/ui/select';
 import { algorithmFromSampling } from '../model/normalizeRlPayload';
 import { rolloutPatch } from '../model/rlPrefills';
+import { FormatRewardField } from './FormatRewardField';
 
 const ALGORITHM_HINTS: Record<string, string> = {
   grpo: '标准组相对策略优化。',
   arpo: '在不确定窗口进行分支采样，分支续写参与同一组优势。',
-  appo: '分支只做对比并把折扣后的结果写回原轨迹。future_kl 预设尚未接到 actor。',
+  appo: '分支只做对比并把折扣后的结果写回原轨迹。',
   aepo: '强调高信息增益轨迹。',
   igpo: '使用信息增益调整优势。',
   gigpo: '按组内信息增益归一化。',
@@ -45,6 +46,7 @@ export const RlQuickSettings = memo(function RlQuickSettings({
           {(meta?.algos || ['grpo']).map((algo) => <option key={algo} value={algo}>{algo.toUpperCase()}</option>)}
         </Select>
       </FormField>
+      <FormatRewardField algo={algorithm} rl={rl} onPatch={onPatch} />
       <FormField label={<HelpLabel help={samplingGroup != null
         ? '当前值由画布中的采样策略决定。'
         : '每道题生成多少条候选 Rollout，用于组内比较。'}>group_n</HelpLabel>}>

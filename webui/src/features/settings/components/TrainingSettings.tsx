@@ -135,10 +135,12 @@ export const TrainingSettings = memo(function TrainingSettings({
           compact onOpenDesign={() => onCanvasModeChange('sampling')} canvasMode={canvasMode}
           preview={samplingPreview} previewError={samplingPreviewError}
           selectedOpportunityId={selectedSamplingOpportunity} onSelectOpportunity={onSelectSamplingOpportunity} />
-        <details className="parameter-details"><summary>算法组合（base × 算子栈）</summary>
-          <ComposedPanel rl={rl} sampling={workflow.sampling} onPatch={patch} />
+        <details className="parameter-details"><summary>高级参数</summary>
+          <details className="parameter-details"><summary>算法组合（base × 算子栈）</summary>
+            <ComposedPanel rl={rl} sampling={workflow.sampling} onPatch={patch} />
+          </details>
+          <details className="parameter-details"><summary>训练与优化参数</summary>{fields(OPTIMIZATION)}</details>
         </details>
-        <details className="parameter-details"><summary>训练与优化参数</summary>{fields(OPTIMIZATION)}</details>
       </section>
       <section id="training-environment" className="parameter-group">
         <h3><span>04</span>执行资源</h3>

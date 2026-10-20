@@ -3,6 +3,7 @@ import type { RlConfig, SamplingSpec } from '../../../shared/api/types';
 const SAMPLING_ALGORITHMS: Record<string, string> = {
   grpo_n: 'grpo',
   grpo: 'grpo',
+  flow_grpo: 'flow_grpo',
   arpo: 'arpo',
   aepo: 'aepo',
   appo: 'appo',

@@ -40,7 +40,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-OUTCOME_MODES = ("hierarchical", "binary")
+OUTCOME_MODES = ("hierarchical", "binary", "llm_binary", "deep_research_llm")
 FORMAT_PENALTY = "format_penalty"
 ACCURACY_REWARD = "accuracy_reward"
 MULTI_TOOL_BONUS = "multi_tool_bonus"
@@ -107,11 +107,12 @@ class RewardSpec(BaseModel):
     """Switchable/weightable composition of the frozen outcome hierarchy.
 
     ``outcome="hierarchical"`` is the frozen default (层级不变合同, RL_design
-    §3.2.1); ``outcome="binary"`` is the Flow-GRPO 0/1 correctness reward and
-    ignores every component. ``components`` defaults to the现状 snapshot above; validation
-    enforces: no duplicates, known ids only, accuracy_reward present AND
-    enabled, reserved slots (cost_penalty) must stay disabled until their
-    stage lands.
+    §3.2.1); ``outcome="binary"`` is local 0/1 EM; ``llm_binary`` is Flow-GRPO
+    LLM judge 0/1; ``deep_research_llm`` is ARPO/APPO format + LLM accuracy.
+    ``binary`` / ``llm_binary`` ignore component switches. ``components``
+    defaults to the现状 snapshot above; validation enforces: no duplicates,
+    known ids only, accuracy_reward present AND enabled, reserved slots
+    (cost_penalty) must stay disabled until their stage lands.
     """
 
     outcome: str = "hierarchical"

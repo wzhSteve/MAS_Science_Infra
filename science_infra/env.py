@@ -55,17 +55,41 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+_PROXY_ALIASES = ("WEB_SEARCH_PROXY", "GOOGLE_CHROME_PROXY", "CHROME_PROXY")
+
+
+def propagate_proxy_aliases() -> None:
+    """Unify outbound proxy keys around ``SCIENCE_INFRA_PROXY``.
+
+    - Primary: ``SCIENCE_INFRA_PROXY`` fills empty search/Chrome aliases.
+    - Compat: if only ``WEB_SEARCH_PROXY`` is set, copy it into the primary.
+    Does not touch ``HTTP_PROXY`` (LLM / local vLLM must stay direct).
+    """
+    primary = (os.environ.get("SCIENCE_INFRA_PROXY") or "").strip()
+    web = (os.environ.get("WEB_SEARCH_PROXY") or "").strip()
+    if not primary and web:
+        os.environ["SCIENCE_INFRA_PROXY"] = web
+        primary = web
+    if not primary:
+        return
+    for key in _PROXY_ALIASES:
+        if not (os.environ.get(key) or "").strip():
+            os.environ[key] = primary
+
+
 def load_science_env(*, override: bool = False, path: Optional[Path] = None) -> Optional[Path]:
     """Load ``.env``. Returns the path loaded, or None if missing."""
     global _LOADED_FROM
     env_path = Path(path) if path is not None else default_env_path()
     if not env_path.is_file():
+        propagate_proxy_aliases()
         return None
     if (
         _LOADED_FROM is not None
         and _LOADED_FROM.resolve() == env_path.resolve()
         and not override
     ):
+        propagate_proxy_aliases()
         return _LOADED_FROM
     data = parse_env_file(env_path)
     for key, value in data.items():
@@ -74,6 +98,7 @@ def load_science_env(*, override: bool = False, path: Optional[Path] = None) -> 
         elif key not in os.environ or os.environ.get(key, "") == "":
             os.environ[key] = value
     _LOADED_FROM = env_path
+    propagate_proxy_aliases()
     return env_path
 
 

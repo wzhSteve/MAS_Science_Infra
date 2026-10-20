@@ -33,7 +33,9 @@ from .search_cache import GAP_SENTINEL, cache_lookup, cache_store  # noqa: E402
 
 _MAX_SNIPPET_CHARS = int(os.getenv("TIR_SEARCH_MAX_CHARS", "2000"))
 _MAX_RESULTS = int(os.getenv("TIR_SEARCH_MAX_RESULTS", "10"))
-_DEFAULT_PROXY = "http://127.0.0.1:7890"
+# Last-resort default when .env / SCIENCE_INFRA_PROXY unset.
+# Matches AutoDL SSH RemoteForward 17890 → local Clash (e.g. 12001). Override via .env.
+_DEFAULT_PROXY = "http://127.0.0.1:17890"
 
 # --- Bright Data SERP API config ---
 BRIGHT_DATA_API_KEY = os.getenv("BRIGHT_DATA_API_KEY", "").strip()
@@ -56,6 +58,10 @@ _UA_HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
 }
+_WIKI_API_HEADERS = {
+    "User-Agent": "MAS-Science-Infra-fetch/1.0 (research training; wikipedia api)",
+    "Accept": "application/json",
+}
 
 
 def _normalize_proxy(proxy: str) -> str:
@@ -67,8 +73,8 @@ def _normalize_proxy(proxy: str) -> str:
 
 def _env_proxy() -> str:
     return _normalize_proxy(
-        os.getenv("WEB_SEARCH_PROXY", "").strip()
-        or os.getenv("SCIENCE_INFRA_PROXY", "").strip()
+        os.getenv("SCIENCE_INFRA_PROXY", "").strip()
+        or os.getenv("WEB_SEARCH_PROXY", "").strip()
         or _DEFAULT_PROXY
     )
 
@@ -535,8 +541,157 @@ def bing_search(query: str, top_k: int = _MAX_RESULTS) -> str:
     return "Bing unreachable: " + "; ".join(errors[-4:])
 
 
-def fetch_page(url: str, max_chars: int = _MAX_SNIPPET_CHARS) -> str:
-    """Fetch a URL and return truncated visible text (web_fetch kernel)."""
+_WIKI_URL_RE = re.compile(
+    r"^https?://([a-z]{2,3}(?:-[a-z]+)?)(?:\.m)?\.wikipedia\.org/wiki/([^?#]+)",
+    re.I,
+)
+_BLOCKED_FETCH_HOSTS = frozenset({
+    "imdb.com",
+    "allmusic.com",
+    "discogs.com",
+    "peakbagger.com",
+    "rottentomatoes.com",
+})
+_BOT_WALL_MARKERS = (
+    "bot verification",
+    "verifying that you are not a robot",
+    "are you a robot",
+    "access denied",
+    "pardon our interruption",
+    "enable javascript and cookies to continue",
+)
+
+
+def _url_host(url: str) -> str:
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except Exception:
+        return ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def is_blocked_fetch_host(url: str) -> bool:
+    host = _url_host(url)
+    if not host:
+        return False
+    return any(host == blocked or host.endswith("." + blocked) for blocked in _BLOCKED_FETCH_HOSTS)
+
+
+def wikipedia_url_parts(url: str) -> Optional[Tuple[str, str]]:
+    match = _WIKI_URL_RE.match((url or "").strip())
+    if not match:
+        return None
+    title = urllib.parse.unquote(match.group(2)).replace("_", " ").strip()
+    if not title:
+        return None
+    return match.group(1).lower(), title
+
+
+def query_from_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(url or "")
+    path = urllib.parse.unquote(parsed.path or "").rstrip("/")
+    slug = path.split("/")[-1] if path else ""
+    slug = slug.replace("_", " ").replace("-", " ").strip()
+    host = _url_host(url)
+    brand = host.split(".")[0] if host else ""
+    parts = [part for part in (slug, brand) if part and part not in {"wiki", "www"}]
+    return " ".join(parts).strip()
+
+
+def _visible_text(html_text: str, max_chars: int) -> str:
+    soup = BeautifulSoup(html_text or "", "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    text = " ".join(soup.get_text(" ", strip=True).split())
+    if len(text) > max_chars:
+        return text[:max_chars] + " ...[truncated]"
+    return text
+
+
+def _is_bot_wall(text: str) -> bool:
+    low = (text or "").lower()
+    return any(marker in low for marker in _BOT_WALL_MARKERS)
+
+
+def _wikipedia_search_hits(lang: str, query: str, *, _follow_suggest: bool = True) -> List[Dict[str, str]]:
+    api = f"https://{lang}.wikipedia.org/w/api.php"
+    params = urllib.parse.urlencode({
+        "action": "query",
+        "list": "search",
+        "srsearch": query,
+        "srlimit": "5",
+        "format": "json",
+        "utf8": "1",
+    })
+    endpoint = f"{api}?{params}"
+    suggestion = ""
+    for proxies in proxy_candidates():
+        body, err = _request("GET", endpoint, headers=_WIKI_API_HEADERS, proxies=proxies, timeout=10.0)
+        if err or not body:
+            continue
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        query_block = payload.get("query") or {}
+        hits = query_block.get("search") or []
+        out: List[Dict[str, str]] = []
+        for hit in hits:
+            title = str(hit.get("title") or "").strip()
+            if not title:
+                continue
+            page = f"https://{lang}.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+            out.append({"title": title, "url": page})
+        if out:
+            return out
+        suggestion = str((query_block.get("searchinfo") or {}).get("suggestion") or "").strip()
+        if suggestion:
+            break
+    if _follow_suggest and suggestion and suggestion.lower() != query.lower():
+        return _wikipedia_search_hits(lang, suggestion, _follow_suggest=False)
+    return []
+
+
+def _fetch_search_fallback(url: str, *, reason: str) -> str:
+    query = query_from_url(url)
+    if not query:
+        return f"fetch_unavailable: {reason}"
+    snippets = bing_search(query, top_k=5)
+    return (
+        f"fetch_blocked: {url}\n"
+        f"reason: {reason}\n"
+        f"used_search_fallback: bing query={query}\n"
+        f"{snippets}"
+    )
+
+
+def _repair_failed_fetch(url: str, max_chars: int, errors: List[str]) -> str:
+    reason = "; ".join(errors[-4:]) if errors else "blocked_host"
+    parts = wikipedia_url_parts(url)
+    if parts:
+        lang, title = parts
+        for hit in _wikipedia_search_hits(lang, title):
+            canonical = hit["url"]
+            if canonical.rstrip("/") == url.rstrip("/"):
+                continue
+            if title.lower() == hit["title"].lower():
+                continue
+            page = fetch_page(canonical, max_chars=max_chars, _repair=False)
+            if page.startswith("url:"):
+                body = page.split("\n", 1)[-1]
+                _cache_store_url(canonical, body)
+                return f"url: {canonical}\ncorrected_from: {url}\n{body}"
+        return _fetch_search_fallback(url, reason=f"wikipedia_miss after {reason}")
+    return _fetch_search_fallback(url, reason=reason)
+
+
+def fetch_page(url: str, max_chars: int = _MAX_SNIPPET_CHARS, *, _repair: bool = True) -> str:
+    """Fetch a URL and return truncated visible text (web_fetch kernel).
+
+    Wikipedia 404s are retried via MediaWiki search on the title. Sites that
+    routinely 403 (IMDb / AllMusic / Discogs / Peakbagger) skip the GET and
+    fall back to Bing snippets.
+    """
     url = (url or "").strip()
     if not url:
         return "Error: empty url."
@@ -545,22 +700,25 @@ def fetch_page(url: str, max_chars: int = _MAX_SNIPPET_CHARS) -> str:
     cached = _cache_consume_url(url)
     if cached is not None:
         return f"url: {url}\n{cached}"
+    if _repair and is_blocked_fetch_host(url):
+        return _repair_failed_fetch(url, max_chars, ["blocked_host"])
     errors: List[str] = []
     for proxies in proxy_candidates():
-        html, err = _request("GET", url, headers=_UA_HEADERS, proxies=proxies, timeout=8.0)
+        html_text, err = _request("GET", url, headers=_UA_HEADERS, proxies=proxies, timeout=8.0)
         if err:
             errors.append(err)
             continue
-        soup = BeautifulSoup(html or "", "html.parser")
-        for tag in soup(["script", "style", "noscript"]):
-            tag.decompose()
-        text = " ".join(soup.get_text(" ", strip=True).split())
-        if len(text) > max_chars:
-            text = text[:max_chars] + " ...[truncated]"
+        text = _visible_text(html_text, max_chars)
         if not text:
-            return f"fetch_unavailable: empty page at {url}"
+            errors.append("empty page")
+            continue
+        if _is_bot_wall(text):
+            errors.append("bot_wall")
+            continue
         _cache_store_url(url, text)
         return f"url: {url}\n{text}"
+    if _repair:
+        return _repair_failed_fetch(url, max_chars, errors)
     return "fetch_unavailable: " + "; ".join(errors[-4:])
 
 
@@ -571,6 +729,8 @@ def fetch_by_type(url: str, query: str = "", max_chars: int = _MAX_SNIPPET_CHARS
         return "Error: empty url."
     if os.getenv("TIR_OFFLINE_SEARCH", "").strip().lower() in ("1", "true", "yes"):
         return "search_unavailable: TIR_OFFLINE_SEARCH=1"
+    if is_blocked_fetch_host(target):
+        return _repair_failed_fetch(target, max_chars, ["blocked_host"])
     errors: List[str] = []
     path = target.lower().split("?", 1)[0]
     for proxies in proxy_candidates():
@@ -597,16 +757,16 @@ def fetch_by_type(url: str, query: str = "", max_chars: int = _MAX_SNIPPET_CHARS
                 return f"type: pdf\nurl: {target}\n{text[:max_chars]}"
             body = resp.text or ""
             if "html" in ctype or body.lstrip().startswith("<"):
-                soup = BeautifulSoup(body, "html.parser")
-                for tag in soup(["script", "style", "noscript"]):
-                    tag.decompose()
-                text = " ".join(soup.get_text(" ", strip=True).split())
+                text = _visible_text(body, max_chars)
                 kind = "html"
             else:
                 text = " ".join(body.split())
+                if len(text) > max_chars:
+                    text = text[:max_chars] + " ...[truncated]"
                 kind = "text"
-            if len(text) > max_chars:
-                text = text[:max_chars] + " ...[truncated]"
+            if _is_bot_wall(text):
+                errors.append("bot_wall")
+                continue
             lines = [f"type: {kind}", f"url: {target}"]
             q = (query or "").strip()
             if q:
@@ -615,7 +775,7 @@ def fetch_by_type(url: str, query: str = "", max_chars: int = _MAX_SNIPPET_CHARS
             return "\n".join(lines)
         finally:
             resp.close()
-    return "fetch_unavailable: " + "; ".join(errors[-4:])
+    return _repair_failed_fetch(target, max_chars, errors)
 
 
 def _pdf_text(data: bytes) -> str:

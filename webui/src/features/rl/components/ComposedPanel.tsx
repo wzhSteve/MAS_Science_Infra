@@ -81,7 +81,7 @@ export const ComposedPanel = memo(function ComposedPanel({ rl, sampling, onPatch
   const activePreset = composed ? null : (rl.algo || algorithmFromSampling(sampling) || 'grpo');
   const samplingMode = sampling?.mode;
   const needsBranching = (composed?.operators ?? []).some(op => op.id === 'appo_credit');
-  const branchingMismatch = needsBranching && samplingMode != null && ['grpo_n', 'grpo'].includes(String(samplingMode));
+  const branchingMismatch = needsBranching && samplingMode != null && ['grpo_n', 'grpo', 'flow_grpo'].includes(String(samplingMode));
 
   return <div className="composed-panel" data-composed={composed ? 'true' : 'false'}>
     <FormField label={<HelpLabel help="v1 单选预设（A9 永久保留）。预设路径完全不变形，落 rl.yaml 的 algo/tir_algo。">预设</HelpLabel>}>

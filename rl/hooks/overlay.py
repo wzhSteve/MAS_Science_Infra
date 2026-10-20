@@ -76,6 +76,7 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any, algo: str | None 
     algo_map = {
         "grpo_n": "grpo",
         "grpo": "grpo",
+        "flow_grpo": "flow_grpo",
         "arpo": "arpo",
         "aepo": "aepo",
         "appo": "appo",
@@ -294,22 +295,8 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
     algo_block["reward"] = _reward_section_from_tir(tir, user_tir)
     _apply_reward_outcome(algo_block["reward"], prior_reward, algo)
     cfg["algorithm"] = algo_block
-    if algo == "flow_grpo":
-        # Trajectory outcome is already broadcast onto every turn by the VERL daemon.
-        # These are AgentFlow's actor defaults; rollout.n stays the group size.
-        # An explicit use_kl_loss=False in the rl-yaml survives the re-apply
-        # (single-GPU memory layouts move KL into use_kl_in_reward instead).
-        roll = dict(cfg.get("actor_rollout_ref") or {})
-        actor = dict(roll.get("actor") or {})
-        explicit_no_kl_loss = actor.get("use_kl_loss") is False
-        if not explicit_no_kl_loss:
-            actor["use_kl_loss"] = True
-            actor["kl_loss_coef"] = 0.001
-        actor["entropy_coeff"] = 0.0
-        actor["clip_ratio_low"] = 0.2
-        actor["clip_ratio_high"] = 0.3
-        roll["actor"] = actor
-        cfg["actor_rollout_ref"] = roll
+    # Source-aligned actor loss: preset wins over a bare yaml use_kl_loss:false.
+    _apply_algo_actor_loss(cfg, algo)
     trainer = dict(cfg.get("trainer") or {})
     base_name = str(trainer.get("experiment_name") or "tir_agent")
     if not base_name.endswith(algo):
@@ -318,15 +305,55 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
     return cfg
 
 
+def _apply_algo_actor_loss(cfg: Dict[str, Any], algo: str) -> None:
+    """Force per-algo actor KL / clip from official scripts (AgentFlow / ARPO / APPO)."""
+    roll = dict(cfg.get("actor_rollout_ref") or {})
+    actor = dict(roll.get("actor") or {})
+    if algo in ("grpo", "flow_grpo"):
+        actor["use_kl_loss"] = True
+        actor["kl_loss_coef"] = 0.001
+        actor["entropy_coeff"] = 0.0
+        actor["clip_ratio_low"] = 0.2
+        actor["clip_ratio_high"] = 0.3
+    elif algo == "arpo":
+        actor["use_kl_loss"] = True
+        actor["kl_loss_coef"] = 0.0
+        actor["entropy_coeff"] = float(actor.get("entropy_coeff") or 0.0)
+        actor.setdefault("clip_ratio_low", 0.2)
+        actor.setdefault("clip_ratio_high", 0.3)
+    elif algo == "appo":
+        actor["use_kl_loss"] = True
+        actor["kl_loss_coef"] = 0.001
+        actor["entropy_coeff"] = float(actor.get("entropy_coeff") or 0.0)
+        actor["clip_ratio_low"] = 0.2
+        actor["clip_ratio_high"] = 0.28
+    roll["actor"] = actor
+    cfg["actor_rollout_ref"] = roll
+
+
+def _include_format(prior: Dict[str, Any]) -> bool:
+    return bool(prior.get("include_format"))
+
+
 def _apply_reward_outcome(section: Dict[str, Any], prior: Dict[str, Any], algo: str) -> None:
-    """A user-authored ``algorithm.reward.outcome`` survives re-application; otherwise
-    the preset decides (flow_grpo → AgentFlow's 0/1 outcome)."""
+    """User-authored outcome survives; else every compared algo uses llm_binary.
+
+    ARPO/APPO add deep_research format terms only when ``include_format`` is true.
+    The flag is copied onto the rebuilt section so a later overlay pass keeps it.
+    """
     meta = dict(prior.get("meta") or {})
+    include_format = _include_format(prior)
+    section["include_format"] = include_format
     user_outcome = str(prior.get("outcome") or "").strip().lower()
     if user_outcome and meta.get("outcome_source") != "preset":
         section["outcome"] = user_outcome
         return
-    section["outcome"] = "binary" if algo == "flow_grpo" else "hierarchical"
+    if algo in ("grpo", "flow_grpo"):
+        section["outcome"] = "llm_binary"
+    elif algo in ("arpo", "appo"):
+        section["outcome"] = "deep_research_llm" if include_format else "llm_binary"
+    else:
+        section["outcome"] = "hierarchical"
     section["meta"] = {**dict(section.get("meta") or {}), "outcome_source": "preset"}
 
 
@@ -365,16 +392,12 @@ def apply_train_signal(config: Dict[str, Any], signal: "TrainSignal") -> Dict[st
     actor["clip_ratio_high"] = float(signal.loss.clip_ratio_high)
     actor["entropy_coeff"] = float(signal.loss.entropy_coeff)
     actor["kl_loss_coef"] = float(signal.loss.kl_loss_coef)
-    if algo == "flow_grpo":
-        # Preserve an explicit use_kl_loss=False from the rl-yaml (see
-        # apply_algo_overlay); the re-apply here must not resurrect the flag.
-        if actor.get("use_kl_loss") is not False:
-            actor["use_kl_loss"] = True
-        if float(signal.loss.kl_loss_coef) == 0.0 and actor.get("use_kl_loss") is True:
-            actor["kl_loss_coef"] = 0.001
     roll = dict(cfg.get("actor_rollout_ref") or {})
     roll["actor"] = actor
     cfg["actor_rollout_ref"] = roll
+    # Re-apply source-aligned KL/clip after LossSpec merge so presets win.
+    _apply_algo_actor_loss(cfg, algo)
+    actor = dict(cfg.get("actor_rollout_ref", {}).get("actor") or {})
     tir = dict(cfg["algorithm"].get("tir") or {})
     tir["gamma"] = float(signal.advantage.gamma)
     tir["reward_scale_discount"] = float(signal.advantage.reward_scale_discount)

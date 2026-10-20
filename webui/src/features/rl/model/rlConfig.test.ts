@@ -51,6 +51,12 @@ describe('RL configuration contract', () => {
     expect(normalized.actor_rollout_ref?.rollout?.n).toBe(6);
   });
 
+  it('maps Flow-GRPO sampling onto tir_algo', () => {
+    const normalized = normalizeRlPayload(config(), [0], { mode: 'flow_grpo', group_n: 4 });
+    expect(normalized.algo).toBe('flow_grpo');
+    expect(normalized.algorithm).toMatchObject({ tir_algo: 'flow_grpo' });
+  });
+
   it('keeps recommendation values subordinate to workflow sampling', () => {
     const recommended = applyRlRecommendation(config(), {
       algo: 'grpo',
@@ -133,7 +139,7 @@ describe('RL configuration contract', () => {
 
   it('expands all 8 presets exactly as the backend PRESET_EXPANSION table (§3.6 快照)', () => {
     const expected: Record<string, { base: string; operators: string[] }> = {
-      grpo: { base: 'grpo', operators: ['zero_prefix'] },
+      grpo: { base: 'grpo', operators: [] },
       arpo: { base: 'grpo', operators: [] },
       appo: { base: 'grpo', operators: ['appo_credit'] },
       aepo: { base: 'grpo', operators: ['aepo_entropy'] },

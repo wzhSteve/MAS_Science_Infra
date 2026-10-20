@@ -25,17 +25,26 @@ OFFICIAL_TOOLS: Dict[str, str] = {
 DEFAULT_TOOLS = list(OFFICIAL_TOOLS)
 
 _BING_DESCRIPTION = (
-    "Bing web search. Returns up to 10 entries, each with a title, its URL, "
-    "and a short truncated description. Does not open pages. "
-    "Read a page only with a separate fetch step that is given one of these URLs."
+    "Search keywords. Returns titles, URLs, and short snippets only. "
+    "Does not open pages. Snippets are not the page text. "
+    "Read a page with Web_Fetch_Tool and one of these URLs."
 )
 _WIKI_DESCRIPTION = (
-    "Wikipedia search. Returns up to 10 entries, each with a title, its URL, "
-    "and a short truncated description. Does not open pages and does not call web search."
+    "Wikipedia search. Returns titles, URLs, and short snippets only. "
+    "Does not open pages and does not call web search."
 )
 _FETCH_DESCRIPTION = (
-    "Open exactly one URL and extract its readable text. Does not search. "
-    "Get a URL from Bing_Search_Tool or Wikipedia_Search_Tool first."
+    "Open exactly one URL and return page text or an error. Does not search. "
+    "A valid URL may still lack the needed fact. "
+    "Get the URL from Bing_Search_Tool or Wikipedia_Search_Tool first."
+)
+_BASE_DESCRIPTION = (
+    "Another LLM call. Reason or draft from the question and information already obtained. "
+    "Does not search the web and can invent facts."
+)
+_PYTHON_DESCRIPTION = (
+    "Write and run one short program for arithmetic or another numeric task where code is more accurate than guessing. "
+    "Does not look up facts, import libraries, or open web pages."
 )
 
 
@@ -190,6 +199,10 @@ def build_toolbox(
                     inst.execute = local_wikipedia_search
                     inst.tool_description = _WIKI_DESCRIPTION
                     inst.output_type = "str - numbered entries with title, URL, and truncated description."
+                elif short == "Base_Generator_Tool":
+                    inst.tool_description = _BASE_DESCRIPTION
+                elif short == "Python_Coder_Tool":
+                    inst.tool_description = _PYTHON_DESCRIPTION
         if hasattr(inst, "llm_engine"):
             inst.llm_engine = tool_engine()
         instances[inst.tool_name] = inst

@@ -377,13 +377,22 @@ class AgentLightningTrainer(RayPPOTrainer):
                 batch.batch["is_drop_mask"].shape[0] - keep_indices.shape[0]
             )
             batch = batch[keep_indices]
-            # next, round to minibatch size
-            mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
+            # Floor to ppo_mini_batch_size * rollout.n. The FSDP worker multiplies
+            # the yaml mini-batch by rollout.n and then divides by the GPU count
+            # before DP_COMPUTE_PROTO shards the batch. The global row count has
+            # to be a multiple of yaml_mini * n, or update_actor's split raises.
+            rollout_n = max(1, int(self.config.actor_rollout_ref.rollout.n))
+            mini_batch_size = int(self.config.actor_rollout_ref.actor.ppo_mini_batch_size) * rollout_n
             n_transition = len(batch)
             random_indices = list(range(n_transition))
             random.shuffle(random_indices)
             batch.reorder(torch.tensor(random_indices).type(torch.int32))
             n_remained_transition = n_transition // mini_batch_size * mini_batch_size
+            if n_remained_transition <= 0:
+                raise RuntimeError(
+                    f"flooring {n_transition} triplets to a multiple of {mini_batch_size} "
+                    "left an empty actor batch"
+                )
             batch = batch[list(range(n_remained_transition))]
             metrics["training/n_triplets_dropped_remainder"] = n_transition - n_remained_transition
 

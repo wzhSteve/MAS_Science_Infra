@@ -69,9 +69,8 @@ class TestFlowGrpoRegistration(unittest.TestCase):
         self.assertEqual(actor["clip_ratio_low"], 0.2)
         self.assertEqual(actor["clip_ratio_high"], 0.3)
 
-    def test_overlay_respects_explicit_kl_override(self):
-        """Single-GPU rl-yaml sets use_kl_loss: false / use_kl_in_reward: true
-        to skip the ref-model forward; both overlay passes must keep it."""
+    def test_overlay_forces_source_aligned_kl(self):
+        """Source AgentFlow KL wins over a bare yaml use_kl_loss:false."""
         from rl.hooks.overlay import apply_algo_overlay, apply_train_signal
         from rl.train_signal import AdvantageSpec, LossSpec, TrainSignal
 
@@ -85,17 +84,17 @@ class TestFlowGrpoRegistration(unittest.TestCase):
         }
         cfg = apply_algo_overlay(base, "flow_grpo")
         self.assertTrue(cfg["algorithm"]["use_kl_in_reward"])  # explicit kept
-        self.assertFalse(cfg["actor_rollout_ref"]["actor"]["use_kl_loss"])
+        self.assertTrue(cfg["actor_rollout_ref"]["actor"]["use_kl_loss"])
+        self.assertEqual(cfg["actor_rollout_ref"]["actor"]["kl_loss_coef"], 0.001)
         signal = TrainSignal(
             advantage=AdvantageSpec(name="flow_grpo", use_critic=False),
             loss=LossSpec(name="flow_grpo"),
             meta={},
         )
         cfg = apply_train_signal(cfg, signal)
-        self.assertFalse(cfg["actor_rollout_ref"]["actor"]["use_kl_loss"])
+        self.assertTrue(cfg["actor_rollout_ref"]["actor"]["use_kl_loss"])
         self.assertTrue(cfg["algorithm"]["use_kl_in_reward"])
-        # coef stays 0: no ref forward is planned, so no kl term needed
-        self.assertEqual(cfg["actor_rollout_ref"]["actor"]["kl_loss_coef"], 0.0)
+        self.assertEqual(cfg["actor_rollout_ref"]["actor"]["kl_loss_coef"], 0.001)
 
 
 class TestFlowGrpoSamplingPrecedence(unittest.TestCase):
@@ -194,15 +193,35 @@ class TestFlowGrpoBinaryOutcome(unittest.TestCase):
         self.assertEqual(compute_outcome_reward("Paris", "Paris", format_ok=False, **kw), 1.0)
         self.assertEqual(compute_outcome_reward("<answer>Lyon city</answer>", "Paris", format_ok=True, **kw), 0.0)
 
-    def test_overlay_defaults_flow_grpo_to_binary(self):
+    def test_overlay_defaults_flow_grpo_to_llm_binary(self):
         from rl.hooks.overlay import apply_algo_overlay
 
         base = {"algorithm": {}, "actor_rollout_ref": {"rollout": {"n": 4}, "actor": {}}, "trainer": {}}
         flow = apply_algo_overlay(base, "flow_grpo")
-        self.assertEqual(flow["algorithm"]["reward"]["outcome"], "binary")
-        self.assertEqual(apply_algo_overlay(flow, "flow_grpo")["algorithm"]["reward"]["outcome"], "binary")
-        self.assertEqual(apply_algo_overlay(flow, "grpo")["algorithm"]["reward"]["outcome"], "hierarchical")
-        self.assertEqual(apply_algo_overlay(base, "grpo")["algorithm"]["reward"]["outcome"], "hierarchical")
+        self.assertEqual(flow["algorithm"]["reward"]["outcome"], "llm_binary")
+        self.assertTrue(flow["actor_rollout_ref"]["actor"]["use_kl_loss"])
+        self.assertEqual(flow["actor_rollout_ref"]["actor"]["kl_loss_coef"], 0.001)
+        self.assertEqual(apply_algo_overlay(flow, "flow_grpo")["algorithm"]["reward"]["outcome"], "llm_binary")
+        grpo = apply_algo_overlay(base, "grpo")
+        self.assertEqual(grpo["algorithm"]["reward"]["outcome"], "llm_binary")
+        self.assertTrue(grpo["actor_rollout_ref"]["actor"]["use_kl_loss"])
+        arpo = apply_algo_overlay(base, "arpo")
+        self.assertEqual(arpo["algorithm"]["reward"]["outcome"], "llm_binary")
+        self.assertFalse(arpo["algorithm"]["reward"]["include_format"])
+        self.assertEqual(arpo["actor_rollout_ref"]["actor"]["kl_loss_coef"], 0.0)
+        appo = apply_algo_overlay(base, "appo")
+        self.assertEqual(appo["algorithm"]["reward"]["outcome"], "llm_binary")
+        self.assertEqual(appo["actor_rollout_ref"]["actor"]["clip_ratio_high"], 0.28)
+        flagged = {
+            "algorithm": {"reward": {"include_format": True}},
+            "actor_rollout_ref": {"rollout": {"n": 4}, "actor": {}},
+            "trainer": {},
+        }
+        self.assertEqual(apply_algo_overlay(flagged, "arpo")["algorithm"]["reward"]["outcome"], "deep_research_llm")
+        self.assertEqual(apply_algo_overlay(flagged, "grpo")["algorithm"]["reward"]["outcome"], "llm_binary")
+        again = apply_algo_overlay(apply_algo_overlay(flagged, "appo"), "appo")
+        self.assertTrue(again["algorithm"]["reward"]["include_format"])
+        self.assertEqual(again["algorithm"]["reward"]["outcome"], "deep_research_llm")
 
     def test_user_outcome_survives_overlay(self):
         from rl.hooks.overlay import apply_algo_overlay
@@ -222,18 +241,23 @@ class TestFlowGrpoBinaryOutcome(unittest.TestCase):
         from workflow.collector import default_reward_fn
         from workflow.contracts import Trajectory
 
-        self.assertEqual(reward_outcome_for({"algorithm": {}}, "flow_grpo"), "binary")
-        self.assertEqual(reward_outcome_for({"algorithm": {}}, "grpo"), "hierarchical")
+        self.assertEqual(reward_outcome_for({"algorithm": {}}, "flow_grpo"), "llm_binary")
+        self.assertEqual(reward_outcome_for({"algorithm": {}}, "grpo"), "llm_binary")
+        self.assertEqual(reward_outcome_for({"algorithm": {}}, "arpo"), "llm_binary")
+        self.assertEqual(reward_outcome_for({"algorithm": {"reward": {"include_format": True}}}, "appo"),
+                         "deep_research_llm")
         self.assertEqual(reward_outcome_for({"algorithm": {"reward": {"outcome": "hierarchical"}}}, "flow_grpo"),
                          "hierarchical")
         traj = Trajectory.model_construct(final_answer="<answer>Paris France</answer>", format_ok=True,
                                           n_search=1, n_python=1)
-        task = {"answer": "Paris", "source": "hotpot"}
+        task = {"answer": "Paris", "source": "hotpot", "question": "capital?"}
         with mock.patch.dict(os.environ, {"TIR_REWARD_OUTCOME": "binary"}):
             self.assertEqual(default_reward_fn(traj, task), 1.0)
+        with mock.patch("rl.rewards.llm_judge.llm_judge_correct", return_value=1.0):
+            with mock.patch.dict(os.environ, {"TIR_REWARD_OUTCOME": "llm_binary"}):
+                self.assertEqual(default_reward_fn(traj, task), 1.0)
         with mock.patch.dict(os.environ, {"TIR_REWARD_OUTCOME": ""}):
             self.assertNotIn(default_reward_fn(traj, task), (0.0, 1.0))
-
 
 class TestEpcAwWorkflowWiring(unittest.TestCase):
     def test_alpha_workflow_trains_planner_windows(self):

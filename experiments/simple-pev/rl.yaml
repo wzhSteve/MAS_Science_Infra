@@ -18,7 +18,7 @@ data:
   seed: 1
   train_batch_size: 2
   max_prompt_length: 6144
-  max_response_length: 1024
+  max_response_length: 4096
   truncation: left
 actor_rollout_ref:
   rollout:
@@ -31,17 +31,14 @@ actor_rollout_ref:
       vllm:
         enable_auto_tool_choice: true
         tool_call_parser: hermes
-        max_model_len: 7168
+        max_model_len: 10240
   actor:
     ppo_mini_batch_size: 2
     ppo_micro_batch_size_per_gpu: 1
     optim:
       lr: 1.0e-06
-    use_kl_loss: false
-    kl_loss_coef: 0.0
+    # KL / clip owned by rl.hooks.overlay per tir_algo (AgentFlow / ARPO / APPO).
     entropy_coeff: 0
-    clip_ratio_low: 0.2
-    clip_ratio_high: 0.3
     fsdp_config:
       param_offload: false
       optimizer_offload: false
@@ -61,9 +58,9 @@ trainer:
   - console
   - tensorboard
   project_name: AgentLightning
-  experiment_name: simple_pev_cmp
+  experiment_name: simple_pev_curve
   nnodes: 1
   test_freq: -1
-  total_epochs: 30
-  total_training_steps: 30
+  total_epochs: 20
+  total_training_steps: 20
   save_freq: -1

@@ -177,12 +177,24 @@ def trainable_ids_from_spec(spec_path: str) -> list[str]:
 
 
 def reward_outcome_for(config: Dict[str, Any], tir_algo: str) -> str:
-    """``algorithm.reward.outcome`` (written by the overlay) wins; flow_grpo falls back to 0/1."""
+    """Match overlay: llm_binary by default; ARPO/APPO format terms are opt-in.
+
+    A hand-written ``outcome`` (not stamped ``outcome_source=preset``) still wins.
+    ``algorithm.reward.include_format`` selects ``deep_research_llm`` for arpo/appo.
+    """
     sec = (config.get("algorithm") or {}).get("reward") or {}
-    explicit = str(sec.get("outcome") or "").strip().lower() if isinstance(sec, dict) else ""
-    if explicit:
+    if not isinstance(sec, dict):
+        sec = {}
+    explicit = str(sec.get("outcome") or "").strip().lower()
+    meta = sec.get("meta") if isinstance(sec.get("meta"), dict) else {}
+    include_format = bool(sec.get("include_format"))
+    if explicit and meta.get("outcome_source") != "preset":
         return explicit
-    return "binary" if tir_algo == "flow_grpo" else "hierarchical"
+    if tir_algo in ("grpo", "flow_grpo"):
+        return "llm_binary"
+    if tir_algo in ("arpo", "appo"):
+        return "deep_research_llm" if include_format else "llm_binary"
+    return explicit or "hierarchical"
 
 
 def window_agent_match(spec_path: Optional[str], active_agents: list[str]) -> Optional[str]:

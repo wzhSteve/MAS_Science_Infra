@@ -26,23 +26,60 @@ def strip_thinking(text: str) -> str:
     return out.strip()
 
 
+_BOXED_RE = re.compile(r"\\boxed\s*\{([^{}]*)\}")
+_BOXED_SPACE_RE = re.compile(r"\\boxed\s+([^\n$]+)")
+
+
+def unwrap_boxed(text: str) -> str:
+    """Peel ``\\boxed{...}`` so Hotpot F1 / binary EM score the answer, not the wrapper.
+
+    Qwen-style MAS finals often emit ``<answer>\\boxed{Harry F. Sinclair}</answer>``.
+    Leaving the wrapper in place makes ``normalize_qa`` glue ``boxed`` onto the
+    first token (``boxedharry``), so a correct answer gets F1≈2/3 and binary 0.
+    """
+    if not text:
+        return text
+    match = _BOXED_RE.search(text)
+    if match:
+        return match.group(1).strip()
+    match = _BOXED_SPACE_RE.search(text)
+    if match:
+        return match.group(1).strip().rstrip("$").strip()
+    return text.strip()
+
+
+def _usable_answer(ans: Optional[str]) -> Optional[str]:
+    if ans is None:
+        return None
+    ans = unwrap_boxed(strip_thinking(ans) or ans)
+    ans = unwrap_boxed(ans)
+    if not ans or ans.lower() in _PLACEHOLDERS:
+        return None
+    return ans
+
+
 def extract_answer_text(text: str) -> Optional[str]:
     if not text:
         return None
     cleaned = strip_thinking(text) or text
     match = re.search(r"<answer>\s*(.*?)\s*</answer>", cleaned, flags=re.DOTALL | re.IGNORECASE)
     if match:
-        ans = match.group(1).strip()
-        if ans.lower() not in _PLACEHOLDERS:
+        ans = _usable_answer(match.group(1).strip())
+        if ans is not None:
             return ans
+    # MAS / Qwen often nest <think> inside <answer>; strip_thinking on the full
+    # string already ran, but a leftover wrapper or raw boxed still carries gold.
+    boxed = _usable_answer(unwrap_boxed(text))
+    if boxed is not None and (_BOXED_RE.search(text) or _BOXED_SPACE_RE.search(text)):
+        return boxed
     match = re.search(r"(?<!#)###\s*(.+?)(\s*###|$)", cleaned, flags=re.DOTALL)
     if match:
-        ans = match.group(1).strip()
-        if ans.lower() not in _PLACEHOLDERS:
+        ans = _usable_answer(match.group(1).strip())
+        if ans is not None:
             return ans
     match = re.search(r"####\s*(.+)", cleaned)
     if match:
-        return match.group(1).split("\n")[0].strip()
+        return _usable_answer(match.group(1).split("\n")[0].strip())
     return None
 
 
@@ -180,54 +217,89 @@ def compute_outcome_reward(
     format_ok: bool,
     n_search: int,
     n_python: int,
+    n_fetch: int = 0,
     multi_tool_bonus: float = 0.1,
     reward_spec: Optional["RewardSpec"] = None,
+    question: str = "",
 ) -> float:
-    """Hierarchical outcome used by all tir_algo variants.
+    """Outcome reward for tir_algo variants.
 
-    Format bad → -1; format ok & Acc=0 → 0; Acc>0 → Acc [+ r_M if both tools used].
+    Modes (via ``reward_spec.outcome``):
+    - ``hierarchical`` — format/-1 + F1 + multi_tool (legacy MAS)
+    - ``binary`` — local 0/1 EM (legacy Flow without LLM)
+    - ``llm_binary`` — Flow-GRPO gpt judge 0/1 (no format / multi_tool)
+    - ``deep_research_llm`` — ARPO/APPO soft format + LLM 0/1 + penalties
 
-    RL4: ``reward_spec`` (an optional RewardSpec from rl.rewards.assembly)
-    routes the SAME hierarchy through per-component switch/weight application.
-    ``reward_spec=None`` (the default for every v1 caller) keeps the literal
-    path below byte-identical — no behavioral change for existing callers.
-    When a spec is provided, the ``multi_tool_bonus`` keyword is IGNORED (the
-    spec's multi_tool_bonus component owns the magnitude); format_penalty
-    becomes switchable (off → a format failure falls through to the accuracy
-    layer instead of returning -1); accuracy_reward is not switchable (spec
-    validation enforces enabled=True upstream).
+    ``reward_spec=None`` keeps the literal hierarchical path byte-identical.
     """
     if reward_spec is not None:
-        # --- component path (switchable / weightable) --------------------
         spec = reward_spec
-        if spec.outcome == "binary":
+        outcome = str(spec.outcome or "hierarchical").strip().lower()
+        if outcome == "binary":
             return binary_correct(prediction, gold, source=source, aliases=aliases)
+        if outcome == "llm_binary":
+            from rl.rewards.llm_judge import llm_judge_correct
+
+            text = prediction if prediction is not None else ""
+            extracted = extract_answer_text(str(text)) or strip_thinking(str(text)) or str(text)
+            golds = [gold] + [str(a) for a in (aliases or []) if str(a)]
+            best = 0.0
+            for g in golds:
+                best = max(best, llm_judge_correct(question, g, extracted))
+                if best >= 1.0:
+                    break
+            return float(best)
+        if outcome == "deep_research_llm":
+            from rl.rewards.deep_research import compute_deep_research_llm_score
+
+            bonus = (
+                spec.weight_of("multi_tool_bonus")
+                if spec.is_enabled("multi_tool_bonus")
+                else 0.0
+            )
+            scored = compute_deep_research_llm_score(
+                str(prediction or ""),
+                gold,
+                question=question,
+                n_search=n_search,
+                n_python=n_python,
+                n_fetch=n_fetch,
+                multi_tool_bonus=bonus if bonus > 0 else multi_tool_bonus,
+                aliases=aliases,
+            )
+            return float(scored["score"])
+        from rl.rewards.deep_research import multi_tool_ok
+
         # format_penalty: gate BEFORE accuracy unless switched off.
         if format_ok:
             gained = accuracy(prediction, gold, source=source, aliases=aliases)
         else:
             if not spec.is_enabled("format_penalty"):
-                # switched off: no penalty, still evaluate accuracy on the
-                # raw prediction (the hierarchy's second layer).
                 gained = accuracy(prediction, gold, source=source, aliases=aliases)
             else:
                 return float(-1.0 * spec.weight_of("format_penalty"))
         if gained <= 0:
             return 0.0
-        # cost_penalty: reserved slot — validation guarantees disabled, and
-        # the executor no-ops it even if a future caller hand-builds one.
         bonus = 0.0
-        if spec.is_enabled("multi_tool_bonus") and (n_search > 0 and n_python > 0):
+        if spec.is_enabled("multi_tool_bonus") and multi_tool_ok(
+            n_search=n_search, n_python=n_python, n_fetch=n_fetch
+        ):
             bonus = spec.weight_of("multi_tool_bonus")
         return float(gained + bonus)
 
-    # --- literal path (v1 default; byte-identical to pre-RL4) -------------
+    # --- literal path (v1 default; byte-identical when n_fetch=0) -------------
+    from rl.rewards.deep_research import multi_tool_ok
+
     if not format_ok:
         return -1.0
     acc = accuracy(prediction, gold, source=source, aliases=aliases)
     if acc <= 0:
         return 0.0
-    bonus = multi_tool_bonus if (n_search > 0 and n_python > 0) else 0.0
+    bonus = (
+        multi_tool_bonus
+        if multi_tool_ok(n_search=n_search, n_python=n_python, n_fetch=n_fetch)
+        else 0.0
+    )
     return float(acc + bonus)
 
 

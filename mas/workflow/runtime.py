@@ -50,6 +50,7 @@ class EpisodeRaw:
     format_ok: bool = False
     n_search: int = 0
     n_python: int = 0
+    n_fetch: int = 0
     h_root: float = 0.0
     h_tool: float = 0.0
     consecutive_high: int = 0
@@ -361,6 +362,7 @@ def episode_to_trajectory(
         format_ok=bool(raw.format_ok),
         n_search=int(raw.n_search),
         n_python=int(raw.n_python),
+        n_fetch=int(getattr(raw, "n_fetch", 0) or 0),
         archive=archive.ref(),
         branch_points=bps,
         events=list(archive._events),
@@ -609,6 +611,7 @@ def run_episode(
             format_ok=bool(has_answer_format(raw_text)),
             n_search=int(result_state.get("n_search") or 0),
             n_python=int(result_state.get("n_python") or 0),
+            n_fetch=int(result_state.get("n_fetch") or 0),
             h_root=float(result_state.get("h_root") or 0.0),
             h_tool=float(result_state.get("h_tool") or 0.0),
             consecutive_high=int(result_state.get("consecutive_high") or 0),
@@ -825,6 +828,7 @@ def run_compiled_episode(
     combined_skills: List[Dict[str, Any]] = []
     n_search = 0
     n_python = 0
+    n_fetch = 0
     all_messages: List[Dict[str, Any]] = []
     merged_events: List[Dict[str, Any]] = []
     merged_snapshots: List[Dict[str, Any]] = []
@@ -892,6 +896,7 @@ def run_compiled_episode(
         last_raw = raw
         n_search += int(raw.n_search)
         n_python += int(raw.n_python)
+        n_fetch += int(getattr(raw, "n_fetch", 0) or 0)
         combined_skills.extend(list(raw.skill_results))
         all_messages.extend(list(raw.messages))
         # agent-framework A3: merge per-hop window_events/snapshots (real ids).
@@ -908,6 +913,7 @@ def run_compiled_episode(
         last_raw = EpisodeRaw(messages=[], error="compiled graph produced no episode")
     last_raw.n_search = n_search
     last_raw.n_python = n_python
+    last_raw.n_fetch = n_fetch
     last_raw.skill_results = combined_skills or last_raw.skill_results
     if all_messages:
         last_raw.messages = all_messages

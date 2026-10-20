@@ -177,9 +177,10 @@ export const BRANCH_GATE_OPTIONS = [
 
 export const SAMPLING_MODE_OPTIONS = [
   { value: 'grpo_n', label: 'GRPO', help: '每道题生成固定数量的独立 Rollout。' },
+  { value: 'flow_grpo', label: 'Flow-GRPO', help: '轨迹奖励广播到 planner turn，不分支。' },
   { value: 'arpo', label: 'ARPO', help: '根据 Entropy ΔH 在 Branch Site 扩展后续路径。' },
   { value: 'aepo', label: 'AEPO', help: '使用 Entropy 与 Information Gain 分配 Branch Budget。' },
-  { value: 'appo', label: 'APPO', help: '在工具结果处分支。分支只做对比，信用按折扣写回原轨迹。future_kl 预设尚未接到 actor。' },
+  { value: 'appo', label: 'APPO', help: '在工具结果处分支。分支只做对比，信用按折扣写回原轨迹。' },
   { value: 'rae', label: 'RAE', help: '结合 Verifier Verdict 与 Dead-end Backprop。' },
 ] as const;
 
@@ -195,7 +196,7 @@ export function gateOptionsFor(mode: string | undefined, kind: BranchCandidateKi
 }
 
 export function isBranchingMode(mode?: string): boolean {
-  return !['grpo', 'grpo_n'].includes(mode || 'grpo_n');
+  return !['grpo', 'grpo_n', 'flow_grpo'].includes(mode || 'grpo_n');
 }
 
 export function anchorKind(site: BranchSiteSpec): BranchAnchorKind {

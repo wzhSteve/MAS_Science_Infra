@@ -120,7 +120,7 @@ class TestExpansionTable(unittest.TestCase):
     """v1 preset → pipeline expansion matches the frozen snapshot table exactly."""
 
     EXPECTED = {
-        "grpo": ("grpo", ["zero_prefix"]),
+        "grpo": ("grpo", []),
         "arpo": ("grpo", []),
         "appo": ("grpo", ["appo_credit"]),
         "aepo": ("grpo", ["aepo_entropy"]),

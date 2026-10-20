@@ -53,6 +53,19 @@ class TestRewardTiers(unittest.TestCase):
         hashed = Trajectory(final_answer="2", format_ok=False)
         self.assertEqual(default_reward_fn(hashed, {"answer": "2", "source": "gsm8k"}), 1.0)
 
+    def test_boxed_answer_does_not_dilute_hotpot_score(self):
+        from rl.rewards.outcome import binary_correct, compute_outcome_reward, extract_answer_text
+
+        pred = r"<answer>\boxed{Harry F. Sinclair}</answer>"
+        self.assertEqual(extract_answer_text(pred), "Harry F. Sinclair")
+        self.assertEqual(
+            compute_outcome_reward(
+                pred, "Harry F. Sinclair", source="hotpot", format_ok=True, n_search=1, n_python=0
+            ),
+            1.0,
+        )
+        self.assertEqual(binary_correct(pred, "Harry F. Sinclair", source="hotpot"), 1.0)
+
 
 class TestSamplePolicyOverlay(unittest.TestCase):
     def test_apply_sample_policy_writes_rollout_and_tir(self):

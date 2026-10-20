@@ -189,7 +189,8 @@ PRESET_EXPANSION_BASE: Dict[str, str] = {
 }
 
 PRESET_EXPANSION_OPERATORS: Dict[str, List[str]] = {
-    "grpo": ["zero_prefix"],
+    # GRPO aligned to Flow-GRPO: no MAS-only zero_prefix on flat groups.
+    "grpo": [],
     "arpo": [],
     "appo": ["appo_credit"],
     "aepo": ["aepo_entropy"],

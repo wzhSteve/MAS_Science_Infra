@@ -25,7 +25,7 @@ for _p in (str(ROOT), str(MAS)):
 
 # Frozen expected expansion (RL_design §3.4.4 snapshot table, verbatim).
 FROZEN = {
-    "grpo": ("grpo", ["zero_prefix"]),
+    "grpo": ("grpo", []),
     "arpo": ("grpo", []),
     "appo": ("grpo", ["appo_credit"]),
     "aepo": ("grpo", ["aepo_entropy"]),

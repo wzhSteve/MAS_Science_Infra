@@ -20,7 +20,7 @@ export const PRESET_EXPANSION_BASE: Record<string, string> = {
 };
 
 export const PRESET_EXPANSION_OPERATORS: Record<string, string[]> = {
-  grpo: ['zero_prefix'],
+  grpo: [],
   arpo: [],
   appo: ['appo_credit'],
   aepo: ['aepo_entropy'],

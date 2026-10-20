@@ -33,6 +33,8 @@ describe('branch site model', () => {
     expect(arpo?.help).not.toContain('APPO');
     expect(isBranchingMode('appo')).toBe(true);
     expect(isBranchingMode('grpo_n')).toBe(false);
+    expect(isBranchingMode('flow_grpo')).toBe(false);
+    expect(SAMPLING_MODE_OPTIONS.find((option) => option.value === 'flow_grpo')?.label).toBe('Flow-GRPO');
   });
 
   it('derives user-facing observation points from workflow entities', () => {

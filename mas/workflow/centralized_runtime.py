@@ -230,13 +230,14 @@ def _tool_calls_for_result(msg: AgentMessage, recorded_as: str) -> Optional[List
 
 
 _SEARCH_TOOL_NAMES = {
-    "Wikipedia_Search_Tool", "Web_Fetch_Tool", "Bing_Search_Tool",
-    "wikipedia_search", "web_fetch", "web_search", "bing_search", "bing",
+    "Wikipedia_Search_Tool", "Bing_Search_Tool",
+    "wikipedia_search", "web_search", "bing_search", "bing",
 }
+_FETCH_TOOL_NAMES = {"Web_Fetch_Tool", "web_fetch", "WebFetch"}
 _PYTHON_TOOL_NAMES = {"Python_Coder_Tool", "python_coder", "execute_python"}
 
 
-def _is_search_toolmsg(msg: AgentMessage) -> bool:
+def _toolmsg_name(msg: AgentMessage) -> str:
     """user_space wraps (e.g. AgentFlow) send tool results from one executor
     node, so ``msg.src`` is the executor id. The real tool name is carried in
     ``payload.tool`` / ``payload.tool_name`` / ``trace.tool``."""
@@ -245,16 +246,19 @@ def _is_search_toolmsg(msg: AgentMessage) -> bool:
     if not name:
         trace = payload.get("trace") if isinstance(payload.get("trace"), dict) else {}
         name = str(trace.get("tool") or trace.get("tool_name") or "")
-    return name in _SEARCH_TOOL_NAMES
+    return name
+
+
+def _is_search_toolmsg(msg: AgentMessage) -> bool:
+    return _toolmsg_name(msg) in _SEARCH_TOOL_NAMES
+
+
+def _is_fetch_toolmsg(msg: AgentMessage) -> bool:
+    return _toolmsg_name(msg) in _FETCH_TOOL_NAMES
 
 
 def _is_python_toolmsg(msg: AgentMessage) -> bool:
-    payload = msg.payload if isinstance(msg.payload, dict) else {}
-    name = str(payload.get("tool") or payload.get("tool_name") or "")
-    if not name:
-        trace = payload.get("trace") if isinstance(payload.get("trace"), dict) else {}
-        name = str(trace.get("tool") or trace.get("tool_name") or "")
-    return name in _PYTHON_TOOL_NAMES
+    return _toolmsg_name(msg) in _PYTHON_TOOL_NAMES
 
 
 def _record_agent_window(
@@ -437,6 +441,7 @@ def _run_centralized_episode_body(
     window_events: List[Dict[str, Any]] = []
     n_search = 0
     n_python = 0
+    n_fetch = 0
     final_answer: Optional[str] = None
     error: Optional[str] = None
     done = False
@@ -978,8 +983,11 @@ def _run_centralized_episode_body(
                     tool_id=tmsg.src,
                     recorder=execution_recorder,
                 )
-                if tmsg.src in ("wikipedia_search", "bing_search", "web_fetch", "web_search") or _is_search_toolmsg(tmsg):
+                if tmsg.src in ("wikipedia_search", "bing_search", "web_search") or _is_search_toolmsg(tmsg):
                     n_search += 1
+                if tmsg.src == "web_fetch" or _is_fetch_toolmsg(tmsg):
+                    if bool(tmsg.payload.get("ok")):
+                        n_fetch += 1
                 if tmsg.src == "python_coder" or _is_python_toolmsg(tmsg):
                     n_python += 1
 
@@ -1134,6 +1142,7 @@ def _run_centralized_episode_body(
         format_ok=bool(final_answer),
         n_search=n_search,
         n_python=n_python,
+        n_fetch=n_fetch,
         window_events=window_events,
         error=error,
         prompt_hash=dict(prov.get("prompt_hash") or {}),

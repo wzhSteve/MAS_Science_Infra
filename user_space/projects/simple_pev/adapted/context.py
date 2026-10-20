@@ -17,7 +17,8 @@ verifier        ``Verifier.verificate_context`` + ``extract_conclusion``;
                 ``direct_output`` only; ``final_output`` stays in json/trace.
 ==============  ==========================================================
 
-One shared ``Memory`` per episode, no outline, no BTS. Engine roles follow
+One shared ``Memory`` per episode. ``actions`` stay the history. ``outline`` and
+``obtained_information`` hang on that same object. Engine roles follow
 ``model_engine=[trainable, fixed, fixed, fixed]``: only
 ``generate_next_step`` hits the trainable engine (see ``engine.py``).
 """
@@ -32,6 +33,7 @@ import sys
 import tempfile
 import threading
 import time
+from uuid import uuid4
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -105,6 +107,16 @@ def load_runtime() -> Dict[str, Any]:
         env = os.environ.get(f"AGENTFLOW_{key.upper()}", "").strip()
         if env.isdigit():
             cfg[key] = int(env)
+    temp_env = os.environ.get("AGENTFLOW_TEMPERATURE", "").strip()
+    if temp_env:
+        cfg["temperature"] = float(temp_env)
+    # Paper trains at 3 planner turns. AGENTFLOW_MAX_STEPS still wins.
+    # Eval shells do not set TIR_ALGO / AGENTFLOW_TRAIN, so they keep max_steps.
+    training = bool(os.environ.get("TIR_ALGO", "").strip() or os.environ.get("AGENTFLOW_TRAIN", "").strip())
+    if training and not os.environ.get("AGENTFLOW_MAX_STEPS", "").strip():
+        cap = cfg.get("train_max_steps")
+        if str(cap).isdigit():
+            cfg["max_steps"] = int(cap)
     tools = cfg.get("enabled_tools")
     cfg["enabled_tools"] = [str(t) for t in tools] if isinstance(tools, list) and tools else list(DEFAULT_TOOLS)
     return cfg
@@ -146,9 +158,21 @@ def wrap_answer(direct_output: str, *, source: str = "") -> str:
     else:
         line = _ANSWER_LINE_RE.search(text)
         body = line.group(1).strip() if line and line.group(1).strip() else text
+    # Strip leaked <think> and peel \\boxed{...} so LLM judges see the short answer.
+    try:
+        from rl.rewards.outcome import extract_answer_text, strip_thinking, unwrap_boxed
+
+        cleaned = strip_thinking(body) or body
+        extracted = extract_answer_text(f"<answer>{cleaned}</answer>")
+        body = extracted or unwrap_boxed(cleaned) or cleaned
+    except Exception:  # noqa: BLE001
+        body = re.sub(r"<think>.*?</think>", "", body, flags=re.I | re.S).strip() or body
     if str(source or "").lower() == "gsm8k":
         nums = _NUM_RE.findall(body)
         body = nums[-1] if nums else body
+    body = str(body or "").strip()
+    if not body:
+        return ""
     return f"<answer>{body}</answer>"
 
 
@@ -192,11 +216,13 @@ class Components:
                 llm_engine_name="gpt-4o", root_cache_dir=tempfile.mkdtemp(prefix="agentflow_cache_"),
                 verbose=False, temperature=temp, tool_instances_cache=instances,
             )
-        self.planner.llm_engine = engine("planner", trainable=True)
-        self.planner.llm_engine_fixed = engine("planner_fixed")
-        self.verifier.llm_engine = engine("verifier")
-        self.verifier.llm_engine_fixed = engine("verifier")
-        self.executor.llm_generate_tool_command = engine("executor")
+        # Only the planner samples. Frozen roles stay at temperature 0 so tool
+        # text is part of the environment, not another policy.
+        self.planner.llm_engine = engine("planner", trainable=True, temperature=temp)
+        self.planner.llm_engine_fixed = engine("planner_fixed", temperature=0.0)
+        self.verifier.llm_engine = engine("verifier", temperature=0.0)
+        self.verifier.llm_engine_fixed = engine("verifier", temperature=0.0)
+        self.executor.llm_generate_tool_command = engine("executor", temperature=0.0)
 
 
 class Episode:
@@ -206,6 +232,9 @@ class Episode:
         self.question = question
         self.source = source
         self.memory = Memory()
+        self.memory.outline = []
+        self.memory.obtained_information = []
+        self._pending_plan: Dict[str, Any] = {}
         # Planner keeps query_analysis on self; Executor keeps its cache dir.
         self.planner = copy.copy(comps.planner)
         self.executor = copy.copy(comps.executor)
@@ -235,16 +264,20 @@ class Episode:
         A post-tool export keeps the action and the child plans the next step.
         """
         step = int(self.step_count)
-        actions = {
-            str(key): {
+        actions = {}
+        for key, action in self.memory.get_actions().items():
+            if not isinstance(action, dict):
+                continue
+            saved = {
                 "tool_name": action.get("tool_name"),
                 "sub_goal": action.get("sub_goal"),
                 "command": action.get("command"),
                 "result": action.get("result"),
             }
-            for key, action in self.memory.get_actions().items()
-            if isinstance(action, dict)
-        }
+            for extra in ("prediction", "prediction_reason", "tool_input", "actual", "conclusion"):
+                if action.get(extra) not in (None, ""):
+                    saved[extra] = action.get(extra)
+            actions[str(key)] = saved
         if replay_plan:
             step = max(0, step - 1)
             actions.pop(f"Action Step {self.step_count}", None)
@@ -254,6 +287,8 @@ class Episode:
             "query_analysis": self.query_analysis,
             "step_count": step,
             "actions": actions,
+            "outline": [dict(item) for item in (getattr(self.memory, "outline", None) or []) if isinstance(item, dict)],
+            "obtained_information": [str(item) for item in (getattr(self.memory, "obtained_information", None) or [])],
             "query": self.memory.get_query(),
             "files": list(self.memory.get_files()),
             "analyzed": bool(self.query_analysis),
@@ -267,16 +302,26 @@ class Episode:
         for key, action in (state.get("actions") or {}).items():
             if not isinstance(action, dict):
                 continue
-            self.memory.actions[str(key)] = {
+            saved = {
                 "tool_name": action.get("tool_name"),
                 "sub_goal": action.get("sub_goal"),
                 "command": action.get("command"),
                 "result": action.get("result"),
             }
+            for extra in ("prediction", "prediction_reason", "tool_input", "actual", "conclusion"):
+                if action.get(extra) not in (None, ""):
+                    saved[extra] = action.get(extra)
+            self.memory.actions[str(key)] = saved
         query = state.get("query")
         if query:
             self.memory.set_query(str(query))
         self.memory.files = [dict(item) for item in (state.get("files") or []) if isinstance(item, dict)]
+        from sft_prompts import normalize_outline
+
+        self.memory.outline = normalize_outline(state.get("outline"))
+        self.memory.obtained_information = [
+            str(item) for item in (state.get("obtained_information") or []) if str(item or "").strip()
+        ]
 
 
 class EpisodeContext:
@@ -285,6 +330,7 @@ class EpisodeContext:
         self._build_error = ""
         self._lock = threading.Lock()
         self._episodes: "OrderedDict[str, Episode]" = OrderedDict()
+        self._anon_key = ""
 
     def components(self) -> Components:
         with self._lock:
@@ -302,8 +348,14 @@ class EpisodeContext:
         key = _episode_key(payload)
         comps = self.components()
         with self._lock:
-            if key == "q:" and self._episodes:
-                key = next(reversed(self._episodes))
+            # An empty id plus an empty question used to reuse the previous
+            # episode. Keep one fresh key for this anonymous streak instead.
+            if key == "q:":
+                if not self._anon_key:
+                    self._anon_key = f"q:anon:{uuid4().hex}"
+                key = self._anon_key
+            else:
+                self._anon_key = ""
             comps.log_key.value = key
             ep = self._episodes.get(key)
             question = str(payload.get("question") or (ep.question if ep else "") or payload.get("input") or "")
@@ -364,6 +416,12 @@ class EpisodeContext:
             ep.question, None, ep.query_analysis, ep.memory,
             ep.step_count, int(runtime["max_steps"]), ep.json_data,
         )
+        plan = getattr(ep.planner, "_last_plan", None) or {}
+        ep._pending_plan = plan if isinstance(plan, dict) else {}
+        if ep._pending_plan.get("outline"):
+            from sft_prompts import apply_outline
+
+            apply_outline(ep.memory, ep._pending_plan["outline"])
         ep.context, ep.sub_goal, ep.tool_name = ep.planner.extract_context_subgoal_and_tool(next_step)
         return {
             "kind": "plan_step",
@@ -411,6 +469,21 @@ class EpisodeContext:
             ep.json_data[f"tool_result_{ep.step_count}"] = result
             ok = not (isinstance(result, str) and result.startswith(("Error", "Execution timed out")))
         ep.memory.add_action(ep.step_count, tool_name, ep.sub_goal, command, result)
+        from sft_prompts import actual_label, normalize_prediction
+
+        action = ep.memory.actions.get(f"Action Step {ep.step_count}")
+        plan = ep._pending_plan if isinstance(ep._pending_plan, dict) else {}
+        if isinstance(action, dict):
+            prediction = normalize_prediction(plan.get("prediction"))
+            reason = str(plan.get("prediction_reason") or "")
+            tool_input = str(plan.get("tool_input") or ep.context or "")
+            if prediction:
+                action["prediction"] = prediction
+            if reason:
+                action["prediction_reason"] = reason
+            if tool_input:
+                action["tool_input"] = tool_input
+            action["actual"] = actual_label(result)
         output = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
         short = _short_tool_name(tool_name)
         return {
@@ -435,13 +508,46 @@ class EpisodeContext:
         stop_verification = ep.verifier.verificate_context(
             ep.question, None, ep.query_analysis, ep.memory, ep.step_count, ep.json_data
         )
-        analysis, conclusion = ep.verifier.extract_conclusion(stop_verification)
+        from sft_prompts import (
+            add_obtained_information,
+            budget_unresolved_reason,
+            parse_verifier_text,
+            recent_has_fetch_body,
+            recent_has_search_urls,
+            recent_steps_look_empty,
+        )
+
+        verdict = parse_verifier_text(stop_verification)
+        if recent_has_search_urls(ep.memory) and not recent_has_fetch_body(ep.memory):
+            verdict["conclusion"] = "CONTINUE"
+        add_obtained_information(ep.memory, verdict.get("obtained"))
+        action = ep.memory.actions.get(f"Action Step {ep.step_count}")
+        if isinstance(action, dict):
+            action["conclusion"] = verdict["conclusion"]
+        _analysis, _token = ep.verifier.extract_conclusion(stop_verification)
+        conclusion = verdict["conclusion"]
+        analysis = str(verdict.get("reason") or _analysis or "")
         out_of_budget = ep.step_count >= int(runtime["max_steps"]) or (
             time.time() - ep.start >= float(runtime["max_time"])
         )
+        if out_of_budget:
+            analysis = budget_unresolved_reason(analysis, ep.memory)
+
+        no_evidence = recent_steps_look_empty(ep.memory) and not recent_has_fetch_body(ep.memory)
+        # Budget stop without grounded evidence: end the episode without inventing an answer.
+        force_empty = bool(out_of_budget and no_evidence and conclusion != "STOP")
         stop = conclusion == "STOP" or out_of_budget
         answer = ""
-        if stop:
+        if stop and force_empty:
+            ep.final_output = ""
+            ep.direct_output = ""
+            ep.json_data["final_output"] = ""
+            ep.json_data["direct_output"] = ""
+            ep.json_data["budget_empty_stop"] = True
+            ep.done = True
+            answer = ""
+            analysis = (str(analysis or "") + " | budget_stop_without_evidence").strip(" |")
+        elif stop:
             # Official default output_types=final,direct. final is the write-up;
             # direct is the answer the scorer wraps.
             ep.planner.query_analysis = ep.query_analysis
@@ -454,7 +560,7 @@ class EpisodeContext:
         return {
             "kind": "verify",
             "payload": {
-                "ok": stop,
+                "ok": stop and not force_empty,
                 "reason": str(analysis or "")[:1000],
                 "step_conclusion": "COMPLETE" if stop else "INCOMPLETE",
                 "slot_updates": [],
@@ -467,6 +573,7 @@ class EpisodeContext:
                     "conclusion": conclusion,
                     "step": ep.step_count,
                     "budget_stop": out_of_budget,
+                    "budget_empty_stop": force_empty,
                     "final_output": ep.final_output,
                 }),
             },

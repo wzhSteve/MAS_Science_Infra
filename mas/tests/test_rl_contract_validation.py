@@ -453,7 +453,7 @@ class TestLegacyV1Acceptance(unittest.TestCase):
 
 def _frozen_pairs():
     return {
-        "grpo": ("grpo", ["zero_prefix"]),
+        "grpo": ("grpo", []),
         "arpo": ("grpo", []),
         "appo": ("grpo", ["appo_credit"]),
         "aepo": ("grpo", ["aepo_entropy"]),

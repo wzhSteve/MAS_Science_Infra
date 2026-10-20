@@ -1,0 +1,58 @@
+{
+  "checked_at": "2026-10-20T09:00:00+08:00",
+  "queue": "experiments/simple-pev/fidelity/run_short_train.sh",
+  "finished": {
+    "grpo": "2026-10-19T21:52:49+08:00",
+    "flow_grpo": "2026-10-19T22:51:58+08:00",
+    "arpo": "2026-10-20T00:03:14+08:00",
+    "appo": "2026-10-20T01:12:07+08:00"
+  },
+  "code_changes": "none",
+  "initial_rollouts_change": false,
+  "reason": "ARPO and APPO both produced nonzero branch_local_count, so initial_rollouts stays 1. Reward, loss, and token mask were not edited.",
+  "thirty_step_extension": false,
+  "thirty_step_reason": "APPO has only 2 of 5 steps with reward strictly inside (0, 1). The plan starts a 30-step run only after all four algorithms pass that bar.",
+  "algorithms": {
+    "grpo": {
+      "pass": true,
+      "rewards": [0.5, 0.875, 0.75, 0.5, 0.0],
+      "contrast_steps": 4,
+      "kl_coef": 0.001,
+      "branch_local_count": [0, 0, 0, 0, 0],
+      "n_rollouts": 8,
+      "mas_fault": 0,
+      "note": "Step 1 contrast with pg_loss 0 is the first-update ratio of 1. Steps 2-4 have nonzero pg_loss. Step 5 is all zero and pg_loss is 0."
+    },
+    "flow_grpo": {
+      "pass": true,
+      "rewards": [0.25, 0.5, 0.75, 0.625, 0.0],
+      "contrast_steps": 4,
+      "kl_coef": 0.001,
+      "branch_local_count": [0, 0, 0, 0, 0],
+      "n_rollouts": 8,
+      "mas_fault": 0,
+      "note": "Every contrast step has nonzero pg_loss. Step 5 is all zero and pg_loss is 0."
+    },
+    "arpo": {
+      "pass": true,
+      "rewards": [0.25, 1.0, 0.5, 0.5, 0.0],
+      "contrast_steps": 3,
+      "kl_coef": 0.0,
+      "branch_local_count": [2, 0, 2, 4, 2],
+      "n_rollouts": 8,
+      "mas_fault": 0,
+      "note": "All-one step 2 and all-zero step 5 have pg_loss 0. Contrast steps have nonzero pg_loss. Branches fired, so initial_rollouts is unchanged."
+    },
+    "appo": {
+      "pass": false,
+      "rewards": [0.0, 0.625, 0.125, 0.0, 0.0],
+      "contrast_steps": 2,
+      "kl_coef": 0.001,
+      "fipo_iw_mean_present": true,
+      "branch_local_count": [0, 4, 4, 4, 4],
+      "n_rollouts": 8,
+      "mas_fault": 0,
+      "note": "Fails the 3-of-5 contrast bar. Step 2 pg_loss is 0 but advantage max is 1 and grad_norm is 4.08, so the advantage reached the actor; the scalar cancelled on a ratio of 1. Step 3 pg_loss is 0.168. No mask or reward change."
+    }
+  }
+}

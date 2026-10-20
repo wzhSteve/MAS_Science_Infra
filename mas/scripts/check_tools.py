@@ -8,12 +8,26 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO = ROOT.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(REPO))
 os.chdir(ROOT)
 
 os.environ.pop("TIR_OFFLINE_SEARCH", None)
-if not os.environ.get("WEB_SEARCH_PROXY") and not os.environ.get("GOOGLE_CHROME_PROXY"):
-    os.environ["WEB_SEARCH_PROXY"] = "http://127.0.0.1:7890"
+try:
+    from science_infra.env import load_science_env
+
+    load_science_env()
+except Exception:
+    pass
+_proxy = (
+    (os.environ.get("SCIENCE_INFRA_PROXY") or "").strip()
+    or (os.environ.get("WEB_SEARCH_PROXY") or "").strip()
+    or "http://127.0.0.1:17890"
+)
+os.environ.setdefault("SCIENCE_INFRA_PROXY", _proxy)
+os.environ.setdefault("WEB_SEARCH_PROXY", _proxy)
+os.environ.setdefault("GOOGLE_CHROME_PROXY", _proxy)
 
 from python_tool import execute_python  # noqa: E402
 from tools.search import web_search  # noqa: E402

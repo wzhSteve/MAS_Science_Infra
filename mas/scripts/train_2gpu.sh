@@ -10,8 +10,18 @@ cd "${ROOT}"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 export VLLM_USE_V1="${VLLM_USE_V1:-1}"
-export WEB_SEARCH_PROXY="${WEB_SEARCH_PROXY:-http://127.0.0.1:7890}"
-export GOOGLE_CHROME_PROXY="${GOOGLE_CHROME_PROXY:-${WEB_SEARCH_PROXY}}"
+# Prefer repo-root .env (SCIENCE_INFRA_PROXY); default matches SSH RemoteForward 17890.
+REPO_ROOT="$(cd "${ROOT}/.." && pwd)"
+if [[ -f "${REPO_ROOT}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/.env" || true
+  set +a
+fi
+_PROXY_DEFAULT="${SCIENCE_INFRA_PROXY:-${WEB_SEARCH_PROXY:-http://127.0.0.1:17890}}"
+export SCIENCE_INFRA_PROXY="${SCIENCE_INFRA_PROXY:-${_PROXY_DEFAULT}}"
+export WEB_SEARCH_PROXY="${WEB_SEARCH_PROXY:-${SCIENCE_INFRA_PROXY}}"
+export GOOGLE_CHROME_PROXY="${GOOGLE_CHROME_PROXY:-${SCIENCE_INFRA_PROXY}}"
 unset TIR_OFFLINE_SEARCH || true
 ALGO="${ALGO:-grpo}"
 

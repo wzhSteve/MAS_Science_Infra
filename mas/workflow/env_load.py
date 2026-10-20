@@ -73,10 +73,35 @@ def _parse(path: Path) -> dict[str, str]:
     return out
 
 
+_PROXY_ALIASES = ("WEB_SEARCH_PROXY", "GOOGLE_CHROME_PROXY", "CHROME_PROXY")
+
+
+def _propagate_proxy_aliases() -> None:
+    """Same rules as ``science_infra.env.propagate_proxy_aliases`` (layer-local copy)."""
+    try:
+        from science_infra.env import propagate_proxy_aliases
+
+        propagate_proxy_aliases()
+        return
+    except Exception:
+        pass
+    primary = (os.environ.get("SCIENCE_INFRA_PROXY") or "").strip()
+    web = (os.environ.get("WEB_SEARCH_PROXY") or "").strip()
+    if not primary and web:
+        os.environ["SCIENCE_INFRA_PROXY"] = web
+        primary = web
+    if not primary:
+        return
+    for key in _PROXY_ALIASES:
+        if not (os.environ.get(key) or "").strip():
+            os.environ[key] = primary
+
+
 def load_repo_dotenv(*, override: bool = False) -> Optional[Path]:
     """Find and load the first existing ``.env``. Existing non-empty env wins."""
     global _LOADED
     if _LOADED and not override:
+        _propagate_proxy_aliases()
         return None
     for path in _candidate_paths():
         if not path.is_file():
@@ -89,6 +114,8 @@ def load_repo_dotenv(*, override: bool = False) -> Optional[Path]:
             elif key not in os.environ or os.environ.get(key, "") == "":
                 os.environ[key] = value
         _LOADED = True
+        _propagate_proxy_aliases()
         return path
     _LOADED = True
+    _propagate_proxy_aliases()
     return None

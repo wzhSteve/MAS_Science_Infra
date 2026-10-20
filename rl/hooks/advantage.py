@@ -102,7 +102,43 @@ def apply_tir_advantages(
     for op in spec.operators:
         op_fn = _OPERATORS[op.id]
         batch = op_fn(batch, op.params, tir)
+    n_flat = count_zero_variance_groups(batch)
+    meta = dict(getattr(batch, "meta_info", None) or {})
+    meta["n_zero_variance_groups"] = n_flat
+    batch.meta_info = meta
+    print(f"n_zero_variance_groups={n_flat}", flush=True)
     return batch
+
+
+def count_zero_variance_groups(batch: DataProto) -> int:
+    """Groups whose outcome rewards are all equal (all 0 or all 1) have advantage 0.
+
+    A group of one is excluded: GRPO already forces its std to 1, and there is
+    no within-group contrast to count.
+    """
+    rewards = None
+    if "token_level_rewards" in batch.batch:
+        rewards = batch.batch["token_level_rewards"]
+    elif "token_level_scores" in batch.batch:
+        rewards = batch.batch["token_level_scores"]
+    if rewards is None:
+        return 0
+    index = None
+    for key in ("uid", "data_id_list"):
+        if key in batch.non_tensor_batch:
+            index = batch.non_tensor_batch[key]
+            break
+    if index is None:
+        return 0
+    scores = rewards.detach().float().sum(dim=-1).cpu()
+    buckets: Dict[Any, List[float]] = defaultdict(list)
+    for i, idx in enumerate(list(index)):
+        buckets[idx].append(float(scores[i]))
+    flat = 0
+    for vals in buckets.values():
+        if len(vals) > 1 and max(vals) == min(vals):
+            flat += 1
+    return flat
 
 
 def legacy_apply_tir_advantages(
@@ -195,7 +231,7 @@ def legacy_apply_tir_advantages(
 _PIPELINE_EXPANSION: Dict[str, List[str]] = {
     "flow_grpo": [],  # grpo base, operators: [] (KL overlay is config-side)
     "arpo": [],       # advantage passthrough (difference is sampling-side)
-    "grpo": ["zero_prefix"],
+    "grpo": [],  # aligned to Flow-GRPO (no MAS-only zero_prefix operator)
     "appo": ["appo_credit"],
     "rae": ["zero_prefix", "rae_verdict"],
     "aepo": ["aepo_entropy"],

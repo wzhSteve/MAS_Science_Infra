@@ -1,4 +1,4 @@
-revision: 3
+revision: 4
 items:
   - id: train
     name: train.parquet
@@ -6,6 +6,12 @@ items:
   - id: validation
     name: val.parquet
     path: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet
+  - id: rl-train-10k
+    name: rl train 10k
+    path: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/train_10k.parquet
+  - id: rl-valid
+    name: rl valid
+    path: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/valid.parquet
   - id: hotpotqa
     name: hotpotqa
     path: /root/autodl-tmp/MAS_Science_Infra/data/hotpotqa.json

@@ -18,7 +18,7 @@ python prepare_data.py --offline --train-limit 32 --val-limit 8
 TRAIN_LIMIT=1024 VAL_LIMIT=200 bash scripts/prepare_data.sh
 ```
 
-检索默认走 `WEB_SEARCH_PROXY=http://127.0.0.1:7890`（与 epc_aw Clash 一致）。先验证三工具：
+检索出网代理以仓库根 `.env` 的 **`SCIENCE_INFRA_PROXY`** 为唯一主源（默认 `http://127.0.0.1:17890`，对应 SSH `RemoteForward 17890 127.0.0.1:12001`）。`WEB_SEARCH_PROXY` / `GOOGLE_CHROME_PROXY` 为空时由加载逻辑回填。勿在 `.env` 设全局 `HTTP_PROXY`（会打坏本地 vLLM / rollout）。先验证三工具：
 
 ```bash
 python scripts/check_tools.py

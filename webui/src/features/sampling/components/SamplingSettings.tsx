@@ -11,6 +11,8 @@ import { Button } from '../../../shared/ui/button';
 import { Input } from '../../../shared/ui/input';
 import { Select } from '../../../shared/ui/select';
 import { useTrainingConfig } from '../../../app/providers/TrainingConfigProvider';
+import { FormatRewardField } from '../../rl/components/FormatRewardField';
+import { algorithmFromSampling } from '../../rl/model/normalizeRlPayload';
 import {
   BRANCH_GATE_OPTIONS,
   SAMPLING_MODE_OPTIONS,
@@ -41,7 +43,8 @@ const SUPPORT = {
   unavailable: { tone: 'neutral', label: '暂不支持' },
 } as const;
 const EMPTY_OPPORTUNITIES: SamplingOpportunity[] = [];
-const IMPLEMENTED_MODES = new Set(['grpo', 'grpo_n', 'arpo', 'appo']);
+const IMPLEMENTED_MODES = new Set(['grpo', 'grpo_n', 'flow_grpo', 'arpo', 'appo']);
+const PRIMARY_MODES = ['grpo_n', 'flow_grpo', 'arpo', 'appo'];
 
 const CandidateRow = memo(function CandidateRow({ opportunity, selected, onSelect }: {
   opportunity: SamplingOpportunity;
@@ -113,9 +116,10 @@ export const SamplingSettings = memo(function SamplingSettings({
   const officialArpoGate = gateParams.use_official_arpo_gate !== false;
   const branching = isBranchingMode(sampling.mode);
   const enabledCount = opportunities.filter(item => item.configured && item.enabled).length;
-  const modes = useMemo(() =>
-    Array.from(new Set([sampling.mode || 'grpo_n', ...(palette.sampling_modes || []), ...SAMPLING_MODE_OPTIONS.map((item) => item.value)])),
-  [palette.sampling_modes, sampling.mode]);
+  const modes = useMemo(() => {
+    const current = sampling.mode || 'grpo_n';
+    return PRIMARY_MODES.includes(current) ? PRIMARY_MODES : [current, ...PRIMARY_MODES];
+  }, [sampling.mode]);
   const gates = useMemo(() => {
     if (!selectedOpportunity) return [];
     const compatible = selectedOpportunity.allowed_gates;
@@ -143,7 +147,7 @@ export const SamplingSettings = memo(function SamplingSettings({
     patchSampling({ barriers: [], sites: sites.filter(site => site.id !== siteId) });
   }, [patchSampling, sites]);
   const modeLabel = (mode: string) => ({
-    grpo_n: 'GRPO', grpo: 'GRPO', arpo: 'ARPO',
+    grpo_n: 'GRPO', grpo: 'GRPO', flow_grpo: 'Flow-GRPO', arpo: 'ARPO',
     aepo: 'AEPO', appo: 'APPO', rae: 'RAE',
   }[mode] || SAMPLING_MODE_OPTIONS.find((item) => item.value === mode)?.label || mode);
   const gateLabel = (gate: string) => gate === 'arpo' || (gate === 'entropy_delta' && officialArpoGate)
@@ -193,6 +197,7 @@ export const SamplingSettings = memo(function SamplingSettings({
               <option key={value} value={value}>{value.toUpperCase()}</option>)}
           </Select>
         </FormField>
+        <FormatRewardField algo={algorithm} rl={training.rl} onPatch={(next) => training.patch(next)} />
         <FormField label="每题候选数">
           <Input type="number" min={1} step={1} value={group ?? ''} onChange={event => {
             const n = event.target.value === '' ? undefined : Number(event.target.value);
@@ -225,6 +230,11 @@ export const SamplingSettings = memo(function SamplingSettings({
             </option>)}
           </Select>
         </FormField>
+        <FormatRewardField
+          algo={algorithmFromSampling(sampling) || ''}
+          rl={training.rl}
+          onPatch={(next) => training.patch(next)}
+        />
         <FormField label={<HelpLabel help="每道题最终生成的 Rollout 数。">Group Size</HelpLabel>}>
           <Input type="number" min={1} value={sampling.group_n}
             onChange={(event) => patchSampling({ group_n: Number(event.target.value) })} />
@@ -252,10 +262,10 @@ export const SamplingSettings = memo(function SamplingSettings({
         </Button>
       </div>}
       {!branching && <div className="sampling-independent-note">
-        <CircleDot size={14} /><span>GRPO 使用独立 Rollout，不需要配置分支位置</span>
+        <CircleDot size={14} /><span>{sampling.mode === 'flow_grpo' ? 'Flow-GRPO' : 'GRPO'} 使用独立 Rollout，不需要配置分支位置</span>
       </div>}
       {sampling.mode === 'appo' && <InlineNotice tone="warning">
-        APPO 的分支不进入 actor，折扣后的结果写回原轨迹。future_kl 已写入训练预设，尚未接到 actor 的 policy loss。
+        APPO 的分支不进入 actor，折扣后的结果写回原轨迹。
       </InlineNotice>}
     </Section>}
 

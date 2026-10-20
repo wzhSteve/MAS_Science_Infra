@@ -45,7 +45,7 @@ class TestResolvedAlgoPayload(unittest.TestCase):
 
     def test_eight_presets_cover_the_snapshot_table(self):
         expected = {
-            "grpo": ("grpo", ["zero_prefix"]),
+            "grpo": ("grpo", []),
             "arpo": ("grpo", []),
             "appo": ("grpo", ["appo_credit"]),
             "aepo": ("grpo", ["aepo_entropy"]),

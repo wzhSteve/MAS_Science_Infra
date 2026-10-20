@@ -27,9 +27,11 @@ load_repo_dotenv()
 
 
 def env_reward_spec() -> Optional[RewardSpec]:
-    """``TIR_REWARD_OUTCOME=binary`` (set by train_tir_agent) selects the 0/1 outcome."""
+    """``TIR_REWARD_OUTCOME`` (set by train_tir_agent) selects the outcome mode."""
     mode = os.environ.get("TIR_REWARD_OUTCOME", "").strip().lower()
-    return RewardSpec(outcome="binary") if mode == "binary" else None
+    if mode in ("binary", "llm_binary", "deep_research_llm", "hierarchical"):
+        return RewardSpec(outcome=mode)
+    return None
 
 
 def default_reward_fn(traj: Trajectory, task: Dict[str, Any], *, reward_spec: Optional[RewardSpec] = None) -> float:
@@ -44,7 +46,7 @@ def default_reward_fn(traj: Trajectory, task: Dict[str, Any], *, reward_spec: Op
     """
     if reward_spec is None:
         reward_spec = env_reward_spec()
-    gold = str(task.get("answer") or "")
+    gold = str(task.get("answer") or task.get("result") or "")
     source = str(task.get("source") or "gsm8k")
     aliases = parse_alias_field(task.get("answers"))
     golds = [gold] + [a for a in aliases if a and a != gold]
@@ -52,6 +54,7 @@ def default_reward_fn(traj: Trajectory, task: Dict[str, Any], *, reward_spec: Op
     format_ok = traj.format_ok
     if pred is not None and not format_ok:
         format_ok = True
+    question = str(task.get("question") or task.get("prompt") or "")
     return compute_outcome_reward(
         pred,
         gold,
@@ -60,7 +63,9 @@ def default_reward_fn(traj: Trajectory, task: Dict[str, Any], *, reward_spec: Op
         format_ok=format_ok,
         n_search=traj.n_search,
         n_python=traj.n_python,
+        n_fetch=int(getattr(traj, "n_fetch", 0) or 0),
         reward_spec=reward_spec,
+        question=question,
     )
 
 
