@@ -50,11 +50,91 @@ _BASE_DESCRIPTION = (
     "Another LLM call. Reason or draft from the question and information already obtained. "
     "Does not search the web and can invent facts."
 )
-_PYTHON_DESCRIPTION = (
-    "Write and run one short program for arithmetic or another numeric task. "
-    "May import math, sympy, or numpy. Must print the result. "
-    "Does not call input(), look up facts, or open web pages."
+# Installed in the pinned venv and appropriate for a short numeric program.
+# torch, pandas, scipy, networkx, and numba also import, but they are the
+# wrong tool for these questions. pulp, sklearn, ortools, z3, and cvxpy are absent.
+PYTHON_IMPORTS = (
+    "math, cmath, itertools, functools, collections, statistics, "
+    "fractions, decimal, heapq, bisect, sympy, numpy"
 )
+PYTHON_CODE_SPEC = f"""Output one ASCII Python program and nothing else:
+<python>
+import itertools
+print(the final result)
+</python>
+Import a module before you use any name from it. You may import: {PYTHON_IMPORTS}.
+For primes and combinations use sympy.primerange and itertools.combinations.
+Print the final value. Do not call input(). Do not open files, sockets, or other programs.
+Write Python keywords in ASCII only.
+A variable name is one ASCII word. Do not put a space inside a name.
+"""
+_PYTHON_DESCRIPTION = (
+    "Write and run one short ASCII program for a numeric task. "
+    f"Import before use. Common modules: {PYTHON_IMPORTS}. "
+    "Must print the result. Does not call input(), look up facts, or open web pages."
+)
+
+
+def python_source_from_command(command: str) -> str:
+    """The program inside ``tool.execute(query=...)``, or an empty string."""
+    import ast
+
+    match = None
+    for found in re.finditer(r"tool\.execute\(\s*query=(.*)\)\s*$", str(command or ""), re.S):
+        match = found
+    if match is None:
+        return ""
+    raw = match.group(1).strip()
+    try:
+        value = ast.literal_eval(raw)
+    except Exception:
+        return raw.strip("\"'")
+    return str(value or "").strip()
+
+
+def soften_wikipedia_miss(query: str, text: str) -> str:
+    """An empty Wikipedia search is not a tool failure."""
+    body = str(text or "")
+    if "search_unavailable" in body and "0 hits" in body:
+        shown = " ".join(str(query or "").split()[:6]) or str(query or "").strip()
+        return f"wikipedia results for: {shown}\n(no pages)"
+    return body
+
+
+def _wiki_busy(text: str) -> bool:
+    low = str(text or "").lower()
+    return "http 429" in low or "http 503" in low
+
+
+def _wiki_no_hits(text: str) -> bool:
+    body = str(text or "")
+    return "search_unavailable" in body and "0 hits" in body
+
+
+def local_wikipedia_search(query: str) -> str:
+    import time
+
+    from mas.tools.wikipedia import wikipedia_search
+
+    asked = str(query or "")
+
+    def _call(text: str) -> str:
+        return str(wikipedia_search(text) or "")
+
+    result = _call(asked)
+    wait = 1
+    while _wiki_busy(result) and wait <= 4:
+        time.sleep(wait)
+        result = _call(asked)
+        wait *= 2
+    if _wiki_no_hits(result):
+        short = " ".join(asked.split()[:6])
+        if short and short != asked.strip():
+            result = _call(short)
+            if _wiki_busy(result):
+                time.sleep(1)
+                result = _call(short)
+    return soften_wikipedia_miss(asked, result)
 
 
 def run_python_locally(query: str) -> str:
@@ -70,6 +150,12 @@ def run_python_locally(query: str) -> str:
         return "Error: no python code"
     if _INPUT_CALL.search(code):
         return "Error: input() is not allowed"
+    import ast
+
+    try:
+        ast.parse(code)
+    except SyntaxError as exc:
+        return f"Error: SyntaxError: line {exc.lineno or 0}: {exc.msg}"
     if not os.path.isfile(PYTHON_BIN):
         return f"Error: python interpreter not found: {PYTHON_BIN}"
     try:
@@ -112,12 +198,6 @@ def local_bing_search(query: str) -> str:
     from mas.tools.search import bing_search
 
     return str(bing_search(str(query or "")) or "")
-
-
-def local_wikipedia_search(query: str) -> str:
-    from mas.tools.wikipedia import wikipedia_search
-
-    return str(wikipedia_search(str(query or "")) or "")
 
 
 def local_web_fetch(url: str) -> str:

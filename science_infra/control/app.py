@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from science_infra.control.events import BUS, format_sse, rollout_tree_event_from_line
+from science_infra.control.events import BUS, complete_log_lines, format_sse, rollout_tree_event_from_line
 from science_infra.control.experiments import (
     HARNESS_PLUGINS,
     STUB_HARNESS,
@@ -42,6 +42,7 @@ from science_infra.control.training import (
     launch_training,
     stop_training_run,
 )
+from science_infra.control.thinking import read_enable_thinking, write_enable_thinking
 
 
 class CreateExperimentBody(BaseModel):
@@ -70,6 +71,10 @@ class SampleDataBody(BaseModel):
     parquet: str = "data/val.parquet"
     data_n: int = 5
     source: str = "gsm8k"
+
+
+class ThinkingBody(BaseModel):
+    enable_thinking: bool
 
 
 class UserProjectRuntimeBody(BaseModel):
@@ -167,6 +172,16 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health() -> Dict[str, Any]:
         return {"ok": True, "service": "science-control"}
+
+    @app.get("/api/runtime/thinking")
+    def get_thinking() -> Dict[str, Any]:
+        enabled = read_enable_thinking()
+        return {"enable_thinking": enabled, "applies": "next_start"}
+
+    @app.put("/api/runtime/thinking")
+    def put_thinking(body: ThinkingBody) -> Dict[str, Any]:
+        enabled = write_enable_thinking(body.enable_thinking)
+        return {"enable_thinking": enabled, "applies": "next_start"}
 
     @app.get("/api/meta")
     def meta() -> Dict[str, Any]:
@@ -599,7 +614,7 @@ def create_app() -> FastAPI:
             # Drain on a timer so a quiet bus still forwards tree frames.
             import asyncio
 
-            tail_state = {"offset": 0, "run_id": ""}
+            tail_state = {"offset": 0, "run_id": "", "pending": ""}
 
             def _drain_tree_frames() -> None:
                 mp = PROCS.active("train") or PROCS.active("collect")
@@ -607,6 +622,7 @@ def create_app() -> FastAPI:
                     return
                 if str(mp.run_id) != tail_state["run_id"]:
                     tail_state["run_id"] = str(mp.run_id)
+                    tail_state["pending"] = ""
                     # Follow new frames only. Replaying a multi-hour log would
                     # flood the open page; the tree itself is already on disk.
                     try:
@@ -620,7 +636,8 @@ def create_app() -> FastAPI:
                         tail_state["offset"] = f.tell()
                 except Exception:
                     return
-                for line in chunk.splitlines():
+                tail_state["pending"], lines = complete_log_lines(str(tail_state["pending"]), chunk)
+                for line in lines:
                     payload = rollout_tree_event_from_line(line)
                     if payload is None:
                         continue

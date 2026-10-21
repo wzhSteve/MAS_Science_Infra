@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 TREE_ENV_KEYS = ("TIR_ROLLOUT_TREE_DIR", "TIR_EXPERIMENT_ID", "TIR_RUN_ID", "TIR_EXECUTION_TREE_VERSION")
 
 
+def _store_closed(error: BaseException) -> bool:
+    text = str(error)
+    return "Cannot connect to host" in text or "Connect call failed" in text
+
+
 class RolloutTreeRecorder:
     def __init__(self, context: Mapping[str, str] | None = None):
         context = context if context is not None else os.environ
@@ -182,13 +187,23 @@ class RolloutTreeRecorder:
                     archive.observe(rid, snapshot[rid], mode, **observation, results=results)
             self.update(apply)
 
-    async def _reconcile_safely(self, store: Any, samples: Mapping[str, dict[str, Any]], mode: str) -> None:
+    async def _reconcile_safely(
+        self, store: Any, samples: Mapping[str, dict[str, Any]], mode: str, *, closing: bool = False,
+    ) -> None:
         try:
             await asyncio.wait_for(self.reconcile(store, samples, mode), timeout=10)
         except (OSError, ValueError, TypeError, RuntimeError, TimeoutError, ClientError) as error:
+            # The store process exits with the trainer. That refused connection
+            # is not a hole in the trees already written.
+            if closing and _store_closed(error):
+                logger.warning("Rollout tree store closed with the run: %s", error)
+                return
             if self.archive:
                 self.archive.report_error(f"Store reconciliation failed: {error}")
                 self.flush()
+            return
+        if self.archive:
+            self.archive.clear_errors("Store reconciliation failed:")
 
     @asynccontextmanager
     async def watching(self, store: Any, samples: Mapping[str, dict[str, Any]], mode: str):
@@ -208,4 +223,4 @@ class RolloutTreeRecorder:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-            await self._reconcile_safely(store, samples, mode)
+            await self._reconcile_safely(store, samples, mode, closing=True)

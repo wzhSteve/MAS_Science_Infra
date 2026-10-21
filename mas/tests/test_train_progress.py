@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from science_infra.control.train_progress import parse_train_progress
+from science_infra.control.train_progress import parse_train_progress, read_train_progress
 
 
 class TestTrainProgress(unittest.TestCase):
@@ -54,6 +54,18 @@ class TestTrainProgress(unittest.TestCase):
 
     def test_resume_inflight_bar_is_the_current_step(self):
         got = parse_train_progress("Training Progress:  50%|█████     | 1/2 [00:00<?, ?it/s]")
+        self.assertIsNotNone(got)
+        assert got is not None
+        self.assertEqual((got["step"], got["total"]), (2, 2))
+        self.assertIsNone(got["eta_seconds"])
+
+    def test_opening_bar_survives_a_long_tail(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile() as handle:
+            handle.write(b"Training Progress:  50%|#####| 1/2 [00:00<?, ?it/s]\n")
+            handle.write(b"x" * 300000)
+            handle.flush()
+            got = read_train_progress(handle.name)
         self.assertIsNotNone(got)
         assert got is not None
         self.assertEqual((got["step"], got["total"]), (2, 2))

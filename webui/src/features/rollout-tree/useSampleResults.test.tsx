@@ -40,6 +40,21 @@ describe('sample result loading', () => {
     await waitFor(() => expect(result.current.detail.data?.tree.revision).toBe(2));
     expect(result.current.detail.error).toBeNull();
   });
+  it('restarts from the first page until one revision is complete', async () => {
+    let revision = 1;
+    mockRequests(async url => {
+      if (url.includes('cursor=')) {
+        if (revision < 3) { revision += 1; return new Response('{"detail":"changed"}', { status: 409 }); }
+        return new Response(JSON.stringify(response(revision)));
+      }
+      return new Response(JSON.stringify(response(revision, `${revision}:100`)));
+    });
+    const { result } = renderHook(() => useSampleResults('exp', 'abcdef123456', treeId, undefined, true));
+    await waitFor(() => expect(result.current.detail.data?.tree.revision).toBe(1));
+    act(() => result.current.loadMore());
+    await waitFor(() => expect(result.current.detail.data?.tree.revision).toBe(3));
+    expect(result.current.detail.error).toBeNull();
+  });
   it('bounds deep-link lookup and does not call missing records nonexistent', async () => {
     let calls = 0;
     mockRequests(async () => {

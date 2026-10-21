@@ -37,7 +37,7 @@ export function createTreeClient(experimentId: string, runId: string) {
     list: (offset: number, mode: string, signal: AbortSignal) =>
       read<TreeList>(`${base}?${experimentQuery(experimentId)}&offset=${offset}&limit=20${mode ? `&mode=${mode}` : ''}`, signal),
     detail: async (treeId: string, signal: AbortSignal, cursor?: string, planOffset = 0, nodeId?: string) => {
-      const params = new URLSearchParams({ experiment_id: experimentId, limit: '100', plan_offset: String(planOffset) });
+      const params = new URLSearchParams({ experiment_id: experimentId, limit: '500', plan_offset: String(planOffset) });
       if (cursor) params.set('cursor', cursor);
       if (nodeId) params.set('node_id', nodeId);
       const result = await read<TreeDetail>(`${base}/${encodeURIComponent(treeId)}?${params}`, signal);

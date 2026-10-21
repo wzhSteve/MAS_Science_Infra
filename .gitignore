@@ -37,8 +37,12 @@ offline
 agent-lightning/docs
 
 # Exclude datasets, runtime screenshots, and model weights
-/data/*.parquet
-/data/*.jsonl
+# data/*.jsonl via Git LFS (.gitattributes); bak/search_cache stay local-only
+/data/*.bak
+/data/search_cache.json
+/data/search_cache.json.lock
+/data/search_cache.gaps.json
+/data/*.json.lock
 /agent-lightning/examples/ARPO/ARPO/rl_datasets/
 /agent-lightning/examples/ARPO/LLaMA-Factory/arpo_train_sft/dataset/
 /agent-lightning/examples/CD_TAA/solver_cache/
@@ -61,11 +65,6 @@ __MACOSX/
 agentops.log
 /mas/agentops.log
 /mas/.local_expansion/
-/data/*.bak
-/data/search_cache.json
-/data/search_cache.json.lock
-/data/search_cache.gaps.json
-/data/*.json.lock
 
 # docs/: only publish the design docs + images below
 /docs/*

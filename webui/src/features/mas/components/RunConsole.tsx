@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Maximize2, Minimize2, Terminal } from 'lucide-r
 import { Button } from '../../../shared/ui/button';
 import { TrainingConsole, TRAIN_STATE } from '../../training/components/TrainingConsole';
 import { TrainEta } from '../../training/components/TrainEta';
+import { ThinkingSwitch } from '../../training/components/ThinkingSwitch';
 import { useTraining, useTrainingViewRequest } from '../../../app/providers/RuntimeProvider';
 
 const ConsoleSummary = memo(function ConsoleSummary() {
@@ -65,6 +66,7 @@ export const RunConsole = memo(function RunConsole({ experimentId, active, reque
       <button type="button" className="mas-console-toggle" aria-expanded={false} aria-controls="mas-console-content" onClick={() => setOpen(true)}>
         <ChevronUp size={14} /><Terminal size={14} /><strong>控制台</strong>
       </button>
+      <ThinkingSwitch />
       <span className="mas-console-summary" role="status"><ConsoleSummary /></span>
       <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>展开</Button>
     </div>}

@@ -15,6 +15,19 @@ _RAY_PREFIX = re.compile(r"^(?:\x1b\[[0-9;]*m)*\([^)\n]*\)(?:\x1b\[[0-9;]*m)*\s*
 _TREE_MARK = '{"__rollout_tree_event__":'
 
 
+def complete_log_lines(pending: str, chunk: str) -> tuple[str, List[str]]:
+    """Return finished log lines and keep a trailing partial line for the next read."""
+    text = f"{pending}{chunk}"
+    if not text:
+        return "", []
+    if text.endswith(("\n", "\r")):
+        return "", text.splitlines()
+    head, separator, tail = text.rpartition("\n")
+    if not separator:
+        return text, []
+    return tail, head.splitlines()
+
+
 def rollout_tree_event_from_line(line: str) -> Optional[Dict[str, Any]]:
     """Return the tree payload from a stdout line, including a Ray-prefixed one."""
     text = _RAY_PREFIX.sub("", str(line or "").strip())

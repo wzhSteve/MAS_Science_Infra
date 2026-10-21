@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 # Keep each line free of a second colon so ``_tool_names`` can split once.
 TOOL_LINES: List[str] = [
     "Generalist_Solution_Generator_Tool: another LLM call to reason or draft from the question and information already obtained. It does not search and can invent facts.",
-    "Python_Code_Generator_Tool: write and run one short program for arithmetic or a numeric task. It may import math, sympy, or numpy. It must print the result. It does not call input(), look up facts, or open pages.",
+    "Python_Code_Generator_Tool: write and run one short ASCII program for a numeric task. Import before use. Common modules are math, itertools, statistics, fractions, sympy, and numpy. It must print the result. It does not call input(), look up facts, or open pages.",
     "Bing_Search_Tool: search keywords. Returns titles, URLs, and short snippets only. It does not open pages. Snippets are not the page text.",
     "Wikipedia_RAG_Search_Tool: Wikipedia search. Returns titles, URLs, and short snippets only. It does not open pages.",
     "Web_Fetch_Tool: open exactly one URL and return page text or an error. It does not search. A valid URL may still lack the needed fact.",
@@ -41,8 +41,9 @@ _EMPTY_RESULT_MARKERS = (
     "output=[]",
     "command: no command found",
 )
-_OUTLINE_STATUSES = ("pending", "done", "failed")
 _PREDICTIONS = ("failure", "partial", "success")
+_OUTLINE_HEAD = re.compile(r"(?im)^outline\s*:")
+_STEP_PREFIX = re.compile(r"^(?:\d+[\.\)]\s*|[-*]\s+)")
 
 
 def _clip(text: Any, limit: int = 400) -> str:
@@ -155,11 +156,99 @@ def memory_field_limit() -> int:
     return raw if raw > 0 else 100000
 
 
+_PROMPT_LAST_CHARS = 800
+_PROMPT_EARLIER_CHARS = 240
+_QUANTITY_WORD = re.compile(
+    r"\b(how many|how much|total|left|remain(?:ing|der)?|altogether|each|per|times|cost)\b",
+    re.I,
+)
+_INTEGER = re.compile(r"\b\d+\b")
+
+
+def question_needs_python(question: Any) -> bool:
+    """Arithmetic already stated in the question, not a fact looked up by name.
+
+    One digit is enough when a quantity word is present. Some problems spell
+    the other number ("three-quarters") and would otherwise miss the rule.
+    """
+    text = str(question or "")
+    if not _QUANTITY_WORD.search(text):
+        return False
+    return len(_INTEGER.findall(text)) >= 1
+
+
+def _program_key(command: str) -> str:
+    from tools_local import python_source_from_command
+
+    return " ".join(python_source_from_command(command).split())
+
+
+def _python_actions(memory: Any) -> List[Dict[str, Any]]:
+    actions = memory.get_actions() if memory is not None and hasattr(memory, "get_actions") else {}
+    found = []
+    for _key, action in (actions or {}).items():
+        if isinstance(action, dict) and "python" in str(action.get("tool_name") or "").lower():
+            found.append(action)
+    return found
+
+
+def repeated_python_program(command: str, memory: Any) -> bool:
+    """True when this program is the same as the previous Python step."""
+    key = _program_key(command)
+    if not key:
+        return False
+    previous = _python_actions(memory)
+    if not previous:
+        return False
+    return _program_key(str(previous[-1].get("command") or "")) == key
+
+
+def _unwrap_result_text(result: Any) -> str:
+    text = result
+    if isinstance(result, list) and len(result) == 1:
+        text = result[0]
+    text = str(text or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, list) and len(parsed) == 1:
+            text = str(parsed[0]).strip()
+    return text
+
+
+def last_python_error(memory: Any) -> str:
+    previous = _python_actions(memory)
+    if not previous:
+        return ""
+    line = _unwrap_result_text(previous[-1].get("result")).splitlines()
+    head = line[0] if line else ""
+    low = head.lower()
+    if low.startswith("error") or "syntaxerror" in low:
+        return head[:240]
+    return ""
+
+
+def last_python_print(memory: Any) -> str:
+    """One short successful Python print, newest first."""
+    for action in reversed(_python_actions(memory)):
+        text = _unwrap_result_text(action.get("result"))
+        low = text.lower()
+        if not text or "\n" in text or len(text) > 80:
+            continue
+        if low.startswith("error") or "syntaxerror" in low:
+            continue
+        return text
+    return ""
+
+
 def recent_steps(memory: Any, n: Optional[int] = None, limit: Optional[int] = None) -> str:
     """Every stored action, including command. ``n`` keeps a tail only when set.
 
-    Training caps the episode at 3 steps, so the full list is the whole history.
-    Eval may run longer; those steps stay visible instead of dropping to the last 3.
+    The prompt view clips results: 800 characters on the latest step and 240
+    on earlier steps. Stored Memory is unchanged. An explicit ``limit`` applies
+    that cap to every step.
     """
     actions = memory.get_actions() if memory is not None else {}
     items = list((actions or {}).items())
@@ -167,9 +256,13 @@ def recent_steps(memory: Any, n: Optional[int] = None, limit: Optional[int] = No
         items = items[-int(n):]
     if not items:
         return "(none)"
-    cap = memory_field_limit() if limit is None else int(limit)
     lines: List[str] = []
-    for key, action in items:
+    last = len(items) - 1
+    for index, (key, action) in enumerate(items):
+        if limit is not None:
+            cap = int(limit)
+        else:
+            cap = _PROMPT_LAST_CHARS if index == last else _PROMPT_EARLIER_CHARS
         if not isinstance(action, dict):
             lines.append(f"{key}: {_clip(action, cap)}")
             continue
@@ -200,28 +293,41 @@ def ensure_memory_fields(memory: Any) -> None:
         memory.obtained_information = []
 
 
-def normalize_outline(raw: Any) -> List[Dict[str, str]]:
+def normalize_outline(raw: Any) -> List[str]:
+    """Ordered remaining steps. Status fields are ignored."""
     if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
+        text = raw.strip()
+        if not text:
             return []
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, list):
+            raw = parsed
+        elif isinstance(parsed, str) and parsed.strip():
+            raw = [parsed]
+        else:
+            raw = []
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped or _OUTLINE_HEAD.match(stripped):
+                    continue
+                raw.append(_STEP_PREFIX.sub("", stripped).strip())
     if not isinstance(raw, list):
         return []
-    out: List[Dict[str, str]] = []
+    out: List[str] = []
     for item in raw:
         if isinstance(item, str):
-            subgoal, status = item.strip(), "pending"
+            step = item.strip()
         elif isinstance(item, dict):
-            subgoal = str(item.get("subgoal") or item.get("sub_goal") or "").strip()
-            status = str(item.get("status") or "pending").strip().lower()
+            step = str(item.get("step") or item.get("subgoal") or item.get("sub_goal") or "").strip()
         else:
             continue
-        if not subgoal or _is_planner_placeholder(subgoal):
+        step = _STEP_PREFIX.sub("", step).strip()
+        if not step or _is_planner_placeholder(step):
             continue
-        if status not in _OUTLINE_STATUSES:
-            status = "pending"
-        out.append({"subgoal": subgoal, "status": status})
+        out.append(step)
     return out
 
 
@@ -235,15 +341,10 @@ def apply_outline(memory: Any, raw: Any) -> None:
 
 
 def render_outline(memory: Any) -> str:
-    items = getattr(memory, "outline", None) or []
+    items = normalize_outline(getattr(memory, "outline", None) or [])
     if not items:
         return "(none)"
-    lines = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        lines.append(f"- [{item.get('status') or 'pending'}] {item.get('subgoal')}")
-    return "\n".join(lines) or "(none)"
+    return "\n".join(f"{index}. {step}" for index, step in enumerate(items, 1))
 
 
 def render_obtained(memory: Any) -> str:
@@ -304,14 +405,28 @@ def actual_label(result: Any) -> str:
 
 
 def unresolved_note(memory: Any) -> str:
-    pending = [
-        str(item.get("subgoal"))
-        for item in (getattr(memory, "outline", None) or [])
-        if isinstance(item, dict) and item.get("status") in ("pending", "failed") and item.get("subgoal")
-    ]
-    if not pending:
+    steps = normalize_outline(getattr(memory, "outline", None) or [])
+    if not steps:
         return ""
-    return "unresolved: " + "; ".join(pending)
+    return "unresolved: " + "; ".join(steps)
+
+
+def bind_current_subgoal(subgoal: Any, memory: Any) -> str:
+    """The step to run is the first remaining outline item."""
+    steps = normalize_outline(getattr(memory, "outline", None) or [])
+    if steps:
+        return steps[0]
+    return str(subgoal or "")
+
+
+def split_query_analysis(raw: Any) -> tuple[str, List[str]]:
+    """Notes stay text. Numbered lines under Outline: become the first plan."""
+    text = str(raw or "").strip()
+    match = _OUTLINE_HEAD.search(text)
+    if not match:
+        return text, []
+    notes = text[:match.start()].strip()
+    return notes, normalize_outline(text[match.end():])
 
 
 def budget_unresolved_reason(reason: str, memory: Any) -> str:
@@ -360,6 +475,11 @@ def tags_to_execute(tool_name: str, raw: str, extracted: str) -> str:
     is_fetch = "fetch" in name.lower()
     if is_python:
         bodies = [b.strip() for b in _PYTHON_RE.findall(text) if b.strip()]
+        if not bodies:
+            bare = re.sub(r"<think>.*?</think>", " ", text, flags=re.I | re.S)
+            bare = re.sub(r"</?python>", " ", bare, flags=re.I).strip()
+            if re.search(r"\b(print|import)\b", bare):
+                bodies = [bare]
         if not bodies:
             return extracted
         return f"execution = tool.execute(query={repr(bodies[-1])})"
@@ -435,33 +555,6 @@ def resolve_tool_name(text: Any) -> Optional[str]:
     return None
 
 
-def _tool_from_outline_items(raw: Any) -> tuple[Optional[str], str]:
-    """A single tool named inside outline rows, plus that row's subgoal."""
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            return None, ""
-    if not isinstance(raw, list):
-        return None, ""
-    chosen: List[str] = []
-    subgoal = ""
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        name = resolve_tool_name(item.get("selected_tool") or item.get("tool_name") or "")
-        if not name:
-            continue
-        chosen.append(name)
-        row_goal = str(item.get("subgoal") or item.get("sub_goal") or "").strip()
-        if not subgoal and row_goal and not _is_planner_placeholder(row_goal):
-            subgoal = row_goal
-    unique = list(dict.fromkeys(chosen))
-    if len(unique) != 1:
-        return None, ""
-    return unique[0], subgoal
-
-
 FALLBACK_TOOL = "Generalist_Solution_Generator_Tool"
 PARSE_FAIL_NOTE = (
     "工具名没有解析出来，所以改用 Base_Generator_Tool。"
@@ -469,13 +562,22 @@ PARSE_FAIL_NOTE = (
 )
 
 
+PYTHON_FALLBACK = "Python_Code_Generator_Tool"
+PYTHON_PARSE_FAIL_NOTE = (
+    "工具名没有解析出来，所以改用 Python_Code_Generator_Tool。"
+    "下一步必须从工具列表里原样复制一个工具名。"
+)
+PYTHON_OUTLINE_STEP = "用程序算出题目要的数"
+
+
 def fallback_unparsed_tool(
     tool_name: Any, context: Any, subgoal: Any, available: Any,
+    preferred: Any = None,
 ) -> tuple[str, str, str, str]:
-    """Use Base_Generator when the parsed name is not a registered tool.
+    """Use a fallback when the parsed name is not a registered tool.
 
-    The returned note is empty when the original tool stands. Callers write
-    that note into Context and into this step's Memory.
+    ``preferred`` is the arithmetic fallback. Otherwise the base generator is
+    used. The returned note is empty when the original tool stands.
     """
     name = str(tool_name or "")
     ctx = str(context or "")
@@ -483,10 +585,14 @@ def fallback_unparsed_tool(
     names = {str(item) for item in (available or [])}
     if name in names:
         return name, ctx, goal, ""
-    if FALLBACK_TOOL not in names:
+    fallback = str(preferred or FALLBACK_TOOL)
+    if fallback not in names:
+        fallback = FALLBACK_TOOL if FALLBACK_TOOL in names else ""
+    if not fallback:
         return name, ctx, goal, ""
-    merged = f"{PARSE_FAIL_NOTE}\n{ctx}".strip() if ctx else PARSE_FAIL_NOTE
-    return FALLBACK_TOOL, merged, goal or "用已有信息继续回答", PARSE_FAIL_NOTE
+    note = PYTHON_PARSE_FAIL_NOTE if "python" in fallback.lower() else PARSE_FAIL_NOTE
+    merged = f"{note}\n{ctx}".strip() if ctx else note
+    return fallback, merged, goal or "用已有信息继续回答", note
 
 
 def _blank_obtained(text: Any) -> bool:
@@ -603,12 +709,16 @@ def _loose_planner_payload(text: str) -> Optional[Dict[str, Any]]:
 def parse_planner_payload(text: str) -> Optional[Dict[str, Any]]:
     """Read the planner JSON. ``None`` means the caller should use the three lines.
 
-    A JSON is skipped when its tool field is a prompt leftover or does not
-    contain exactly one registered tool name. Later JSON in the same reply
+    A JSON is skipped when its top-level tool field is a prompt leftover or
+    does not contain exactly one registered tool name. A tool name written
+    only inside an outline step does not count. Later JSON in the same reply
     can still be used. Placeholder outline rows are dropped; an empty outline
-    does not replace the previous plan. A reply that names one tool and then
-    breaks the JSON still keeps that tool.
+    does not replace the previous plan. When the outline is non-empty, the
+    current subgoal is its first step. A reply that names one tool and then
+    breaks the JSON still keeps that tool. A closed object is not scanned
+    again for a tool name nested inside its outline.
     """
+    saw_object = False
     for blob in _json_blobs(text):
         try:
             payload = json.loads(blob)
@@ -616,11 +726,9 @@ def parse_planner_payload(text: str) -> Optional[Dict[str, Any]]:
             continue
         if not isinstance(payload, dict):
             continue
+        saw_object = True
         tool_field = str(payload.get("selected_tool") or payload.get("tool_name") or "")
         tool = resolve_tool_name(tool_field)
-        outline_tool, outline_subgoal = _tool_from_outline_items(payload.get("outline"))
-        if tool is None:
-            tool = outline_tool
         if tool is None:
             continue
         tool_input = payload.get("tool_input")
@@ -631,13 +739,15 @@ def parse_planner_payload(text: str) -> Optional[Dict[str, Any]]:
         tool_input = tool_input.strip()
         if _is_planner_placeholder(tool_input):
             tool_input = ""
+        outline = normalize_outline(payload.get("outline"))
         subgoal = str(payload.get("subgoal") or payload.get("sub_goal") or "").strip()
-        if _is_planner_placeholder(subgoal):
-            subgoal = outline_subgoal or tool_input
+        if outline:
+            subgoal = outline[0]
+        elif _is_planner_placeholder(subgoal):
+            subgoal = tool_input
         reason = str(payload.get("prediction_reason") or "").strip()
         if _is_planner_placeholder(reason):
             reason = ""
-        outline = normalize_outline(payload.get("outline"))
         return {
             "outline": outline,
             "subgoal": subgoal,
@@ -646,6 +756,8 @@ def parse_planner_payload(text: str) -> Optional[Dict[str, Any]]:
             "prediction": normalize_prediction(payload.get("prediction")),
             "prediction_reason": reason,
         }
+    if saw_object:
+        return None
     return _loose_planner_payload(text)
 
 
@@ -804,12 +916,19 @@ def analyze_query(self, question: str, image: str) -> str:
 Tools:
 {_tools_block()}
 
-Reply with exactly three short lines:
+Reply with exactly these parts and nothing else:
 - Goal: the comparison or fact the question asks for
 - Facts needed: the missing facts
 - Likely tools: one or two tool names from the list
+Outline:
+1. first step, one short sentence
+2. next step
+Use 2 to 4 numbered steps. Each step is work still required to answer the question.
 """
-    self.query_analysis = str(self.llm_engine_fixed(prompt) or "").strip()
+    raw = str(self.llm_engine_fixed(prompt) or "").strip()
+    notes, steps = split_query_analysis(raw)
+    self.query_analysis = notes
+    self._initial_outline = steps
     return self.query_analysis
 
 
@@ -831,18 +950,21 @@ Tools (copy one name exactly):
 Notes: {_clip(query_analysis, 300)}
 Step {step_count} of {max_step_count}.
 {fetch_rule}{_repair_block(memory)}
+Using the question, the notes, Obtained information, and Recent steps, first rewrite the outline.
+The outline is the ordered work still required. Drop a step that is already done or no longer needed.
+Then fill subgoal, selected_tool, tool_input, prediction, and prediction_reason for the first outline item only.
 Rules:
 - If you do not know where the fact is, use Bing_Search_Tool or Wikipedia_RAG_Search_Tool.
 - If a search URL is relevant and the snippet is not enough, use Web_Fetch_Tool on that URL.
 - If a fetch is not enough, do not open that URL again. Change the URL or the keywords.
 - If Obtained information already has the fact, do not search or fetch it again.
-- Prefer the unfinished subgoal the question needs most.
-- A tool that returns text is not done until you set that subgoal to done.
-- prediction is about the subgoal, not whether the tool process starts. Search snippets are partial. A page that should contain the fact is success. No usable path is failure.
+- subgoal is the first outline sentence, copied exactly.
+- prediction is about that first item, not whether the tool process starts. Search snippets are partial. A page that should contain the fact is success. No usable path is failure.
 
 Reply with one JSON object and nothing else.
-Fields: outline, subgoal, selected_tool, tool_input, prediction, prediction_reason
-status is pending, done, or failed. prediction is failure, partial, or success.
+Fields, in this order: outline, subgoal, selected_tool, tool_input, prediction, prediction_reason
+outline is a list of short step sentences and has no status.
+prediction is failure, partial, or success.
 selected_tool is exactly one name from the tool list.
 If you cannot write JSON, use exactly these three lines instead:
 Context: <query or one URL>
@@ -862,13 +984,9 @@ def generate_tool_command(self, question, image, context, sub_goal, tool_name, t
     del question, image, tool_metadata
     name = str(tool_name or "")
     if "python" in name.lower():
-        spec = (
-            "Output one program and nothing else:\n"
-            "<python>\n"
-            "print(the final result)\n"
-            "</python>\n"
-            "You may import math, sympy, or numpy. Do not call input(). Do not use the network."
-        )
+        from tools_local import PYTHON_CODE_SPEC
+
+        spec = PYTHON_CODE_SPEC
     elif "fetch" in name.lower():
         spec = (
             "Pick one concrete https URL from the suggestion, the sub-goal, or recent urls. "
@@ -877,12 +995,19 @@ def generate_tool_command(self, question, image, context, sub_goal, tool_name, t
         )
     else:
         spec = "Output exactly one line and nothing else:\n<search>short query</search>"
+    repair = str(getattr(self, "_python_repair", "") or "").strip()
+    repair_line = ""
+    if repair and "python" in name.lower():
+        repair_line = (
+            f"The previous program failed: {_clip(repair, 240)}\n"
+            "Write a different program. Do not repeat that program.\n"
+        )
     prompt = f"""Tool Name: {name}
 Sub-Goal: {_clip(sub_goal, 400)}
 Suggestion from the planner (not the final parameter): {_clip(context, 400)}
 
 You choose the final query, URL, or code.
-{spec}
+{repair_line}{spec}
 Do not explain. Do not write tool.execute. Do not write <think>. Do not write <|begin_search_query|>.
 """
     tool_command = self.llm_generate_tool_command(prompt)

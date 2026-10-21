@@ -14,13 +14,20 @@ from sft_prompts import (  # noqa: E402
     actual_label,
     add_obtained_information,
     apply_outline,
+    bind_current_subgoal,
     budget_unresolved_reason,
     fallback_unparsed_tool,
     parse_planner_payload,
+    last_python_print,
     parse_verifier_text,
+    question_needs_python,
+    recent_steps,
+    render_outline,
+    repeated_python_program,
+    split_query_analysis,
     tags_to_execute,
 )
-from tools_local import run_python_locally  # noqa: E402
+from tools_local import run_python_locally, soften_wikipedia_miss  # noqa: E402
 
 
 class _Tool:
@@ -142,12 +149,13 @@ class MemoryPromptTest(unittest.TestCase):
 """
         cleaned = _planner_for_parser(raw)
         self.assertIn("Context: William Green birth", cleaned)
-        self.assertIn("Sub-Goal: search both names", cleaned)
+        self.assertIn("Sub-Goal: find birth dates", cleaned)
         self.assertIn("Tool Name: Bing_Search_Tool", cleaned)
         payload = parse_planner_payload(raw)
         assert payload is not None
         self.assertEqual(payload["prediction"], "partial")
-        self.assertEqual(payload["outline"][0]["status"], "pending")
+        self.assertEqual(payload["outline"], ["find birth dates"])
+        self.assertEqual(payload["subgoal"], "find birth dates")
 
     def test_broken_json_keeps_the_three_lines(self) -> None:
         raw = "not json {broken\nContext: birth years\nSub-Goal: search both names\nTool Name: Bing_Search_Tool\n"
@@ -159,7 +167,8 @@ class MemoryPromptTest(unittest.TestCase):
     def test_outline_update_keeps_history(self) -> None:
         memory = _Memory()
         apply_outline(memory, [{"subgoal": "read the page", "status": "pending"}])
-        self.assertEqual(memory.outline[0]["subgoal"], "read the page")
+        self.assertEqual(memory.outline, ["read the page"])
+        self.assertEqual(render_outline(memory), "1. read the page")
         self.assertIn("Action Step 1", memory.get_actions())
         self.assertIn("query='old'", memory.get_actions()["Action Step 1"]["command"])
 
@@ -181,14 +190,14 @@ class MemoryPromptTest(unittest.TestCase):
     def test_budget_reason_lists_unfinished_subgoals(self) -> None:
         memory = _Memory()
         memory.outline = [
-            {"subgoal": "birth date of Eleanor", "status": "pending"},
+            "birth date of Eleanor",
             {"subgoal": "already found", "status": "done"},
-            {"subgoal": "birth date of Green", "status": "failed"},
+            "birth date of Green",
         ]
         text = budget_unresolved_reason("hit the step cap", memory)
         self.assertIn("birth date of Eleanor", text)
         self.assertIn("birth date of Green", text)
-        self.assertNotIn("already found", text)
+        self.assertIn("already found", text)
 
     def test_verifier_json_maps_onto_conclusion(self) -> None:
         verdict = parse_verifier_text(
@@ -208,12 +217,13 @@ class MemoryPromptTest(unittest.TestCase):
         payload = parse_planner_payload(raw)
         assert payload is not None
         self.assertEqual(payload["tool_name"], "Wikipedia_RAG_Search_Tool")
-        self.assertEqual(payload["subgoal"], "open the page")
-        self.assertEqual(payload["outline"], [{"subgoal": "birth date of Eleanor", "status": "pending"}])
+        self.assertEqual(payload["subgoal"], "birth date of Eleanor")
+        self.assertEqual(payload["outline"], ["birth date of Eleanor"])
         cleaned = _planner_for_parser(raw)
         self.assertIn("Tool Name: Wikipedia_RAG_Search_Tool", cleaned)
+        self.assertIn("Sub-Goal: birth date of Eleanor", cleaned)
         self.assertNotIn("this step", cleaned)
-        self.assertNotIn("[pending] task", cleaned)
+        self.assertNotIn("open the page", cleaned)
 
     def test_example_json_alone_does_not_become_a_plan(self) -> None:
         raw = (
@@ -223,9 +233,10 @@ class MemoryPromptTest(unittest.TestCase):
         )
         self.assertIsNone(parse_planner_payload(raw))
         memory = _Memory()
-        memory.outline = [{"subgoal": "keep the old plan", "status": "pending"}]
+        memory.outline = ["keep the old plan"]
         apply_outline(memory, [{"subgoal": "task", "status": "pending"}])
-        self.assertEqual(memory.outline[0]["subgoal"], "keep the old plan")
+        self.assertEqual(memory.outline, ["keep the old plan"])
+        self.assertEqual(bind_current_subgoal("some other step", memory), "keep the old plan")
 
     def test_placeholder_subgoal_uses_tool_input(self) -> None:
         raw = (
@@ -261,15 +272,21 @@ class MemoryPromptTest(unittest.TestCase):
         stop = parse_verifier_text("Conclusion: STOP\nReason:\nObtained: NONE")
         self.assertEqual(stop["reason"], "现有信息够回答")
 
-    def test_outline_nested_tool_and_missing_underscore_are_kept(self) -> None:
+    def test_outline_nested_tool_is_not_a_tool_source(self) -> None:
         nested = """
 {"outline":[{"subgoal":"Simplify each radical expression.","selected_tool":"Generalist_Solution_Generator_Tool","tool_input":""}],
  "subgoal":"this step","tool_input":"query or one URL"}
 """
-        payload = parse_planner_payload(nested)
+        self.assertIsNone(parse_planner_payload(nested))
+        named = """
+{"outline":["Simplify each radical expression.","Check the printed value."],
+ "subgoal":"this step","selected_tool":"Python_Code_Generator_Tool","tool_input":"simplify the radical"}
+"""
+        payload = parse_planner_payload(named)
         assert payload is not None
-        self.assertEqual(payload["tool_name"], "Generalist_Solution_Generator_Tool")
+        self.assertEqual(payload["tool_name"], "Python_Code_Generator_Tool")
         self.assertEqual(payload["subgoal"], "Simplify each radical expression.")
+        self.assertEqual(payload["outline"][1], "Check the printed value.")
         fuzzy = (
             '{"subgoal":"find the director","selected_tool":"Generalist_Solution_GeneratorTool",'
             '"tool_input":"director of A Perfect Couple"}'
@@ -284,6 +301,25 @@ class MemoryPromptTest(unittest.TestCase):
 ]}
 """
         self.assertIsNone(parse_planner_payload(two))
+
+    def test_analysis_writes_an_initial_outline(self) -> None:
+        notes, steps = split_query_analysis(
+            "- Goal: the smallest sum\n"
+            "- Facts needed: four primes\n"
+            "- Likely tools: Python_Code_Generator_Tool\n"
+            "Outline:\n"
+            "1. List odd primes greater than 3\n"
+            "2. Find the smallest sum divisible by 5\n"
+        )
+        self.assertIn("Goal: the smallest sum", notes)
+        self.assertNotIn("Outline", notes)
+        self.assertEqual(
+            steps,
+            ["List odd primes greater than 3", "Find the smallest sum divisible by 5"],
+        )
+        memory = _Memory()
+        apply_outline(memory, steps)
+        self.assertEqual(render_outline(memory), "1. List odd primes greater than 3\n2. Find the smallest sum divisible by 5")
 
     def test_unclosed_json_keeps_the_named_tool(self) -> None:
         cut = (
@@ -324,6 +360,11 @@ class MemoryPromptTest(unittest.TestCase):
         self.assertEqual(subgoal, "用已有信息继续回答")
         kept = fallback_unparsed_tool("Bing_Search_Tool", "q", "find it", available)
         self.assertEqual(kept, ("Bing_Search_Tool", "q", "find it", ""))
+        arithmetic = fallback_unparsed_tool(
+            "", "old", "", available, "Python_Code_Generator_Tool",
+        )
+        self.assertEqual(arithmetic[0], "Python_Code_Generator_Tool")
+        self.assertIn("Python_Code_Generator_Tool", arithmetic[3])
 
 
 class ContextClampTest(unittest.TestCase):
@@ -383,6 +424,80 @@ class ToolResultFailedTest(unittest.TestCase):
             self.assertEqual(client.max_retries, 0)
             self.assertEqual(client.timeout, 90)
 
+    def test_enable_thinking_env_covers_every_role(self) -> None:
+        import os
+
+        from engine import skip_thinking
+
+        old = os.environ.get("enable_thinking")
+        try:
+            os.environ["enable_thinking"] = "false"
+            self.assertTrue(skip_thinking(True))
+            self.assertTrue(skip_thinking(False))
+            os.environ["enable_thinking"] = "true"
+            self.assertFalse(skip_thinking(True))
+            self.assertFalse(skip_thinking(False))
+        finally:
+            if old is None:
+                os.environ.pop("enable_thinking", None)
+            else:
+                os.environ["enable_thinking"] = old
+
+
+class WindowGuardTest(unittest.TestCase):
+    def test_arithmetic_question_needs_python(self) -> None:
+        self.assertTrue(question_needs_python(
+            "Jason bought 4 dozen cupcakes and gives 3 to each cousin. How many cousins?"
+        ))
+        self.assertTrue(question_needs_python(
+            "Their total time was 70 minutes and one runner was three-quarters as fast."
+        ))
+        self.assertFalse(question_needs_python(
+            "Which 1992 film was shown at three Disney parks?"
+        ))
+
+    def test_prompt_view_is_shorter_than_the_stored_result(self) -> None:
+        memory = _Memory()
+        memory.actions["Action Step 1"] = {
+            "tool_name": "Bing_Search_Tool",
+            "sub_goal": "search",
+            "command": "execution = tool.execute(query='old')",
+            "result": "R" * 2000,
+        }
+        memory.actions["Action Step 2"] = {
+            "tool_name": "Web_Fetch_Tool",
+            "sub_goal": "open",
+            "command": "execution = tool.execute(url='https://example.com')",
+            "result": "F" * 2000,
+        }
+        text = recent_steps(memory)
+        early, latest = text.split("Action Step 2:", 1)
+        early_result = early.split("result: ", 1)[1].strip()
+        latest_result = latest.split("result: ", 1)[1].strip()
+        self.assertLess(len(early_result), 250)
+        self.assertLess(len(latest_result), 810)
+        self.assertTrue(early_result.startswith("R") and early_result.endswith("..."))
+        self.assertTrue(latest_result.startswith("F") and latest_result.endswith("..."))
+        self.assertEqual(len(memory.actions["Action Step 1"]["result"]), 2000)
+
+    def test_repeated_program_is_rejected_and_a_print_is_kept(self) -> None:
+        memory = _Memory()
+        command = "execution = tool.execute(query='print(6)')"
+        memory.actions["Action Step 1"] = {
+            "tool_name": "Python_Code_Generator_Tool",
+            "command": command,
+            "result": '["6"]',
+        }
+        self.assertTrue(repeated_python_program(command, memory))
+        self.assertFalse(repeated_python_program("execution = tool.execute(query='print(7)')", memory))
+        self.assertEqual(last_python_print(memory), "6")
+
+    def test_zero_hits_are_not_a_search_failure(self) -> None:
+        text = soften_wikipedia_miss("a long query here", "search_unavailable: direct: 0 hits")
+        self.assertNotIn("search_unavailable", text)
+        self.assertIn("(no pages)", text)
+        self.assertIn("a long query here", text)
+
 
 class PythonLocalTest(unittest.TestCase):
     def test_pinned_interpreter_runs_print_and_rejects_input(self) -> None:
@@ -391,6 +506,26 @@ class PythonLocalTest(unittest.TestCase):
         rejected = run_python_locally("print(input())")
         self.assertTrue(rejected.startswith("Error:"))
         self.assertIn("input()", rejected)
+        broken = run_python_locally("brenda Water = 1\nprint(1)")
+        self.assertTrue(broken.startswith("Error: SyntaxError:"))
+        self.assertNotIn("Traceback", broken)
+        self.assertEqual(broken.count("\n"), 0)
+
+    def test_common_packages_solve_the_prime_sum(self) -> None:
+        from tools_local import PYTHON_CODE_SPEC, PYTHON_IMPORTS
+
+        code = (
+            "import itertools, sympy\n"
+            "primes = list(sympy.primerange(5, 40))\n"
+            "best = min(sum(c) for c in itertools.combinations(primes, 4) if sum(c) % 5 == 0)\n"
+            "print(best)\n"
+        )
+        self.assertEqual(run_python_locally(code), "40")
+        for name in ("itertools", "sympy", "numpy", "statistics", "fractions"):
+            self.assertIn(name, PYTHON_IMPORTS)
+            self.assertIn(name, PYTHON_CODE_SPEC)
+        self.assertIn("ASCII", PYTHON_CODE_SPEC)
+        self.assertIn("input()", PYTHON_CODE_SPEC)
 
 
 if __name__ == "__main__":

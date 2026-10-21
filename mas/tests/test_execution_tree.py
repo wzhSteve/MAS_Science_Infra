@@ -122,6 +122,41 @@ def test_source_attempt_survives_retry_and_unconfirmed_prefix_is_not_faked(tmp_p
     assert not any(e.target_node_id == ids[3] and e.kind == "branch" for e in tree.edges)
 
 
+def test_v3_first_page_keeps_a_live_tree_on_one_revision(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    root = run_dir / "rollout-trees"
+    archive = RolloutTreeArchive(root, "exp", "123456abcdef", schema_version=3)
+    archive.record("a", SAMPLE, "train")
+    recorder = ExecutionRecorder(root, "a", "at1")
+    for turn in range(1, 111):
+        node = recorder.begin("hub", "agent", turn, "step")
+        recorder.finish(node, "next")
+    recorder.complete()
+    observe(archive, "a")
+    archive.flush()
+    tree = archive.group(SAMPLE, "train")
+    assert len([node for node in tree.nodes if node.kind != "query"]) > 100
+
+    def registered(exp, run):
+        if (exp, run) != ("exp", "123456abcdef"):
+            raise HTTPException(404, "wrong run")
+        return {"state": "running"}
+
+    monkeypatch.setattr(api, "training_run", registered)
+    monkeypatch.setattr(api.PROCS, "run_dir", lambda *args: run_dir)
+    app = FastAPI()
+    app.include_router(api.router)
+    with TestClient(app) as client:
+        base = f"/api/rl/runs/123456abcdef/rollout-trees/{tree.tree_id}"
+        response = client.get(base, params={"experiment_id": "exp", "limit": 100})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["page"]["next_cursor"] is None
+        assert len(body["tree"]["nodes"]) == len(tree.nodes)
+        stale = client.get(base, params={"experiment_id": "exp", "cursor": "0:0", "limit": 100})
+        assert stale.status_code == 409
+
+
 def test_v3_api_pagination_node_lookup_and_details(tmp_path, monkeypatch):
     run_dir = tmp_path / "run"
     archive, ids = make_tree(run_dir / "rollout-trees")

@@ -83,6 +83,11 @@ def read_train_progress(path: Optional[str]) -> Optional[Dict[str, Any]]:
             size = handle.tell()
             handle.seek(max(0, size - 262144))
             raw = handle.read()
+            # The step bar is printed once at startup. Later logs push it out
+            # of the tail, so a long step would otherwise lose its progress.
+            if b"Training Progress" not in raw and size > len(raw):
+                handle.seek(0)
+                raw = handle.read(min(size, 524288))
     except OSError:
         return None
     return parse_train_progress(raw.decode("utf-8", errors="replace"))

@@ -67,7 +67,7 @@ trainer:
   nnodes: 1
   test_freq: 1
   total_epochs: 1
-  total_training_steps: 2
+  total_training_steps: 5
   save_freq: 1
   resume_mode: resume_path
   resume_from_path: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/simple_pev_scale256_grpo/global_step_1

@@ -26,7 +26,9 @@
 .mas-console-header { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 var(--console-gutter); }
 .mas-console-toggle { display: flex; flex: none; align-items: center; gap: 7px; padding: 5px 0; background: transparent; border: 0; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
 .mas-console-toggle strong { font-weight: 550; color: var(--text-primary); }
-.mas-console-summary { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 11px; }
+.thinking-switch { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.thinking-switch-error { color: var(--danger, #a33); }
+.mas-console-summary { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 11px; }
 .mas-console-summary-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mas-console-summary.is-error { color: var(--danger); }
 .mas-console-header > .ui-button { flex: none; min-height: 26px; padding: 3px 5px; }

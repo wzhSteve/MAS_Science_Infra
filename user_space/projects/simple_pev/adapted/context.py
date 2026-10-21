@@ -263,6 +263,8 @@ class Episode:
         yet) so the child calls ``generate_next_step`` again for that step.
         A post-tool export keeps the action and the child plans the next step.
         """
+        from sft_prompts import normalize_outline
+
         step = int(self.step_count)
         actions = {}
         for key, action in self.memory.get_actions().items():
@@ -287,7 +289,7 @@ class Episode:
             "query_analysis": self.query_analysis,
             "step_count": step,
             "actions": actions,
-            "outline": [dict(item) for item in (getattr(self.memory, "outline", None) or []) if isinstance(item, dict)],
+            "outline": normalize_outline(getattr(self.memory, "outline", None) or []),
             "obtained_information": [str(item) for item in (getattr(self.memory, "obtained_information", None) or [])],
             "query": self.memory.get_query(),
             "files": list(self.memory.get_files()),
@@ -296,6 +298,8 @@ class Episode:
 
     def restore_state(self, state: Dict[str, Any]) -> None:
         """Replace Memory and the step counter. Does not call ``analyze_query``."""
+        from sft_prompts import normalize_outline
+
         self.query_analysis = str(state.get("query_analysis") or "")
         self.step_count = int(state.get("step_count") or 0)
         self.memory.actions = {}
@@ -316,8 +320,6 @@ class Episode:
         if query:
             self.memory.set_query(str(query))
         self.memory.files = [dict(item) for item in (state.get("files") or []) if isinstance(item, dict)]
-        from sft_prompts import normalize_outline
-
         self.memory.outline = normalize_outline(state.get("outline"))
         self.memory.obtained_information = [
             str(item) for item in (state.get("obtained_information") or []) if str(item or "").strip()
@@ -428,9 +430,20 @@ class EpisodeContext:
             return self._finish_plan(ep)
         ep.step_count += 1
         # A restored episode already has query_analysis; do not re-run step 1.
+        from sft_prompts import (
+            PYTHON_FALLBACK,
+            PYTHON_OUTLINE_STEP,
+            apply_outline,
+            bind_current_subgoal,
+            fallback_unparsed_tool,
+            normalize_outline,
+            question_needs_python,
+        )
+
         if not ep.query_analysis:
             ep.query_analysis = ep.planner.analyze_query(ep.question, None)
             ep.json_data["query_analysis"] = ep.query_analysis
+            apply_outline(ep.memory, getattr(ep.planner, "_initial_outline", None))
         runtime = load_runtime()
         next_step = ep.planner.generate_next_step(
             ep.question, None, ep.query_analysis, ep.memory,
@@ -439,15 +452,21 @@ class EpisodeContext:
         plan = getattr(ep.planner, "_last_plan", None) or {}
         ep._pending_plan = plan if isinstance(plan, dict) else {}
         if ep._pending_plan.get("outline"):
-            from sft_prompts import apply_outline
-
             apply_outline(ep.memory, ep._pending_plan["outline"])
         ep.context, ep.sub_goal, ep.tool_name = ep.planner.extract_context_subgoal_and_tool(next_step)
-        from sft_prompts import fallback_unparsed_tool
-
+        needs_code = question_needs_python(ep.question)
+        available = getattr(ep.planner, "available_tools", None)
         ep.tool_name, ep.context, ep.sub_goal, ep._tool_parse_note = fallback_unparsed_tool(
-            ep.tool_name, ep.context, ep.sub_goal, getattr(ep.planner, "available_tools", None),
+            ep.tool_name, ep.context, ep.sub_goal, available,
+            PYTHON_FALLBACK if needs_code else None,
         )
+        names = {str(item) for item in (available or [])}
+        if needs_code and PYTHON_FALLBACK in names:
+            ep.tool_name = PYTHON_FALLBACK
+        if not normalize_outline(getattr(ep.memory, "outline", None)):
+            step = PYTHON_OUTLINE_STEP if needs_code else "查找题目要的事实"
+            apply_outline(ep.memory, [step])
+        ep.sub_goal = bind_current_subgoal(ep.sub_goal, ep.memory)
         return {
             "kind": "plan_step",
             "payload": {
@@ -476,19 +495,25 @@ class EpisodeContext:
 
         ep = self.episode(_payload(message))
         self.pin_engines()
+        from sft_prompts import last_python_error, repeated_python_program
+
         tool_name = ep.tool_name
         if tool_name is None or tool_name not in ep.planner.available_tools:
             command = "No command was generated because the tool was not found."
             result: Any = "No result was generated because the tool was not found."
             ok = False
         else:
+            ep.executor._python_repair = last_python_error(ep.memory) if "python" in tool_name.lower() else ""
             tool_command = ep.executor.generate_tool_command(
                 ep.question, None, ep.context, ep.sub_goal, tool_name,
                 ep.toolbox_metadata[tool_name], ep.step_count, ep.json_data,
             )
             _analysis, _explanation, command = ep.executor.extract_explanation_and_command(tool_command)
             command = apply_sft_tags(tool_name, tool_command, command)
-            result = ep.executor.execute_tool_command(tool_name, command)
+            if "python" in tool_name.lower() and repeated_python_program(command, ep.memory):
+                result = "Error: this program already ran"
+            else:
+                result = ep.executor.execute_tool_command(tool_name, command)
             limit = int(load_runtime().get("memory_result_chars") or 0)
             result = make_json_serializable_truncated(result, limit) if limit > 0 else make_json_serializable_truncated(result)
             ep.json_data[f"tool_result_{ep.step_count}"] = result
@@ -542,6 +567,7 @@ class EpisodeContext:
             parse_verifier_text,
             recent_has_fetch_body,
             recent_has_search_urls,
+            last_python_print,
             recent_steps_look_empty,
         )
 
@@ -561,7 +587,12 @@ class EpisodeContext:
         if out_of_budget:
             analysis = budget_unresolved_reason(analysis, ep.memory)
 
-        no_evidence = recent_steps_look_empty(ep.memory) and not recent_has_fetch_body(ep.memory)
+        printed = last_python_print(ep.memory)
+        no_evidence = (
+            not printed
+            and recent_steps_look_empty(ep.memory)
+            and not recent_has_fetch_body(ep.memory)
+        )
         # Budget stop without grounded evidence: end the episode without inventing an answer.
         force_empty = bool(out_of_budget and no_evidence and conclusion != "STOP")
         stop = conclusion == "STOP" or out_of_budget
@@ -585,6 +616,10 @@ class EpisodeContext:
             ep.json_data["direct_output"] = ep.direct_output
             ep.done = True
             answer = wrap_answer(ep.direct_output, source=ep.source)
+            if not answer and printed:
+                ep.direct_output = printed
+                ep.json_data["direct_output"] = printed
+                answer = wrap_answer(printed, source=ep.source)
         return {
             "kind": "verify",
             "payload": {

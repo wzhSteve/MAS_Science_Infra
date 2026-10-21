@@ -149,6 +149,37 @@ def _no_think() -> bool:
     return os.environ.get("AGENTFLOW_NO_THINK", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+_ON = ("1", "true", "yes", "on")
+_OFF = ("0", "false", "no", "off")
+
+
+def thinking_enabled() -> bool:
+    """``.env`` key ``enable_thinking`` controls every role.
+
+    Unset means off. ``AGENTFLOW_NO_THINK`` still forces off when the key is absent.
+    """
+    raw = os.environ.get("enable_thinking")
+    if raw is None or not str(raw).strip():
+        raw = os.environ.get("ENABLE_THINKING")
+    text = str(raw or "").strip().lower()
+    if text in _ON:
+        return True
+    if text in _OFF:
+        return False
+    if _no_think():
+        return False
+    return False
+
+
+def skip_thinking(trainable: bool) -> bool:
+    """True when this call must send ``enable_thinking=False``.
+
+    The role does not matter. The ``.env`` switch covers the planner and the frozen tools.
+    """
+    del trainable
+    return not thinking_enabled()
+
+
 _CONTEXT_MARGIN = 128
 _PROMPT_SLACK = 192
 _TRUNC_MARK = "...[truncated]..."
@@ -454,8 +485,9 @@ class LocalChatEngine:
 
         frozen = not self.trainable
         model = _model(frozen, self._pinned)
-        # /no_think is a local switch. Default off so official f-strings stay intact.
-        user = prompt.rstrip() + "\n/no_think" if _no_think() else prompt
+        # enable_thinking in .env covers every role, including the planner.
+        quiet = skip_thinking(self.trainable)
+        user = prompt.rstrip() + "\n/no_think" if quiet else prompt
         model_len = _serving_model_len()
         user = fit_user_to_context(user, system_prompt=system_prompt, model_len=model_len)
         # trust_env=False: an ambient HTTP proxy 502s the trainable rollout URL
@@ -483,8 +515,11 @@ class LocalChatEngine:
                 # logprobs match the official vLLM rollout (logprobs=10).
                 kwargs["logprobs"] = True
                 kwargs["top_logprobs"] = 10
-            if _no_think():
-                kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+            enabled = not quiet
+            kwargs["extra_body"] = {
+                "enable_thinking": enabled,
+                "chat_template_kwargs": {"enable_thinking": enabled},
+            }
             # trust_env=False: the ambient HTTP proxy 502s the rollout URL.
             # The response hook fills prompt/response token ids. vLLM 0.9.2
             # does not honor return_token_ids; agentops reads them off the

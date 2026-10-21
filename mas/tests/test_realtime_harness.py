@@ -48,6 +48,17 @@ class TestStdoutJsonlFrames(unittest.TestCase):
         kept = [payload for line in lines if (payload := rollout_tree_event_from_line(line))]
         self.assertEqual([item["event"] for item in kept], ["loss", "tree_updated", "node_added"])
 
+    def test_partial_log_line_is_kept_until_it_finishes(self):
+        from science_infra.control.events import complete_log_lines, rollout_tree_event_from_line
+
+        event = json.dumps({"__rollout_tree_event__": {"event": "tree_updated", "tree_id": "live"}})
+        pending, lines = complete_log_lines("", event[:12])
+        self.assertEqual(lines, [])
+        self.assertEqual(pending, event[:12])
+        pending, lines = complete_log_lines(pending, event[12:] + "\n")
+        self.assertEqual(pending, "")
+        self.assertEqual(rollout_tree_event_from_line(lines[0])["tree_id"], "live")
+
 
 class TestDiagnoserConsume(unittest.TestCase):
     def test_log_error_consume(self):

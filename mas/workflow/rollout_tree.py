@@ -238,6 +238,7 @@ class RolloutTreeArchive:
             "branch_count": sum(node.origin == "branch" for node in nodes),
             "plan_count": len(tree.plans), "pending_count": len(tree.pending_nodes),
             "issue_count": len(tree.issues) + sum(len(node.record_issues) for node in nodes),
+            "gap_count": len(tree.issues),
             "completed_count": sum(node.store_status in TERMINAL for node in nodes),
             "failed_count": sum(node.status == "failed" for node in nodes),
             "unconfirmed_count": sum(node.store_status not in TERMINAL for node in nodes),
@@ -282,11 +283,23 @@ class RolloutTreeArchive:
         if message not in self.errors:
             self.errors = [*self.errors[-19:], message]
 
+    def clear_errors(self, prefix: str) -> None:
+        """Drop a recovered transient error so one blip does not stick for the run."""
+        kept = [item for item in self.errors if not str(item).startswith(prefix)]
+        if len(kept) == len(self.errors):
+            return
+        self.errors = kept
+        try:
+            self._write_manifest()
+        except (OSError, ValueError) as error:
+            self.report_error(f"write manifest: {error}")
+
     def _write_manifest(self) -> None:
         manifest = {
             "schema_version": 2, "experiment_id": self.experiment_id, "run_id": self.run_id,
+            # Node notes such as a conflicting store status are not missing records.
             "status": "degraded" if self.errors or any(
-                row["issue_count"] for row in self.summaries.values()
+                row.get("gap_count") for row in self.summaries.values()
             ) else "ready",
             "errors": list(self.errors), "trees": sorted(
                 self.summaries.values(), key=lambda row: (row.get("created_at", ""), row["tree_id"])

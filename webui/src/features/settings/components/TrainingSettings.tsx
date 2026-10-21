@@ -16,6 +16,7 @@ import { useTrainingConfig } from '../../../app/providers/TrainingConfigProvider
 import { DatasetSelection } from '../../resources/components/DatasetSelection';
 import type { SettingsSection } from '../model/sections';
 import type { CanvasMode } from '../../mas/types';
+import { ThinkingSwitch } from '../../training/components/ThinkingSwitch';
 import {
   resolveAgentModel,
   type AgentDefaultModel,
@@ -131,6 +132,7 @@ export const TrainingSettings = memo(function TrainingSettings({
       </section>
       <section id="training-training" className="parameter-group">
         <h3><span>03</span>训练策略</h3>
+        <ThinkingSwitch />
         <SamplingSettings workflow={workflow} palette={palette} onChange={onWorkflowChange} onLocate={onLocate}
           compact onOpenDesign={() => onCanvasModeChange('sampling')} canvasMode={canvasMode}
           preview={samplingPreview} previewError={samplingPreviewError}

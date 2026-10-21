@@ -99,6 +99,18 @@ def rollout(status="succeeded"):
     )
 
 
+def test_node_notes_do_not_mark_the_run_degraded(tmp_path):
+    archive = RolloutTreeArchive(tmp_path, "exp", "run")
+    archive.record("a", sample(), "train")
+    archive.observe("a", sample(), "train", **observation(results=[result()]))
+    archive.observe("a", sample(), "train", **observation(results=[result(answer="different")]))
+    archive.flush()
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["status"] == "ready" and not manifest["errors"]
+    assert manifest["trees"][0]["issue_count"] == 1
+    assert manifest["trees"][0]["gap_count"] == 0
+
+
 def test_store_reconcile_event_and_cancelled_poll_task(tmp_path, capsys):
     recorder = RolloutTreeRecorder({
         "TIR_ROLLOUT_TREE_DIR": str(tmp_path), "TIR_EXPERIMENT_ID": "exp", "TIR_RUN_ID": "run",
@@ -124,6 +136,19 @@ def test_store_reconcile_event_and_cancelled_poll_task(tmp_path, capsys):
     store.query_rollouts.side_effect = RuntimeError("disconnected")
     asyncio.run(recorder._reconcile_safely(store, {"a": sample()}, "train"))
     assert recorder.archive.errors
+    store.query_rollouts.side_effect = None
+    store.query_rollouts.return_value = [rollout()]
+    asyncio.run(recorder._reconcile_safely(store, {"a": sample()}, "train"))
+    assert not any(item.startswith("Store reconciliation failed:") for item in recorder.archive.errors)
+    assert json.loads((tmp_path / "manifest.json").read_text())["status"] == "ready"
+    store.query_rollouts.side_effect = OSError(
+        "Cannot connect to host localhost:4747 ssl:default [Connect call failed ('127.0.0.1', 4747)]"
+    )
+    asyncio.run(recorder._reconcile_safely(store, {"a": sample()}, "train", closing=True))
+    assert not any(item.startswith("Store reconciliation failed:") for item in recorder.archive.errors)
+    store.query_rollouts.side_effect = ValueError("Store reconciliation group mismatch")
+    asyncio.run(recorder._reconcile_safely(store, {"a": sample()}, "train", closing=True))
+    assert any("group mismatch" in item for item in recorder.archive.errors)
 
 
 @pytest.fixture
@@ -176,6 +201,38 @@ def test_api_pagination_etag_identity_and_restart(client):
     (run / "rollout-trees" / f"{tree_id}.json").write_text(json.dumps(raw))
     assert http.get(url).status_code == 500
     assert http.get(base + "/invalid?experiment_id=exp").status_code == 404
+
+
+def test_finished_run_does_not_keep_a_closed_store_as_a_recording_gap(client, monkeypatch):
+    http, _archive, _tree_id, run = client
+    path = run / "rollout-trees" / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["status"] = "degraded"
+    manifest["errors"] = [
+        "Store reconciliation failed: Cannot connect to host localhost:4747 "
+        "ssl:default [Connect call failed ('127.0.0.1', 4747)]"
+    ]
+    path.write_text(json.dumps(manifest))
+    base = "/api/rl/runs/abcdef123456/rollout-trees?experiment_id=exp"
+
+    def state(value):
+        def registered(exp, rid):
+            if (exp, rid) != ("exp", "abcdef123456"):
+                raise HTTPException(404, "wrong run")
+            return {"state": value, "meta": {"rollout_tree": {}}}
+        monkeypatch.setattr(api, "training_run", registered)
+
+    state("running")
+    live = http.get(base)
+    assert live.json()["recording_status"] == "degraded"
+    assert live.json()["recording_errors"]
+    state("cancelled")
+    finished = http.get(base)
+    assert finished.json()["recording_status"] == "ready"
+    assert finished.json()["recording_errors"] == []
+    manifest["errors"] = ["write manifest: disk full"]
+    path.write_text(json.dumps(manifest))
+    assert http.get(base).json()["recording_status"] == "degraded"
 
 
 def test_api_missing_corrupt_and_size_limit(client, monkeypatch):

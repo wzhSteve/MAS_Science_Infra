@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 MAX_FILE_BYTES = 16 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 TREE_ID = re.compile(r"[a-f0-9]{32}")
+_TERMINAL_RUN = {"succeeded", "failed", "cancelled", "interrupted"}
+_STORE_CLOSED = ("Cannot connect to host", "Connect call failed")
+
+
+def _recording(manifest: dict, run_state: object) -> tuple[str, list[str]]:
+    """Run-level gaps are archive errors. A store that exits with the trainer is not one."""
+    errors = [str(item) for item in manifest.get("errors") or [] if isinstance(item, str)]
+    if str(run_state or "") in _TERMINAL_RUN:
+        errors = [item for item in errors if not any(mark in item for mark in _STORE_CLOSED)]
+    return ("degraded" if errors else "ready"), errors
 
 
 def _directory(experiment_id: str, run_id: str) -> tuple[Path, dict]:
@@ -124,10 +134,11 @@ def list_trees(
                           "query_truncated": len(tree.query) > 240, "availability": "available"})
         except HTTPException as error:
             items.append({**summary, "availability": "unreadable", "error": error.detail})
+    recording_status, recording_errors = _recording(manifest, run.get("state"))
     return _respond(request, {
         **common, "availability": "available" if summaries else "empty",
-        "recording_status": manifest.get("status", "unknown"),
-        "recording_errors": manifest.get("errors", []),
+        "recording_status": recording_status,
+        "recording_errors": recording_errors,
         "items": items, "total": len(selected),
         "next_offset": offset + limit if offset + limit < len(selected) else None,
     })
@@ -157,6 +168,10 @@ def tree_detail(
                   and (parent_id is None or node.parent_id == parent_id or any(
                       edge.source_node_id == parent_id and edge.target_node_id == node.node_id
                       for edge in tree.edges))]
+    # A live execution tree changes between page requests. One response that
+    # holds the whole tree (the API cap is 500) stays on a single revision.
+    if tree.schema_version == 3 and cursor is None and node_id is None and len(candidates) <= 500:
+        limit = max(limit, len(candidates))
     if node_id is not None:
         positions = {node.node_id: index for index, node in enumerate(candidates)}
         if node_id not in positions:

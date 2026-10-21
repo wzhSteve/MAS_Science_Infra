@@ -74,7 +74,7 @@ export function useSampleResults(experimentId: string, runId: string, treeId: st
         if (!signal.aborted) assembled.current = { key, revision: detail.tree.revision, data: detail };
         return detail;
       } catch (error) {
-        if (!cursor && attempt === 0 && error instanceof ApiError && error.status === 409) continue;
+        if (!cursor && attempt < 3 && error instanceof ApiError && error.status === 409) continue;
         throw error;
       }
     }
