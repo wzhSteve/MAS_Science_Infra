@@ -83,6 +83,40 @@ def current_episode_id() -> str:
     return _EPISODE_ID.get()
 
 
+# The window thread and the waiting thread share this dict. The LLM call
+# writes its httpx client here so a window timeout can close the socket.
+_ACTIVE_HTTP: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "science_active_http", default=None
+)
+
+
+def bind_active_http(holder: dict) -> contextvars.Token:
+    return _ACTIVE_HTTP.set(holder)
+
+
+def reset_active_http(token: contextvars.Token) -> None:
+    _ACTIVE_HTTP.reset(token)
+
+
+def note_active_http(client: Any) -> None:
+    holder = _ACTIVE_HTTP.get()
+    if isinstance(holder, dict):
+        holder["client"] = client
+
+
+def close_active_http(holder: Optional[dict]) -> None:
+    client = holder.get("client") if isinstance(holder, dict) else None
+    if client is None:
+        return
+    closer = getattr(client, "close", None)
+    if not callable(closer):
+        return
+    try:
+        closer()
+    except Exception:
+        pass
+
+
 def reap_search_browsers() -> int:
     """Kill Chrome and ChromeDriver left behind by a hung Google navigation.
 
@@ -114,18 +148,23 @@ def reap_search_browsers() -> int:
 def run_isolated(fn: Callable[[], Any], *, timeout_s: float = 20.0) -> Any:
     if timeout_s <= 0:
         return fn()
+    holder: dict = {"client": None}
+    token = bind_active_http(holder)
     pool = ThreadPoolExecutor(max_workers=1)
     # Copy ContextVar bindings (eval window logger) into the worker thread.
+    # The holder dict is shared, so the worker's HTTP client is visible here.
     ctx = contextvars.copy_context()
     fut = pool.submit(ctx.run, fn)
     deadline = time.monotonic() + float(timeout_s)
     try:
         while True:
             if eval_cancelled():
+                close_active_http(holder)
                 reap_search_browsers()
                 raise EvalCancelled("用户停止")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                close_active_http(holder)
                 reap_search_browsers()
                 raise TimeoutError(f"user window timed out after {timeout_s}s")
             try:
@@ -133,6 +172,7 @@ def run_isolated(fn: Callable[[], Any], *, timeout_s: float = 20.0) -> Any:
             except FuturesTimeout:
                 continue
     finally:
+        reset_active_http(token)
         pool.shutdown(wait=False, cancel_futures=True)
 
 

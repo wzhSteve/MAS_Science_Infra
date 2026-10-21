@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 # Keep each line free of a second colon so ``_tool_names`` can split once.
 TOOL_LINES: List[str] = [
     "Generalist_Solution_Generator_Tool: another LLM call to reason or draft from the question and information already obtained. It does not search and can invent facts.",
-    "Python_Code_Generator_Tool: write and run one short program for arithmetic or a numeric task where code is more accurate than guessing. It does not look up facts, import libraries, or open pages.",
+    "Python_Code_Generator_Tool: write and run one short program for arithmetic or a numeric task. It may import math, sympy, or numpy. It must print the result. It does not call input(), look up facts, or open pages.",
     "Bing_Search_Tool: search keywords. Returns titles, URLs, and short snippets only. It does not open pages. Snippets are not the page text.",
     "Wikipedia_RAG_Search_Tool: Wikipedia search. Returns titles, URLs, and short snippets only. It does not open pages.",
     "Web_Fetch_Tool: open exactly one URL and return page text or an error. It does not search. A valid URL may still lack the needed fact.",
@@ -408,6 +408,87 @@ def _registered_tools_in(text: str) -> List[str]:
     return [name for name in _tool_names() if name in raw]
 
 
+def _compact_name(text: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(text or "").lower())
+
+
+def resolve_tool_name(text: Any) -> Optional[str]:
+    """One registered tool, or one name that matches after dropping underscores.
+
+    Several registered names, or a prompt leftover such as ``one of ...``, is
+    not a choice.
+    """
+    raw = str(text or "")
+    if _is_planner_placeholder(raw):
+        return None
+    found = _registered_tools_in(raw)
+    if len(found) == 1:
+        return found[0]
+    if len(found) > 1:
+        return None
+    compact = _compact_name(raw)
+    if not compact:
+        return None
+    hits = [name for name in _tool_names() if _compact_name(name) in compact]
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
+def _tool_from_outline_items(raw: Any) -> tuple[Optional[str], str]:
+    """A single tool named inside outline rows, plus that row's subgoal."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return None, ""
+    if not isinstance(raw, list):
+        return None, ""
+    chosen: List[str] = []
+    subgoal = ""
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = resolve_tool_name(item.get("selected_tool") or item.get("tool_name") or "")
+        if not name:
+            continue
+        chosen.append(name)
+        row_goal = str(item.get("subgoal") or item.get("sub_goal") or "").strip()
+        if not subgoal and row_goal and not _is_planner_placeholder(row_goal):
+            subgoal = row_goal
+    unique = list(dict.fromkeys(chosen))
+    if len(unique) != 1:
+        return None, ""
+    return unique[0], subgoal
+
+
+FALLBACK_TOOL = "Generalist_Solution_Generator_Tool"
+PARSE_FAIL_NOTE = (
+    "工具名没有解析出来，所以改用 Base_Generator_Tool。"
+    "下一步必须从工具列表里原样复制一个工具名。"
+)
+
+
+def fallback_unparsed_tool(
+    tool_name: Any, context: Any, subgoal: Any, available: Any,
+) -> tuple[str, str, str, str]:
+    """Use Base_Generator when the parsed name is not a registered tool.
+
+    The returned note is empty when the original tool stands. Callers write
+    that note into Context and into this step's Memory.
+    """
+    name = str(tool_name or "")
+    ctx = str(context or "")
+    goal = str(subgoal or "").strip()
+    names = {str(item) for item in (available or [])}
+    if name in names:
+        return name, ctx, goal, ""
+    if FALLBACK_TOOL not in names:
+        return name, ctx, goal, ""
+    merged = f"{PARSE_FAIL_NOTE}\n{ctx}".strip() if ctx else PARSE_FAIL_NOTE
+    return FALLBACK_TOOL, merged, goal or "用已有信息继续回答", PARSE_FAIL_NOTE
+
+
 def _blank_obtained(text: Any) -> bool:
     """NONE, null, n/a, and sentences that only start by saying there is no fact."""
     raw = " ".join(str(text or "").split())
@@ -464,13 +545,69 @@ def _json_blobs(text: str) -> List[str]:
     return blobs
 
 
+_LOOSE_STRING = re.compile(
+    r'"(selected_tool|tool_name|subgoal|sub_goal|tool_input|context|prediction|prediction_reason)"'
+    r'\s*:\s*"((?:\\.|[^"\\])*)"',
+    re.I,
+)
+
+
+def _json_string(body: str) -> str:
+    try:
+        return str(json.loads('"' + body + '"'))
+    except Exception:
+        return body
+
+
+def _loose_planner_payload(text: str) -> Optional[Dict[str, Any]]:
+    """Read selected_tool from a JSON object that never closes.
+
+    The model often writes a real tool name and then runs out of tokens before
+    the final brace. A complete-object parser drops that reply and the step
+    falls back to the base generator.
+    """
+    raw = re.sub(r"<think>.*?</think>", " ", str(text or ""), flags=re.I | re.S)
+    fields: Dict[str, str] = {}
+    tools: List[str] = []
+    for match in _LOOSE_STRING.finditer(raw):
+        key = match.group(1).lower()
+        value = _json_string(match.group(2)).strip()
+        if key in ("selected_tool", "tool_name"):
+            resolved = resolve_tool_name(value)
+            if resolved:
+                tools.append(resolved)
+            continue
+        fields[key] = value
+    unique = list(dict.fromkeys(tools))
+    if len(unique) != 1:
+        return None
+    tool_input = fields.get("tool_input") or fields.get("context") or ""
+    if _is_planner_placeholder(tool_input):
+        tool_input = ""
+    subgoal = fields.get("subgoal") or fields.get("sub_goal") or ""
+    if _is_planner_placeholder(subgoal):
+        subgoal = tool_input
+    reason = fields.get("prediction_reason") or ""
+    if _is_planner_placeholder(reason):
+        reason = ""
+    return {
+        "outline": [],
+        "subgoal": subgoal,
+        "tool_name": unique[0],
+        "tool_input": tool_input,
+        "prediction": normalize_prediction(fields.get("prediction")),
+        "prediction_reason": reason,
+    }
+
+
 def parse_planner_payload(text: str) -> Optional[Dict[str, Any]]:
     """Read the planner JSON. ``None`` means the caller should use the three lines.
 
     A JSON is skipped when its tool field is a prompt leftover or does not
     contain exactly one registered tool name. Later JSON in the same reply
     can still be used. Placeholder outline rows are dropped; an empty outline
-    does not replace the previous plan.
+    does not replace the previous plan. A reply that names one tool and then
+    breaks the JSON still keeps that tool.
     """
     for blob in _json_blobs(text):
         try:
@@ -480,10 +617,11 @@ def parse_planner_payload(text: str) -> Optional[Dict[str, Any]]:
         if not isinstance(payload, dict):
             continue
         tool_field = str(payload.get("selected_tool") or payload.get("tool_name") or "")
-        if _is_planner_placeholder(tool_field):
-            continue
-        found = _registered_tools_in(tool_field)
-        if len(found) != 1:
+        tool = resolve_tool_name(tool_field)
+        outline_tool, outline_subgoal = _tool_from_outline_items(payload.get("outline"))
+        if tool is None:
+            tool = outline_tool
+        if tool is None:
             continue
         tool_input = payload.get("tool_input")
         if tool_input is None:
@@ -495,7 +633,7 @@ def parse_planner_payload(text: str) -> Optional[Dict[str, Any]]:
             tool_input = ""
         subgoal = str(payload.get("subgoal") or payload.get("sub_goal") or "").strip()
         if _is_planner_placeholder(subgoal):
-            subgoal = tool_input
+            subgoal = outline_subgoal or tool_input
         reason = str(payload.get("prediction_reason") or "").strip()
         if _is_planner_placeholder(reason):
             reason = ""
@@ -503,12 +641,12 @@ def parse_planner_payload(text: str) -> Optional[Dict[str, Any]]:
         return {
             "outline": outline,
             "subgoal": subgoal,
-            "tool_name": found[0],
+            "tool_name": tool,
             "tool_input": tool_input,
             "prediction": normalize_prediction(payload.get("prediction")),
             "prediction_reason": reason,
         }
-    return None
+    return _loose_planner_payload(text)
 
 
 def _planner_for_parser(text: str) -> str:
@@ -558,15 +696,13 @@ def _planner_for_parser(text: str) -> str:
         if not match or ctx_i is None or sub_i is None or not context or not subgoal:
             continue
         raw_tool = match.group(1)
-        if _is_planner_placeholder(raw_tool):
-            continue
-        found = _registered_tools_in(raw_tool)
-        if len(found) != 1 or not (ctx_i < sub_i < i):
+        found = resolve_tool_name(raw_tool)
+        if not found or not (ctx_i < sub_i < i):
             continue
         return (
             f"Context: {context}\n"
             f"Sub-Goal: {subgoal}\n"
-            f"Tool Name: {found[0]}"
+            f"Tool Name: {found}"
         )
     return str(text or "")
 
@@ -726,10 +862,16 @@ def generate_tool_command(self, question, image, context, sub_goal, tool_name, t
     del question, image, tool_metadata
     name = str(tool_name or "")
     if "python" in name.lower():
-        spec = "Output exactly one line and nothing else:\n<python>expression or short problem</python>"
+        spec = (
+            "Output one program and nothing else:\n"
+            "<python>\n"
+            "print(the final result)\n"
+            "</python>\n"
+            "You may import math, sympy, or numpy. Do not call input(). Do not use the network."
+        )
     elif "fetch" in name.lower():
         spec = (
-            "Pick one concrete https URL from Context / Sub-Goal / recent urls. "
+            "Pick one concrete https URL from the suggestion, the sub-goal, or recent urls. "
             "Output exactly one line and nothing else:\n"
             "<search>https://one-url-from-previous-search</search>"
         )
@@ -737,8 +879,9 @@ def generate_tool_command(self, question, image, context, sub_goal, tool_name, t
         spec = "Output exactly one line and nothing else:\n<search>short query</search>"
     prompt = f"""Tool Name: {name}
 Sub-Goal: {_clip(sub_goal, 400)}
-Context: {_clip(context, 400)}
+Suggestion from the planner (not the final parameter): {_clip(context, 400)}
 
+You choose the final query, URL, or code.
 {spec}
 Do not explain. Do not write tool.execute. Do not write <think>. Do not write <|begin_search_query|>.
 """

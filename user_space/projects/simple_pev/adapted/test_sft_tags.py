@@ -9,15 +9,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sft_prompts import (  # noqa: E402
+    PARSE_FAIL_NOTE,
     _planner_for_parser,
     actual_label,
     add_obtained_information,
     apply_outline,
     budget_unresolved_reason,
+    fallback_unparsed_tool,
     parse_planner_payload,
     parse_verifier_text,
     tags_to_execute,
 )
+from tools_local import run_python_locally  # noqa: E402
 
 
 class _Tool:
@@ -257,6 +260,137 @@ class MemoryPromptTest(unittest.TestCase):
         self.assertEqual(verdict["reason"], "关键事实还没有")
         stop = parse_verifier_text("Conclusion: STOP\nReason:\nObtained: NONE")
         self.assertEqual(stop["reason"], "现有信息够回答")
+
+    def test_outline_nested_tool_and_missing_underscore_are_kept(self) -> None:
+        nested = """
+{"outline":[{"subgoal":"Simplify each radical expression.","selected_tool":"Generalist_Solution_Generator_Tool","tool_input":""}],
+ "subgoal":"this step","tool_input":"query or one URL"}
+"""
+        payload = parse_planner_payload(nested)
+        assert payload is not None
+        self.assertEqual(payload["tool_name"], "Generalist_Solution_Generator_Tool")
+        self.assertEqual(payload["subgoal"], "Simplify each radical expression.")
+        fuzzy = (
+            '{"subgoal":"find the director","selected_tool":"Generalist_Solution_GeneratorTool",'
+            '"tool_input":"director of A Perfect Couple"}'
+        )
+        fuzzy_payload = parse_planner_payload(fuzzy)
+        assert fuzzy_payload is not None
+        self.assertEqual(fuzzy_payload["tool_name"], "Generalist_Solution_Generator_Tool")
+        two = """
+{"outline":[
+  {"subgoal":"search","selected_tool":"Bing_Search_Tool"},
+  {"subgoal":"compute","selected_tool":"Python_Code_Generator_Tool"}
+]}
+"""
+        self.assertIsNone(parse_planner_payload(two))
+
+    def test_unclosed_json_keeps_the_named_tool(self) -> None:
+        cut = (
+            '{ "outline": "Identify car model", "subgoal": "Find the album cover",'
+            ' "selected_tool": "Bing_Search_Tool", "tool_input": "Pentastar album cover",'
+            ' "prediction": "partial", "prediction_reason": "still looking'
+        )
+        payload = parse_planner_payload(cut)
+        assert payload is not None
+        self.assertEqual(payload["tool_name"], "Bing_Search_Tool")
+        self.assertEqual(payload["subgoal"], "Find the album cover")
+        self.assertEqual(payload["tool_input"], "Pentastar album cover")
+        odd_case = (
+            '{"subgoal": "Use Wikipedia_RAG_Search_Tool to find the cover",'
+            ' "selected_tool": "Wikipedia_RAG_Search_TOOL", "tool_input": "Pentastar"}'
+        )
+        odd = parse_planner_payload(odd_case)
+        assert odd is not None
+        self.assertEqual(odd["tool_name"], "Wikipedia_RAG_Search_Tool")
+        two_fields = (
+            '"selected_tool": "Bing_Search_Tool", "selected_tool": "Web_Fetch_Tool"'
+        )
+        self.assertIsNone(parse_planner_payload(two_fields))
+        self.assertIsNone(parse_planner_payload("<think> primes greater than 3 are odd"))
+
+    def test_missing_tool_falls_back_to_base_generator(self) -> None:
+        available = [
+            "Generalist_Solution_Generator_Tool",
+            "Python_Code_Generator_Tool",
+            "Bing_Search_Tool",
+        ]
+        name, context, subgoal, note = fallback_unparsed_tool("", "old context", "", available)
+        self.assertEqual(name, "Generalist_Solution_Generator_Tool")
+        self.assertEqual(note, PARSE_FAIL_NOTE)
+        self.assertIn("Base_Generator_Tool", context)
+        self.assertIn("原样复制一个工具名", context)
+        self.assertIn("old context", context)
+        self.assertEqual(subgoal, "用已有信息继续回答")
+        kept = fallback_unparsed_tool("Bing_Search_Tool", "q", "find it", available)
+        self.assertEqual(kept, ("Bing_Search_Tool", "q", "find it", ""))
+
+
+class ContextClampTest(unittest.TestCase):
+    def test_completion_budget_fits_the_window(self) -> None:
+        from engine import clamp_max_tokens
+
+        capped = clamp_max_tokens(
+            4096,
+            "prompt",
+            4096,
+            counter=lambda _prompt: 6500,
+            model_len=10240,
+        )
+        self.assertLess(capped, 4096)
+        self.assertLessEqual(6500 + capped, 10240)
+
+    def test_overlong_user_keeps_question_and_rules(self) -> None:
+        from engine import fit_user_to_context
+
+        user = "Question: Wheatley Hills\n" + ("memory line\n" * 400) + "Rules: copy one name exactly"
+
+        def counter(blob: str) -> int:
+            return 10000 if "...[truncated]..." not in blob else 100
+
+        # 10000 tokens is over model_len - 192.
+        fitted = fit_user_to_context(user, model_len=10000 + 191, counter=counter)
+        self.assertTrue(fitted.startswith("Question: Wheatley Hills"))
+        self.assertIn("Rules: copy one name exactly", fitted[-1200:])
+        self.assertIn("...[truncated]...", fitted)
+
+
+class ToolResultFailedTest(unittest.TestCase):
+    def test_list_errors_fail_and_empty_or_hits_do_not(self) -> None:
+        from context import tool_result_failed
+
+        self.assertTrue(tool_result_failed(["Error: name 'syrpy' is not defined"]))
+        self.assertTrue(tool_result_failed(["Execution timed out after 120 seconds"]))
+        self.assertTrue(tool_result_failed(["search_unavailable: direct: 0 hits"]))
+        self.assertTrue(tool_result_failed("Error: syntax"))
+        self.assertTrue(tool_result_failed({"status": "fetch_unavailable"}))
+        self.assertFalse(tool_result_failed([]))
+        self.assertFalse(tool_result_failed(["Lincoln Navigator was introduced in 1997."]))
+        self.assertFalse(tool_result_failed(""))
+
+    def test_chat_client_does_not_retry(self) -> None:
+        import httpx
+
+        from engine import build_chat_client
+
+        with httpx.Client() as http_client:
+            client = build_chat_client(
+                http_client,
+                base_url="http://127.0.0.1:9/v1",
+                api_key="test",
+                timeout=90,
+            )
+            self.assertEqual(client.max_retries, 0)
+            self.assertEqual(client.timeout, 90)
+
+
+class PythonLocalTest(unittest.TestCase):
+    def test_pinned_interpreter_runs_print_and_rejects_input(self) -> None:
+        printed = run_python_locally("print(1 + 1)")
+        self.assertEqual(printed, "2")
+        rejected = run_python_locally("print(input())")
+        self.assertTrue(rejected.startswith("Error:"))
+        self.assertIn("input()", rejected)
 
 
 if __name__ == "__main__":

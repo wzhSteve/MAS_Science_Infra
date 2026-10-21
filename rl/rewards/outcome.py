@@ -14,7 +14,34 @@ if TYPE_CHECKING:  # RewardSpec lives in the same package (rl.rewards.assembly);
     # imported lazily to keep outcome.py import-order trivial for hot paths.
     from rl.rewards.assembly import RewardSpec
 
-_PLACEHOLDERS = {"", "answer", "<answer>", "number", "<number>"}
+_PLACEHOLDERS = {
+    "",
+    "answer",
+    "<answer>",
+    "</answer>",
+    "<answer></answer>",
+    "number",
+    "<number>",
+    "short answer",
+    "think",
+    "<think>",
+    "</think>",
+    "none",
+    "n/a",
+    "na",
+    "unknown",
+    "null",
+}
+_CONTENT_STOPS = {"a", "an", "the", "of", "and"}
+_LETTER_RE = re.compile(r"^\$*\s*\(?([A-E])\)?\s*\$*$", re.IGNORECASE)
+_MCQ_TEXTBF_RE = re.compile(
+    r"\\textbf\s*\{\s*\(?([A-E])\)?\s*\}\s*(.*?)(?=\\qquad|\\textbf|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+_MCQ_PAREN_RE = re.compile(
+    r"(?:^|\s)[\(（]([A-E])[\)）]\s*([^\n]{1,80})",
+    re.IGNORECASE,
+)
 
 
 def strip_thinking(text: str) -> str:
@@ -59,18 +86,21 @@ def _usable_answer(ans: Optional[str]) -> Optional[str]:
 
 
 def extract_answer_text(text: str) -> Optional[str]:
+    """Answer used for scoring. Thinking, including a boxed span inside it, is dropped."""
     if not text:
         return None
-    cleaned = strip_thinking(text) or text
+    cleaned = strip_thinking(text)
+    if not cleaned:
+        return None
     match = re.search(r"<answer>\s*(.*?)\s*</answer>", cleaned, flags=re.DOTALL | re.IGNORECASE)
     if match:
         ans = _usable_answer(match.group(1).strip())
         if ans is not None:
             return ans
-    # MAS / Qwen often nest <think> inside <answer>; strip_thinking on the full
-    # string already ran, but a leftover wrapper or raw boxed still carries gold.
-    boxed = _usable_answer(unwrap_boxed(text))
-    if boxed is not None and (_BOXED_RE.search(text) or _BOXED_SPACE_RE.search(text)):
+    # Only a boxed span that survives think-stripping counts. A formula inside
+    # an unclosed <think> must not become the scored answer.
+    boxed = _usable_answer(unwrap_boxed(cleaned))
+    if boxed is not None and (_BOXED_RE.search(cleaned) or _BOXED_SPACE_RE.search(cleaned)):
         return boxed
     match = re.search(r"(?<!#)###\s*(.+?)(\s*###|$)", cleaned, flags=re.DOTALL)
     if match:
@@ -81,6 +111,107 @@ def extract_answer_text(text: str) -> Optional[str]:
     if match:
         return _usable_answer(match.group(1).split("\n")[0].strip())
     return None
+
+
+def answer_for_reward(text: str) -> Optional[str]:
+    """Short answer for llm_binary. Empty tags and placeholders are not answers."""
+    return extract_answer_text(text)
+
+
+def _pure_number(gold: str) -> bool:
+    s = str(gold or "").strip().replace(",", "").replace("$", "").replace("%", "").replace(" ", "")
+    return bool(re.fullmatch(r"-?\d+(?:\.\d+)?", s))
+
+
+def _norm_eq(pred: str, gold: str) -> bool:
+    left = normalize_qa(pred)
+    right = normalize_qa(gold)
+    return bool(left) and left == right
+
+
+def _option_letter(answer: str) -> Optional[str]:
+    match = _LETTER_RE.match(str(answer or "").strip())
+    if not match:
+        return None
+    return match.group(1).upper()
+
+
+def _mcq_options(question: str) -> Dict[str, str]:
+    found: Dict[str, str] = {}
+    for match in _MCQ_TEXTBF_RE.finditer(question or ""):
+        found[match.group(1).upper()] = match.group(2).strip()
+    if found:
+        return found
+    for match in _MCQ_PAREN_RE.finditer(question or ""):
+        found.setdefault(match.group(1).upper(), match.group(2).strip())
+    return found
+
+
+def _option_matches(question: str, letter: str, gold: str) -> bool:
+    option = _mcq_options(question).get(letter, "")
+    if not option:
+        return False
+    if _norm_eq(option, gold):
+        return True
+    opt_digits = re.sub(r"\D", "", option)
+    gold_digits = re.sub(r"\D", "", gold)
+    return bool(gold_digits) and opt_digits == gold_digits
+
+
+def _content_tokens(text: str, min_len: int) -> set:
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {word for word in words if len(word) >= min_len and word not in _CONTENT_STOPS}
+
+
+def _gold_supported(answer: str, gold: str) -> bool:
+    """True when the answer contains a real gold token, not just a shared short word."""
+    blob = re.sub(r"[^a-z0-9]+", "", (answer or "").lower())
+    long = _content_tokens(gold, 5)
+    if long:
+        return any(token in blob for token in long)
+    short = _content_tokens(gold, 4)
+    if not short:
+        return True
+    return any(token in blob for token in short)
+
+
+def score_llm_binary(
+    prediction: Optional[str],
+    gold: str,
+    *,
+    question: str = "",
+    aliases: Optional[Sequence[str]] = None,
+) -> float:
+    """0/1 outcome. The judge only sees a short answer the local checks could not settle."""
+    from rl.rewards.llm_judge import llm_judge_correct
+
+    extracted = answer_for_reward("" if prediction is None else str(prediction))
+    if not extracted:
+        return 0.0
+    golds = [str(gold or "")] + [str(item) for item in (aliases or []) if str(item)]
+    letter = _option_letter(extracted)
+    any_text_gold = False
+    for item in golds:
+        if _norm_eq(extracted, item):
+            return 1.0
+        if len(extracted) <= 80 and numeric_match(extracted, item):
+            return 1.0
+        if letter and _option_matches(question, letter, item):
+            return 1.0
+        if not _pure_number(item):
+            any_text_gold = True
+    if letter or not any_text_gold:
+        return 0.0
+    if len(extracted) > 300:
+        return 0.0
+    best = 0.0
+    for item in golds:
+        if _pure_number(item) or not _gold_supported(extracted, item):
+            continue
+        best = max(best, llm_judge_correct(question, item, extracted))
+        if best >= 1.0 and _gold_supported(extracted, item):
+            return 1.0
+    return 0.0
 
 
 def has_answer_format(text: Optional[str]) -> bool:
@@ -238,17 +369,12 @@ def compute_outcome_reward(
         if outcome == "binary":
             return binary_correct(prediction, gold, source=source, aliases=aliases)
         if outcome == "llm_binary":
-            from rl.rewards.llm_judge import llm_judge_correct
-
-            text = prediction if prediction is not None else ""
-            extracted = extract_answer_text(str(text)) or strip_thinking(str(text)) or str(text)
-            golds = [gold] + [str(a) for a in (aliases or []) if str(a)]
-            best = 0.0
-            for g in golds:
-                best = max(best, llm_judge_correct(question, g, extracted))
-                if best >= 1.0:
-                    break
-            return float(best)
+            return score_llm_binary(
+                prediction,
+                gold,
+                question=question,
+                aliases=aliases,
+            )
         if outcome == "deep_research_llm":
             from rl.rewards.deep_research import compute_deep_research_llm_score
 

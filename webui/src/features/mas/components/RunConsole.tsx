@@ -2,13 +2,14 @@ import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ChevronDown, ChevronUp, Maximize2, Minimize2, Terminal } from 'lucide-react';
 import { Button } from '../../../shared/ui/button';
 import { TrainingConsole, TRAIN_STATE } from '../../training/components/TrainingConsole';
+import { TrainEta } from '../../training/components/TrainEta';
 import { useTraining, useTrainingViewRequest } from '../../../app/providers/RuntimeProvider';
 
 const ConsoleSummary = memo(function ConsoleSummary() {
   const { data } = useTraining();
   return <span className="mas-console-summary-text">{data?.running
-    ? `当前训练 · ${TRAIN_STATE[data.state] || '运行中'}`
-    : '无活动训练'}</span>;
+    ? <>当前训练 · {TRAIN_STATE[data.state] || '运行中'} · <TrainEta progress={data.progress} running /></>
+    : '当前实验没有由控制面启动的训练。历史曲线在 Monitor，不代表此刻有进程。'}</span>;
 });
 
 export const RunConsole = memo(function RunConsole({ experimentId, active, requestedOpen, requestedRunId, hidden, onSamples }: {

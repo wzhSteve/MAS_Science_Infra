@@ -1,7 +1,8 @@
 import { memo, useMemo } from 'react';
-import type { LossPoint, MonitorResponse, RewardPoint } from '../../../shared/api/types';
+import type { LossPoint, MonitorResponse, RewardArchive, RewardPoint } from '../../../shared/api/types';
 import { EmptyState } from '../../../shared/components/EmptyState';
 import { Section } from '../../../shared/components/Section';
+import { formatClock, TrainEta } from '../../training/components/TrainEta';
 import { RewardChart, type ChartPoint, type ChartSeries } from './RewardChart';
 
 const EMPTY_REWARDS: RewardPoint[] = [];
@@ -29,30 +30,36 @@ export const MonitorSummary = memo(function MonitorSummary({ model }: { model: M
   const pg = latestNumber(losses, 'pg_loss');
   const entropy = latestNumber(losses, 'entropy_loss');
   const latestLoss = pg != null && pg !== 0 ? pg : (entropy ?? pg);
+  const elapsed = model?.progress ? formatClock(model.progress.elapsed_seconds) : '—';
   return (
     <dl className="metrics-grid" aria-label="Monitor 概览">
-      <div className="metric"><dt className="metric-label">训练 Reward 记录数</dt><dd className="metric-value">{trainPoints}</dd></div>
-      <div className="metric"><dt className="metric-label">验证 Reward 记录数</dt><dd className="metric-value">{valPoints}</dd></div>
+      <div className="metric"><dt className="metric-label">训练集 step reward 记录数</dt><dd className="metric-value">{trainPoints}</dd></div>
+      <div className="metric"><dt className="metric-label">验证集 reward 记录数</dt><dd className="metric-value">{valPoints}</dd></div>
       <div className="metric"><dt className="metric-label">Loss 记录数</dt><dd className="metric-value">{lossPoints}</dd></div>
-      <div className="metric"><dt className="metric-label">最新 training/reward</dt><dd className="metric-value">{formatScalar(latestReward)}</dd></div>
+      <div className="metric"><dt className="metric-label">最新训练集 step reward</dt><dd className="metric-value">{formatScalar(latestReward)}</dd></div>
       <div className="metric"><dt className="metric-label">最新 Loss</dt><dd className="metric-value">{formatScalar(latestLoss)}</dd></div>
       <div className="metric"><dt className="metric-label">算法</dt><dd className="metric-value">{model?.tir_algo || '—'}</dd></div>
-      <div className="metric"><dt className="metric-label">分支计数</dt><dd className="metric-value">{formatScalar(model?.branch_local_count ?? null)}</dd></div>
+      <div className="metric"><dt className="metric-label">已用时间</dt><dd className="metric-value">{elapsed}</dd></div>
+      <div className="metric"><dt className="metric-label">预计剩余</dt><dd className="metric-value"><TrainEta progress={model?.progress} running={Boolean(model?.train_running)} /></dd></div>
     </dl>
   );
 });
 
-function mergeRewards(training: RewardPoint[], validation: RewardPoint[]): ChartPoint[] {
-  const byStep = new Map<number, ChartPoint>();
-  for (const point of training) {
-    byStep.set(point.index, { i: point.index, reward: point.reward });
-  }
-  for (const point of validation) {
-    const row = byStep.get(point.index) ?? { i: point.index };
-    row.val = point.reward;
-    byStep.set(point.index, row);
-  }
-  return [...byStep.values()].sort((left, right) => left.i - right.i);
+function chartPoints(points: RewardPoint[]): ChartPoint[] {
+  return points.map(point => ({ i: point.index, reward: point.reward }));
+}
+
+function ArchiveCharts({ archive }: { archive: RewardArchive }) {
+  const training = useMemo(() => chartPoints(archive.step_rewards), [archive.step_rewards]);
+  const validation = useMemo(() => chartPoints(archive.val_rewards), [archive.val_rewards]);
+  const critic = useMemo(() => chartPoints(archive.critic_rewards), [archive.critic_rewards]);
+  return <article className="page-stack" aria-label={archive.id}>
+    <p className="field-hint">{archive.note}</p>
+    <p className="field-hint">文件 <span className="mono break-all">{archive.path}</span></p>
+    {training.length ? <RewardChart data={training} title={`${archive.id} 训练集`} series={[{ key: 'reward', name: `训练集 · ${archive.train_file}`, color: 'var(--chart-train)' }]} /> : <p className="field-hint">这份历史没有训练集 step reward。</p>}
+    {validation.length ? <RewardChart data={validation} title={`${archive.id} 验证集`} series={[{ key: 'reward', name: `验证集 · ${archive.val_file || 'val 文件'}`, color: '#228be6' }]} /> : <p className="field-hint">这份历史没有验证集 reward。</p>}
+    {critic.length ? <RewardChart data={critic} title={`${archive.id} critic`} series={[{ key: 'reward', name: '训练集 critic/rewards/mean', color: '#f59f00' }]} /> : null}
+  </article>;
 }
 
 function lossSeries(points: LossPoint[]): ChartSeries[] {
@@ -77,14 +84,13 @@ interface MonitorDataProps {
 export const MonitorData = memo(function MonitorData({ model, aglOnline, visible }: MonitorDataProps) {
   const training = model?.step_rewards ?? EMPTY_REWARDS;
   const validation = model?.val_rewards ?? EMPTY_REWARDS;
+  const critic = model?.critic_rewards ?? EMPTY_REWARDS;
+  const archives = model?.reward_archives ?? [];
+  const labels = model?.reward_datasets;
   const losses = model?.step_losses ?? EMPTY_LOSSES;
-  const rewardChart = useMemo(() => mergeRewards(training, validation), [training, validation]);
-  const rewardSeries = useMemo(() => {
-    const series: ChartSeries[] = [];
-    if (training.length) series.push({ key: 'reward', name: 'training/reward', color: 'var(--chart-train)' });
-    if (validation.length) series.push({ key: 'val', name: 'val/reward', color: '#228be6' });
-    return series;
-  }, [training.length, validation.length]);
+  const trainChart = useMemo(() => chartPoints(training), [training]);
+  const valChart = useMemo(() => chartPoints(validation), [validation]);
+  const criticChart = useMemo(() => chartPoints(critic), [critic]);
   const lossChart = useMemo(
     () => losses.map(point => ({
       i: point.index,
@@ -96,17 +102,40 @@ export const MonitorData = memo(function MonitorData({ model, aglOnline, visible
   );
   const lossLines = useMemo(() => lossSeries(losses), [losses]);
 
+  const trainName = labels?.train_label || '训练集 step reward · llm_binary 该 step rollout 平均';
+  const valName = labels?.val_label || '验证集 reward · 只在 test_freq 触发时写入';
+  const criticName = labels?.critic_label || '同一批训练样本的 critic/rewards/mean，不是验证集';
   return (
     <>
-      <Section title="训练 Reward（AGL）">
-        {!visible ? <div className="h-[220px]" aria-hidden="true" /> : rewardChart.length ? (
-          <RewardChart data={rewardChart} title="训练 Reward（AGL）" series={rewardSeries} />
+      <Section title="训练集 step reward">
+        <p className="field-hint">{trainName}。来自当前实验 data.train_files，不包含验证集。</p>
+        {!visible ? <div className="h-[220px]" aria-hidden="true" /> : trainChart.length ? (
+          <RewardChart data={trainChart} title="训练集 step reward" series={[{ key: 'reward', name: trainName, color: 'var(--chart-train)' }]} />
         ) : (
-          <EmptyState title={aglOnline ? '训练已连接，尚无训练 Reward' : '尚无训练 Reward'}>
+          <EmptyState title={aglOnline ? '训练已连接，尚无训练集 step reward' : '尚无训练集 step reward'}>
             {aglOnline
-              ? '训练已连接，但还没有 training/reward。等第一个 actor update 结束即可。'
-              : 'metrics.jsonl 里还没有 training/reward 或 val/reward。训练写入后这里会画出历史曲线，不必等 LightningStore 在线。'}
+              ? '等第一个 actor update 结束，这里会出现 training/reward。'
+              : '当前运行的 metrics.jsonl 里还没有 training/reward。历史曲线在下方单独列出。'}
           </EmptyState>
+        )}
+        {criticChart.length ? <>
+          <p className="field-hint">{criticName}</p>
+          <RewardChart data={criticChart} title="训练集 critic/rewards/mean" series={[{ key: 'reward', name: criticName, color: '#f59f00' }]} />
+        </> : null}
+      </Section>
+      <Section title="验证集 reward">
+        <p className="field-hint">{valName}。来自当前实验 data.val_files。</p>
+        {!visible ? <div className="h-[220px]" aria-hidden="true" /> : valChart.length ? (
+          <RewardChart data={valChart} title="验证集 reward" series={[{ key: 'reward', name: valName, color: '#228be6' }]} />
+        ) : (
+          <EmptyState title="尚无验证集 reward">
+            val/reward 只在验证触发时写入。test_freq 未到，或这次运行没有验证。
+          </EmptyState>
+        )}
+      </Section>
+      <Section title="保留的历史 Reward">
+        {archives.length ? archives.map(archive => <ArchiveCharts key={archive.id} archive={archive} />) : (
+          <EmptyState title="没有单独保留的历史 Reward">这份实验没有登记只读的旧 metrics 文件。</EmptyState>
         )}
       </Section>
       <Section title="Loss">

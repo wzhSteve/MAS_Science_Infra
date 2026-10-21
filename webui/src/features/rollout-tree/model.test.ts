@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { parseRoute, routeHash, workspaceRoute } from '../../app/navigation';
 import { createTreeClient } from './api';
-import { answerState, candidateNodes, forestPositions, mergeDetail, rewardText, selectableId } from './model';
+import { answerState, candidateNodes, followedTreeId, forestPositions, mergeDetail, rewardText, selectableId } from './model';
 import { ancestorPath, executionPositions } from './executionLayout';
 import type { TreeDetail, TreeNode } from './types';
 
@@ -23,6 +23,16 @@ export const detail = (revision = 1, nodes = [node('a')]): TreeDetail => ({
 
 afterEach(() => vi.unstubAllGlobals());
 describe('sample result model', () => {
+  it('follows the live tree when the open one is already finished', () => {
+    const live = 'b'.repeat(32);
+    const other = 'a'.repeat(32);
+    const event = { tree_id: live, run_id: 'abcdef123456' };
+    expect(followedTreeId(event, { runId: 'abcdef123456', treeId: other }, false, 'running')).toBe(live);
+    expect(followedTreeId(event, { runId: 'abcdef123456', treeId: other }, true, 'running')).toBeNull();
+    expect(followedTreeId(event, { runId: 'abcdef123456', treeId: live }, false, 'running')).toBeNull();
+    expect(followedTreeId({ tree_id: 'global' }, { runId: 'abcdef123456', treeId: other }, false, 'running')).toBeNull();
+    expect(followedTreeId(event, { runId: 'abcdef123456', treeId: other }, false, 'succeeded')).toBeNull();
+  });
   it('round trips fixed run, selected answer and explicit view', () => {
     const route = { ...workspaceRoute('exp', 'records'), samples: {
       runId: 'abcdef123456', treeId: 'a'.repeat(32), nodeId: 'parent:child/1', view: 'branches' as const,

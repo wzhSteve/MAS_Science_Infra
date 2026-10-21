@@ -31,20 +31,22 @@ class TestStdoutJsonlFrames(unittest.TestCase):
         self.assertEqual(payload["tree_id"], "q1")
 
     def test_control_sse_line_filter(self):
-        """The exact line filter used by /api/events drain."""
+        """The line filter used by /api/events drain, including Ray's worker prefix."""
+        from science_infra.control.events import rollout_tree_event_from_line
+
         lines = [
             json.dumps({"__rollout_tree_event__": {"event": "loss", "tree_id": "global"}}),
             "INFO some other log line",
             json.dumps({"unrelated": True}),
+            '(TaskRunner pid=304860) ' + json.dumps(
+                {"__rollout_tree_event__": {"event": "tree_updated", "tree_id": "abc"}}
+            ),
+            '\x1b[36m(TaskRunner pid=460804)\x1b[0m ' + json.dumps(
+                {"__rollout_tree_event__": {"event": "node_added", "tree_id": "live"}}
+            ),
         ]
-        kept = []
-        for line in lines:
-            line = line.strip()
-            if not line.startswith('{"__rollout_tree_event__"'):
-                continue
-            kept.append(json.loads(line)["__rollout_tree_event__"])
-        self.assertEqual(len(kept), 1)
-        self.assertEqual(kept[0]["event"], "loss")
+        kept = [payload for line in lines if (payload := rollout_tree_event_from_line(line))]
+        self.assertEqual([item["event"] for item in kept], ["loss", "tree_updated", "node_added"])
 
 
 class TestDiagnoserConsume(unittest.TestCase):
@@ -138,12 +140,9 @@ class TestEndToEndFrameToHypothesis(unittest.TestCase):
             )
 
         # 2) parse with the control-side filter
-        events = []
-        for line in buf.getvalue().splitlines():
-            line = line.strip()
-            if not line.startswith('{"__rollout_tree_event__"'):
-                continue
-            events.append(json.loads(line)["__rollout_tree_event__"])
+        from science_infra.control.events import rollout_tree_event_from_line
+
+        events = [payload for line in buf.getvalue().splitlines() if (payload := rollout_tree_event_from_line(line))]
         self.assertEqual(len(events), 4)
 
         # 3) diagnosers consume the stream

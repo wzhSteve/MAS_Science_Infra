@@ -1,4 +1,5 @@
 import { useCallback, useRef } from 'react';
+import type { TrainProgress } from '../../../shared/api/types';
 import { runtimeApi } from '../api';
 import { usePollingResource } from '../../../shared/hooks/usePollingResource';
 
@@ -9,6 +10,7 @@ export interface TrainingSnapshot {
   log: string;
   error: string | null;
   requestId?: string;
+  progress: TrainProgress | null;
 }
 
 export function useTrainingRun(expId: string, active = true) {
@@ -28,6 +30,7 @@ export function useTrainingRun(expId: string, active = true) {
       running: Boolean(row?.running || ['preparing', 'starting', 'stopping'].includes(row?.state || '')),
       log: '', error: row?.state === 'failed' ? row.message || '训练失败' : null,
       requestId: typeof row?.meta?.request_id === 'string' ? row.meta.request_id : undefined,
+      progress: row?.progress ?? null,
     };
   }, [expId]);
   return usePollingResource(`training:${expId}:activity`, load, 4000, active);

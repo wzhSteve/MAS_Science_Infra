@@ -45,7 +45,10 @@ describe('MonitorPanel log', () => {
       step_losses: [{ index: 1, pg_loss: 0, entropy_loss: 0.11 }, { index: 2, pg_loss: 0, entropy_loss: 0.14 }],
       metrics_path: '/tmp/metrics.jsonl',
     }} />);
-    expect(screen.getByText('训练 Reward 记录数').parentElement?.textContent).toContain('2');
+    expect(screen.getByText('训练集 step reward 记录数').parentElement?.textContent).toContain('2');
+    expect(screen.getByRole('heading', { name: '训练集 step reward' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '验证集 reward' })).toBeTruthy();
+    expect(screen.getByText('当前没有活动训练')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Loss' })).toBeTruthy();
     const link = screen.getAllByRole('link', { name: /AGL Metrics（历史）/ })[0];
     expect(link.getAttribute('href') || '').toMatch(/^\/agl\/metrics/);

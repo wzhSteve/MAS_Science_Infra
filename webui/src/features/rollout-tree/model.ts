@@ -2,6 +2,22 @@ import type { Outcome, TreeDetail, TreeEdge, TreeNode } from './types';
 
 export const MAX_PAGES = 5;
 export const terminalRun = (state?: string) => ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(state || '');
+const LIVE_TREE_ID = /^[a-f0-9]{32}$/;
+
+/** Move the open graph onto the tree named by the latest live event. */
+export function followedTreeId(
+  event: { tree_id?: unknown; run_id?: unknown } | undefined,
+  selection: { runId: string; treeId?: string },
+  pinned: boolean,
+  runState?: string,
+): string | null {
+  if (pinned || terminalRun(runState)) return null;
+  const treeId = typeof event?.tree_id === 'string' ? event.tree_id : '';
+  const runId = typeof event?.run_id === 'string' ? event.run_id : '';
+  if (!LIVE_TREE_ID.test(treeId) || treeId === selection.treeId) return null;
+  if (runId && runId !== selection.runId) return null;
+  return treeId;
+}
 export const answerName = (id: string) => `回答 ${id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id}`;
 export const rewardText = (value?: number | null) => value == null ? '—' : String(Number(value.toFixed(4)));
 export const resultId = (node: TreeNode) => node.result_node_id || node.node_id;

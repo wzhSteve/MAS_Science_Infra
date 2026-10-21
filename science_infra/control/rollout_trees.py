@@ -106,7 +106,14 @@ def list_trees(
         raise HTTPException(500, "树目录条目损坏")
     selected = [row for row in summaries if (mode is None or row.get("mode") == mode)
                 and (task_id is None or row.get("task_id") == task_id)]
-    selected.sort(key=lambda row: (row.get("created_at", ""), row["tree_id"]))
+    def _still_running(row: dict) -> bool:
+        return int(row.get("rollout_count") or 0) > int(row.get("completed_count") or 0)
+
+    active = [row for row in selected if _still_running(row)]
+    finished = [row for row in selected if not _still_running(row)]
+    active.sort(key=lambda row: (str(row.get("updated_at") or ""), row["tree_id"]), reverse=True)
+    finished.sort(key=lambda row: (row.get("created_at", ""), row["tree_id"]))
+    selected = active + finished
     items = []
     for summary in selected[offset:offset + limit]:
         try:

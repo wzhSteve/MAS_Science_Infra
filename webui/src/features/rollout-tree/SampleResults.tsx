@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, List } from 'lucide-react';
 import type { SampleSelection } from '../../app/navigation';
-import { useRuntimeCommands } from '../../app/providers/RuntimeProvider';
+import { useRuntimeCommands, useRuntimeEvents } from '../../app/providers/RuntimeProvider';
 import { Button } from '../../shared/ui/button';
 import { Select } from '../../shared/ui/select';
 import { InlineNotice } from '../../shared/components/InlineNotice';
@@ -10,7 +10,7 @@ import { SampleState } from './SampleState';
 import { AnswerDetails } from './AnswerDetails';
 import { AnswerList } from './AnswerList';
 import { ExecutionDetails } from './ExecutionDetails';
-import { candidateNodes, MAX_PAGES, resultId, selectableId } from './model';
+import { candidateNodes, followedTreeId, MAX_PAGES, resultId, selectableId, terminalRun } from './model';
 import { useSampleResults } from './useSampleResults';
 
 const BranchGraph = lazy(() => import('./BranchGraph'));
@@ -22,13 +22,43 @@ export const SampleResults = memo(function SampleResults({ experimentId, selecti
   onNavigate: (selection: SampleSelection) => void; onHistory: () => void;
 }) {
   const state = useSampleResults(experimentId, selection.runId, selection.treeId, selection.nodeId, active);
-  const { viewTraining } = useRuntimeCommands();
-  const showLog = useCallback(() => viewTraining(selection.runId), [viewTraining, selection.runId]);
+  const events = useRuntimeEvents();
+  const [pinned, setPinned] = useState(false);
+  const pinnedRef = useRef(false);
+  pinnedRef.current = pinned;
+  const seenTreeEvent = useRef(events.seq);
+  const treeRefresh = useRef<number | null>(null);
+  const runState = useRef(state.run.data?.state);
+  runState.current = state.run.data?.state;
   const navigation = useRef({ selection, onNavigate });
   useLayoutEffect(() => { navigation.current = { selection, onNavigate }; }, [selection, onNavigate]);
-  const selectTree = useCallback((treeId: string) => navigation.current.onNavigate({
-    ...navigation.current.selection, treeId, nodeId: undefined,
-  }), []);
+  useEffect(() => { setPinned(false); }, [selection.runId]);
+  useEffect(() => {
+    if (events.latest !== 'rollout_tree' || events.seq === seenTreeEvent.current) return;
+    seenTreeEvent.current = events.seq;
+    const current = navigation.current.selection;
+    const nextTree = followedTreeId(events.data, current, pinnedRef.current, runState.current);
+    if (nextTree) navigation.current.onNavigate({ ...current, treeId: nextTree, nodeId: undefined });
+    if (treeRefresh.current !== null) return;
+    treeRefresh.current = window.setTimeout(() => {
+      treeRefresh.current = null;
+      void state.refresh();
+    }, 400);
+  }, [events.latest, events.seq, events.data, state.refresh]);
+  useEffect(() => () => { if (treeRefresh.current !== null) window.clearTimeout(treeRefresh.current); }, []);
+  useEffect(() => {
+    const page = state.detail.data?.page;
+    if (!page?.next_cursor || state.pages >= MAX_PAGES || terminalRun(state.run.data?.state)) return;
+    state.loadMore();
+  }, [state.detail.data?.page, state.pages, state.run.data?.state, state.loadMore]);
+  const { viewTraining } = useRuntimeCommands();
+  const showLog = useCallback(() => viewTraining(selection.runId), [viewTraining, selection.runId]);
+  const selectTree = useCallback((treeId: string, pin = false) => {
+    if (pin) setPinned(true);
+    navigation.current.onNavigate({
+      ...navigation.current.selection, treeId, nodeId: undefined,
+    });
+  }, []);
   const selectAnswer = useCallback((nodeId: string) => navigation.current.onNavigate({
     ...navigation.current.selection, nodeId,
   }), []);
@@ -90,9 +120,9 @@ export const SampleResults = memo(function SampleResults({ experimentId, selecti
           </Select></div>
         <div className="sample-topic-list">
           {state.list.data?.items.map(item => <button type="button" key={item.tree_id} className={`sample-topic${item.tree_id === selection.treeId ? ' is-selected' : ''}`}
-            aria-pressed={item.tree_id === selection.treeId} onClick={() => selectTree(item.tree_id)}>
+            aria-pressed={item.tree_id === selection.treeId} onClick={() => selectTree(item.tree_id, true)}>
             <strong>{item.query || (item.availability === 'unreadable' ? '题目记录读取失败' : '题目内容未记录')}</strong>
-            <span>{item.rollout_count} 条轨迹 · {item.branch_count ? `${item.branch_count} 次来自分支` : '无分支'}</span>
+            <span>{item.rollout_count} 条轨迹 · 已完成 {item.completed_count}/{item.rollout_count} · {item.branch_count ? `${item.branch_count} 次来自分支` : '无分支'}</span>
             <small>{item.mode === 'train' ? '训练' : '验证'} · {item.group_id.slice(0, 8)} · {new Date(item.created_at).toLocaleTimeString()}</small>
             {(item.failed_count > 0 || item.missing_result_count > 0 || item.error) && <small className="sample-warning">
               {item.error || `执行失败 ${item.failed_count} · 结果有缺失 ${item.missing_result_count}`}</small>}
@@ -124,6 +154,7 @@ export const SampleResults = memo(function SampleResults({ experimentId, selecti
                 onClick={() => onNavigate({ ...selection, view: 'answers' })}><List size={14} />回答列表</Button>
               <Button size="sm" variant={view === 'branches' ? 'primary' : 'ghost'} aria-pressed={view === 'branches'}
                 onClick={() => onNavigate({ ...selection, view: 'branches' })}><GitBranch size={14} />{isExecutionTree ? '执行树' : '分支关系'}</Button>
+              {pinned && !terminalRun(state.run.data?.state) && <Button size="sm" variant="ghost" onClick={() => setPinned(false)}>跟随正在采样的题目</Button>}
             </div>
             {allFailed && <SampleState kind="failed" compact title="本组尝试均执行失败"
               description="失败记录与实际奖励仍保留在下方。请查看训练日志定位原因。">
@@ -148,12 +179,12 @@ export const SampleResults = memo(function SampleResults({ experimentId, selecti
           {(state.cursor || state.detail.error) && <Button size="sm" variant="ghost" onClick={state.resetWindow}>从首批重新读取回答</Button>}
           <div key={selection.treeId} className="sample-views">
             <div className="sample-answer-scroll" hidden={view !== 'answers'}>
-              <AnswerList nodes={nodes} outcomes={data.tree.outcomes} selectedId={selectedId} onSelect={openAnswer} />
+              <AnswerList nodes={nodes} outcomes={data.tree.outcomes} mode={data.tree.mode} selectedId={selectedId} onSelect={openAnswer} />
             </div>
             {displayGraph && <div className="sample-graph-host" hidden={view !== 'branches'}>
               <Suspense fallback={<SampleState kind="loading" title="正在加载分支关系" />}>
                 {isExecutionTree
-                  ? <ExecutionGraph nodes={data.tree.nodes} edges={data.tree.edges || NO_EDGES} outcomes={data.tree.outcomes} selectedId={selectedId} onSelect={openAnswer} />
+                  ? <ExecutionGraph key={selection.treeId} nodes={data.tree.nodes} edges={data.tree.edges || NO_EDGES} outcomes={data.tree.outcomes} mode={data.tree.mode} selectedId={selectedId} onSelect={openAnswer} />
                   : <BranchGraph nodes={data.tree.nodes} outcomes={data.tree.outcomes} selectedId={selectedId} onSelect={openAnswer} />}
               </Suspense>
             </div>}
@@ -183,7 +214,7 @@ export const SampleResults = memo(function SampleResults({ experimentId, selecti
           detail={exact?.node.node_id === chosen.node_id ? exact.detail : undefined}
           loading={state.nodeDetail?.loading ?? false} error={state.nodeDetail?.error}
           onRetry={() => void state.nodeDetail.refresh()} onClose={closeDetails} />
-        : <AnswerDetails key={`${selection.treeId}:${chosen.node_id}`} node={chosen} outcome={chosenOutcome}
+        : <AnswerDetails key={`${selection.treeId}:${chosen.node_id}`} node={chosen} outcome={chosenOutcome} mode={data.tree.mode}
           unresolved={data.tree.pending_nodes.some(n => n.node_id === chosen.node_id)} onSelect={selectAnswer} onClose={closeDetails} />)}
     </div>
   </section>;

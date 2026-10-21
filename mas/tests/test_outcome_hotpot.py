@@ -48,6 +48,36 @@ class TestExtractAnswer(unittest.TestCase):
     def test_truncated_think_returns_none(self) -> None:
         self.assertIsNone(extract_answer_text("<answer><think>cut off mid"))
 
+    def test_boxed_inside_think_is_not_the_answer(self) -> None:
+        self.assertIsNone(extract_answer_text("<answer><think>\\boxed{0}</think></answer>"))
+        self.assertIsNone(extract_answer_text("<think>\\boxed{0} still reasoning</think>"))
+
+
+class TestLlmBinaryThink(unittest.TestCase):
+    def test_unclosed_think_scores_zero_without_judge(self) -> None:
+        from unittest import mock
+
+        from rl.rewards.assembly import RewardSpec
+
+        spec = RewardSpec(outcome="llm_binary")
+        prediction = (
+            "<answer><think>\nOkay, let's try to figure out how to solve this equation: "
+            "the number of real roots.\n"
+        )
+        with mock.patch("rl.rewards.llm_judge.llm_judge_correct", return_value=1.0) as judge:
+            score = compute_outcome_reward(
+                prediction,
+                "0",
+                source="math",
+                format_ok=True,
+                n_search=0,
+                n_python=0,
+                reward_spec=spec,
+                question="求该方程实数根的个数",
+            )
+        self.assertEqual(score, 0.0)
+        judge.assert_not_called()
+
 
 class TestHotpotF1(unittest.TestCase):
     def test_exact_alias_hit(self) -> None:
@@ -397,7 +427,7 @@ class TestRewardSectionWiring(unittest.TestCase):
 
         cfg = apply_algo_overlay(self._base(), "appo")
         section = cfg["algorithm"]["reward"]
-        self.assertEqual(section["outcome"], "hierarchical")
+        self.assertEqual(section["outcome"], "llm_binary")
         by_id = {c["id"]: c for c in section["components"]}
         self.assertTrue(by_id["format_penalty"]["enabled"])
         self.assertTrue(by_id["accuracy_reward"]["enabled"])

@@ -5,8 +5,8 @@ import { answerName, answerSource, answerState, rewardText } from './model';
 import type { Outcome, TreeNode } from './types';
 import { SampleState } from './SampleState';
 
-export const AnswerDetails = memo(function AnswerDetails({ node, outcome, unresolved, onSelect, onClose }: {
-  node: TreeNode; outcome?: Outcome; unresolved: boolean; onSelect: (id: string) => void; onClose: () => void;
+export const AnswerDetails = memo(function AnswerDetails({ node, outcome, mode, unresolved, onSelect, onClose }: {
+  node: TreeNode; outcome?: Outcome; mode?: string; unresolved: boolean; onSelect: (id: string) => void; onClose: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const root = useRef<HTMLElement>(null);
@@ -23,7 +23,7 @@ export const AnswerDetails = memo(function AnswerDetails({ node, outcome, unreso
       <Button size="sm" variant="ghost" aria-label="关闭回答详情" onClick={onClose}><X size={16} /></Button></header>
     <div className="sample-details-scroll">
       <div className="sample-result-heading"><span className={`sample-state is-${state.tone}`}>{state.label}</span>
-        <span>最终奖励 <strong>{rewardText(outcome?.reward)}</strong></span></div>
+        <span>最终奖励 <strong>{rewardText(outcome?.reward)}</strong>{mode === 'val' ? ' · 验证集' : mode === 'train' ? ' · 训练集' : ''}</span></div>
       {node.record_issues.length > 0 && <p className="sample-warning">记录存在冲突或缺口，以下内容不能视为完整结果。</p>}
       {outcome?.error_details && <section className="sample-execution-error" aria-label="执行失败原因">
         <h4>执行失败原因</h4>

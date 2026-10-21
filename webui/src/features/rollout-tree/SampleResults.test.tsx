@@ -6,7 +6,10 @@ import type { TreeDetail, TreeNode } from './types';
 
 const { mockState } = vi.hoisted(() => ({ mockState: vi.fn() }));
 vi.mock('./useSampleResults', () => ({ useSampleResults: mockState }));
-vi.mock('../../app/providers/RuntimeProvider', () => ({ useRuntimeCommands: () => ({ viewTraining: vi.fn() }) }));
+vi.mock('../../app/providers/RuntimeProvider', () => ({
+  useRuntimeCommands: () => ({ viewTraining: vi.fn() }),
+  useRuntimeEvents: () => ({ latest: '', seq: 0, error: null, connected: false }),
+}));
 vi.mock('../training/components/TrainingConsole', () => ({
   Snapshot: () => <button>本次配置</button>, TRAIN_STATE: { running: '运行中', succeeded: '已完成' },
 }));

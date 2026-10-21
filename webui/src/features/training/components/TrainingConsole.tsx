@@ -13,6 +13,7 @@ import { request } from '../../../shared/api/http';
 import { runUrl, useRunLog } from '../model/useRunLog';
 import { DownloadText } from '../../../shared/components/DownloadText';
 import { masApi } from '../../mas/api';
+import { TrainEta } from './TrainEta';
 
 export const TRAIN_STATE: Record<string, string> = {
   preparing: '准备中', starting: '启动中', running: '运行中', stopping: '停止中',
@@ -113,6 +114,7 @@ const RunOutput = memo(function RunOutput({ experimentId, runId, active, picker,
       {info?.n_runners != null && <span>Runner {String(info.n_runners)}</span>}
       {info?.group_n != null && <span>n={String(info.group_n)}</span>}
       <RunClock started={state?.started_at} ended={state?.ended_at} active={active && Boolean(state?.running)} />
+      <TrainEta progress={state?.progress} running={Boolean(state?.running)} />
       <span className="console-connection" title={log.connection} aria-label={log.connection} />
       <span className="console-heading-spacer" />
       {state?.kind !== 'eval' && <Button size="sm" variant="ghost" onClick={() => onSamples(runId)}>采样结果</Button>}

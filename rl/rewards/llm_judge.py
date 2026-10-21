@@ -83,31 +83,34 @@ def resolve_evaluation_endpoint() -> Tuple[str, str, str]:
 
 
 def build_judge_prompt(question: str, groundtruth: str, answer_extracted: str) -> str:
-    """Flow-GRPO evaluator instructions (AgentFlow train/utils.py), true_false first."""
+    """Judge prompt. The format example is VERDICT so a copied template is not a yes."""
     return f"""
 You are a precise evaluator. Determine if the Model Response is equivalent to the Ground Truth.
 
 **Instructions:**
-1.  **Extract:** Isolate the final answer from the Model Response, ignoring reasoning. Look for `\\boxed{{...}}` or concluding statements.
-2.  **Normalize & Compare:** The extracted answer and Ground Truth must be equivalent after normalization:
-    - **Math:** Mathematically identical (e.g., `\\frac{{1}}{{2}}` == `0.5`).
-    - **Numbers/Text:** Ignore formatting, case, and currency/units (e.g., `1,000` == `1000`).
-    - **MCQ:** Match option content (e.g., "Paris") or number (e.g., `3rd` option) to the correct letter.
-3.  **Verdict:** "True" only for semantically or mathematically equivalent answers.
+1. The Model Response is already the extracted answer. Do not treat reasoning as the answer.
+2. Equivalent after normalization means the same value, ignoring case, spacing, and commas.
+3. A formula that was not evaluated, a placeholder, or a partial name is not a match.
+4. A single option letter matches only when that option's text is the Ground Truth.
 
 **Inputs:**
 Question: {question}
 Model Response: {answer_extracted}
 Ground Truth: {groundtruth}
 
-**Format (emit BOTH tags; put true_false FIRST so it is never truncated):**
-<true_false>True</true_false> or <true_false>False</true_false>
+**Format:** output exactly one verdict tag, then one short analysis. Do not write both an affirmative and a negative verdict.
+<true_false>VERDICT</true_false>
 <analysis>One short sentence.</analysis>
+Replace VERDICT with true when they match. Otherwise replace VERDICT with false. Output only one verdict tag.
 """
 
 
 def parse_true_false(text: str) -> Optional[bool]:
     if not text:
+        return None
+    # A copied template that lists both verdicts is not a decision.
+    words = {item.lower() for item in re.findall(r"\b(true|false)\b", text, flags=re.IGNORECASE)}
+    if words == {"true", "false"}:
         return None
     m = _TRUE_FALSE_RE.search(text)
     if m:

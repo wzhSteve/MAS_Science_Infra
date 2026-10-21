@@ -31,6 +31,15 @@ from .protocol import (
 from .router import select as router_select
 
 
+def verifier_node_failed(kind: str) -> bool:
+    """A CONTINUE verdict is an unfinished step, not a crashed window.
+
+    Only a verifier message whose kind is ``error`` is an execution failure.
+    ``ok: false`` stays on the payload so the planner still sees INCOMPLETE.
+    """
+    return str(kind or "") == "error"
+
+
 class WindowLLM(Protocol):
     """One LLM call per agent window. Returns raw text; the caller parses JSON."""
 
@@ -1016,7 +1025,7 @@ def _run_centralized_episode_body(
                     execution_recorder, agent_id="verifier", turn=turn,
                     inputs={"sub_goal": p_payload.get("sub_goal")},
                     output=dict(v_msg.payload or {}),
-                    failed=not v_ok,
+                    failed=verifier_node_failed(v_msg.kind),
                     metrics={"ok": v_ok},
                 )
             _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics=_entropy_metrics(v_ok), recorder=execution_recorder)
@@ -1084,7 +1093,7 @@ def _run_centralized_episode_body(
                 execution_recorder, agent_id=verifier_id, turn=turn,
                 inputs={"sub_goal": p_payload.get("sub_goal")},
                 output=dict(v_msg.payload or {}),
-                failed=not v_ok,
+                failed=verifier_node_failed(v_msg.kind),
                 metrics={"ok": v_ok},
             )
             _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics=_entropy_metrics(v_ok), recorder=execution_recorder)

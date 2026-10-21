@@ -445,6 +445,13 @@ export interface AglHealth {
   status_code?: number;
 }
 
+export interface TrainProgress {
+  step: number;
+  total: number;
+  elapsed_seconds: number;
+  eta_seconds: number | null;
+  seconds_per_step: number | null;
+}
 export interface RunSummary {
   run_id: string;
   kind: string;
@@ -458,11 +465,37 @@ export interface RunSummary {
   message?: string | null;
   experiment_id?: string;
   meta?: Config;
+  progress?: TrainProgress | null;
 }
 
 export interface RunDetail extends RunSummary { log_tail?: string }
 export interface Hypothesis { plugin: string; event_id?: string; message: string; [key: string]: unknown }
-export interface RewardPoint { index: number; reward: number; branch_count?: number }
+export interface RewardPoint {
+  index: number;
+  reward: number;
+  branch_count?: number;
+  dataset?: 'train' | 'val';
+  dataset_label?: string;
+}
+export interface RewardArchive {
+  id: string;
+  algo: string;
+  path: string;
+  resumable: boolean;
+  train_file: string;
+  val_file: string;
+  note: string;
+  step_rewards: RewardPoint[];
+  val_rewards: RewardPoint[];
+  critic_rewards: RewardPoint[];
+}
+export interface RewardDatasets {
+  train_file: string;
+  val_file: string;
+  train_label: string;
+  val_label: string;
+  critic_label: string;
+}
 export interface LossPoint {
   index: number;
   pg_loss?: number;
@@ -494,6 +527,11 @@ export interface MonitorResponse {
   train_rewards?: RewardPoint[];
   step_rewards?: RewardPoint[];
   val_rewards?: RewardPoint[];
+  critic_rewards?: RewardPoint[];
+  reward_archives?: RewardArchive[];
+  reward_datasets?: RewardDatasets;
+  train_running?: boolean;
+  progress?: TrainProgress | null;
   step_losses?: LossPoint[];
   tir_algo?: string | null;
   branch_local_count?: number | null;

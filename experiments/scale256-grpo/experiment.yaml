@@ -4,7 +4,7 @@ experiment:
   refs:
     llm: llm.yaml
     workflow: workflow.yaml
-    rl: rl.yaml
+    rl: rl_ui_resume.yaml
     harness: harness.yaml
   pipeline:
   - collect

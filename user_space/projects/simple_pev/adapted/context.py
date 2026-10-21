@@ -324,6 +324,26 @@ class Episode:
         ]
 
 
+def tool_result_failed(result: Any) -> bool:
+    """True when a tool result is an error, a timeout, or an unavailable search/fetch.
+
+    ``make_json_serializable_truncated`` wraps strings in a list, so a check
+    that only looks at ``str.startswith`` misses ``["Error: ..."]``. An empty
+    list is not a failure.
+    """
+    if result is None or result == [] or result == "":
+        return False
+    if isinstance(result, (list, tuple, dict)):
+        text = json.dumps(result, ensure_ascii=False)
+    else:
+        text = str(result)
+    blob = text.lstrip()
+    low = blob.lower()
+    if blob.startswith(("Error", "Execution timed out", '["Error', '["Execution timed out')):
+        return True
+    return "search_unavailable" in low or "fetch_unavailable" in low
+
+
 class EpisodeContext:
     def __init__(self) -> None:
         self._comps: Optional[Components] = None
@@ -423,6 +443,11 @@ class EpisodeContext:
 
             apply_outline(ep.memory, ep._pending_plan["outline"])
         ep.context, ep.sub_goal, ep.tool_name = ep.planner.extract_context_subgoal_and_tool(next_step)
+        from sft_prompts import fallback_unparsed_tool
+
+        ep.tool_name, ep.context, ep.sub_goal, ep._tool_parse_note = fallback_unparsed_tool(
+            ep.tool_name, ep.context, ep.sub_goal, getattr(ep.planner, "available_tools", None),
+        )
         return {
             "kind": "plan_step",
             "payload": {
@@ -467,7 +492,10 @@ class EpisodeContext:
             limit = int(load_runtime().get("memory_result_chars") or 0)
             result = make_json_serializable_truncated(result, limit) if limit > 0 else make_json_serializable_truncated(result)
             ep.json_data[f"tool_result_{ep.step_count}"] = result
-            ok = not (isinstance(result, str) and result.startswith(("Error", "Execution timed out")))
+            ok = not tool_result_failed(result)
+        note = str(getattr(ep, "_tool_parse_note", "") or "")
+        if note:
+            command = f"{note}\n{command}"
         ep.memory.add_action(ep.step_count, tool_name, ep.sub_goal, command, result)
         from sft_prompts import actual_label, normalize_prediction
 

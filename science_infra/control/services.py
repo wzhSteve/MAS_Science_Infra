@@ -1131,9 +1131,11 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
     """Split jsonl / store rows into reward, validation reward, and loss series."""
     step_rewards: List[Dict[str, Any]] = []
     val_rewards: List[Dict[str, Any]] = []
+    critic_rewards: List[Dict[str, Any]] = []
     step_losses: List[Dict[str, Any]] = []
     last_reward: Optional[int] = None
     last_val: Optional[int] = None
+    last_critic: Optional[int] = None
     last_loss: Optional[int] = None
     latest_algo: Optional[str] = None
     latest_branch: Optional[float] = None
@@ -1149,17 +1151,37 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
         if reward is not None:
             index = _bump_index(_metric_step(rec, len(step_rewards) + 1), last_reward)
             last_reward = index
-            point = {"index": index, "reward": reward}
+            point = {
+                "index": index,
+                "reward": reward,
+                "dataset": "train",
+                "dataset_label": "训练集",
+            }
             branch = _metric_float(rec.get("training/branch_local_count"))
             if branch is not None:
                 point["branch_count"] = branch
                 latest_branch = branch
             step_rewards.append(point)
+        critic = _metric_float(rec.get("critic/rewards/mean"))
+        if critic is not None:
+            index = _bump_index(_metric_step(rec, len(critic_rewards) + 1), last_critic)
+            last_critic = index
+            critic_rewards.append({
+                "index": index,
+                "reward": critic,
+                "dataset": "train",
+                "dataset_label": "训练集",
+            })
         val = _metric_float(rec.get("val/reward"))
         if val is not None:
             index = _bump_index(_metric_step(rec, len(val_rewards) + 1), last_val)
             last_val = index
-            val_rewards.append({"index": index, "reward": val})
+            val_rewards.append({
+                "index": index,
+                "reward": val,
+                "dataset": "val",
+                "dataset_label": "验证集",
+            })
         loss_point: Dict[str, Any] = {}
         for src, dest in _LOSS_FIELDS:
             num = _metric_float(rec.get(src))
@@ -1173,6 +1195,7 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
     return {
         "step_rewards": step_rewards,
         "val_rewards": val_rewards,
+        "critic_rewards": critic_rewards,
         "step_losses": step_losses,
         "tir_algo": latest_algo,
         "branch_local_count": latest_branch,
@@ -1183,6 +1206,7 @@ def _empty_metrics() -> Dict[str, Any]:
     return {
         "step_rewards": [],
         "val_rewards": [],
+        "critic_rewards": [],
         "step_losses": [],
         "tir_algo": None,
         "branch_local_count": None,
@@ -1417,6 +1441,7 @@ def _agl_reward_series(
         "train_rewards": train_rewards,
         "step_rewards": chosen["step_rewards"],
         "val_rewards": chosen["val_rewards"],
+        "critic_rewards": chosen.get("critic_rewards") or [],
         "step_losses": chosen["step_losses"],
         "tir_algo": chosen.get("tir_algo"),
         "branch_local_count": chosen.get("branch_local_count"),
@@ -1476,6 +1501,110 @@ def local_training_metrics(
     }
 
 
+_ARCHIVE_SPECS = (
+    {
+        "experiment_id": "scale256-grpo",
+        "algo": "grpo",
+        "runs": (
+            ("simple_pev_scale256_grpo", True, "train_10k.parquet", "valid.parquet"),
+            ("simple_pev_fidelity_grpo", False, "train.parquet", ""),
+        ),
+    },
+    {
+        "experiment_id": "scale256-flow-grpo",
+        "algo": "flow_grpo",
+        "runs": (
+            ("simple_pev_scale256_flow_grpo", True, "train_10k.parquet", "valid.parquet"),
+            ("simple_pev_fidelity_flow_grpo", False, "train.parquet", ""),
+        ),
+    },
+    {
+        "experiment_id": "scale256-arpo",
+        "algo": "arpo",
+        "runs": (
+            ("simple_pev_scale256_arpo", True, "train_10k.parquet", "valid.parquet"),
+            ("simple_pev_fidelity_arpo", False, "train.parquet", ""),
+        ),
+    },
+    {
+        "experiment_id": "scale256-appo",
+        "algo": "appo",
+        "runs": (
+            ("simple_pev_scale256_appo", True, "train_10k.parquet", "valid.parquet"),
+            ("simple_pev_fidelity_appo", False, "train.parquet", ""),
+        ),
+    },
+)
+
+
+def _archive_note(resumable: bool, train_file: str, val_file: str, parsed: Dict[str, Any]) -> str:
+    train_n = len(parsed.get("step_rewards") or [])
+    val_n = len(parsed.get("val_rewards") or [])
+    parts = [
+        f"训练集 step reward {train_n} 点，来自 {train_file}，是该 optimizer step 的 llm_binary 平均。",
+    ]
+    if val_n:
+        parts.append(f"验证集 val/reward {val_n} 点，来自 {val_file}。")
+    else:
+        parts.append("没有验证集 reward 点。")
+    if resumable:
+        parts.append("有 global_step_1 权重。")
+    else:
+        parts.append("没有权重，不能续训。")
+    return "".join(parts)
+
+
+def reward_archives(experiment_id: str) -> List[Dict[str, Any]]:
+    """Read preserved metrics files without appending them onto the live curve."""
+    spec = next((item for item in _ARCHIVE_SPECS if item["experiment_id"] == experiment_id), None)
+    if spec is None:
+        return []
+    root = repo_root() / "mas" / "checkpoints" / "AgentLightning"
+    rows: List[Dict[str, Any]] = []
+    for name, resumable, train_file, val_file in spec["runs"]:
+        path = root / name / "metrics.jsonl"
+        if not path.is_file():
+            continue
+        parsed = _read_metrics_file(str(path), limit=2000)
+        actor = root / name / "global_step_1" / "actor"
+        rows.append({
+            "id": name,
+            "algo": spec["algo"],
+            "path": str(path),
+            "resumable": bool(resumable and actor.is_dir()),
+            "train_file": train_file,
+            "val_file": val_file,
+            "step_rewards": parsed["step_rewards"],
+            "val_rewards": parsed["val_rewards"],
+            "critic_rewards": parsed.get("critic_rewards") or [],
+            "note": _archive_note(bool(resumable and actor.is_dir()), train_file, val_file, parsed),
+        })
+    return rows
+
+
+def _reward_dataset_labels(rl_cfg: Dict[str, Any]) -> Dict[str, str]:
+    data = rl_cfg.get("data") if isinstance(rl_cfg, dict) else {}
+    if not isinstance(data, dict):
+        data = {}
+    train_file = str(data.get("train_files") or "训练集文件")
+    val_file = str(data.get("val_files") or "验证集文件")
+    return {
+        "train_file": train_file,
+        "val_file": val_file,
+        "train_label": f"训练集 step reward · {Path(train_file).name} · llm_binary 该 step rollout 平均",
+        "val_label": f"验证集 reward · {Path(val_file).name} · 只在 test_freq 触发时写入",
+        "critic_label": "同一批训练样本的 critic/rewards/mean，不是验证集",
+    }
+
+
+def _active_train_progress(exp_id: str) -> Dict[str, Any]:
+    process = PROCS.active("train")
+    if process is None or process.experiment_id != exp_id:
+        return {"train_running": False, "progress": None}
+    row = PROCS.status(process.run_id, exp_id) or {}
+    return {"train_running": True, "progress": row.get("progress")}
+
+
 def monitor_model(exp_id: str) -> Dict[str, Any]:
     from science_infra.ui.dashboard import build_dashboard_model
 
@@ -1531,7 +1660,11 @@ def monitor_model(exp_id: str) -> Dict[str, Any]:
     model["agl_metrics_url"] = bundle["meta"].get("agl_metrics_url")
     model["experiment_id"] = exp_id
     model.update(agl_series)
-    if any(agl_series.get(key) for key in ("train_rewards", "step_rewards", "val_rewards", "step_losses")):
+    archives = reward_archives(exp_id)
+    model["reward_archives"] = archives
+    model["reward_datasets"] = _reward_dataset_labels(bundle.get("rl") if isinstance(bundle.get("rl"), dict) else {})
+    model.update(_active_train_progress(exp_id))
+    if any(agl_series.get(key) for key in ("train_rewards", "step_rewards", "val_rewards", "step_losses")) or archives:
         model["empty"] = False
     return model
 

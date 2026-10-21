@@ -4,10 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
 from collections import defaultdict, deque
 from typing import Any, AsyncIterator, Deque, Dict, List, Optional
+
+# Ray prefixes worker stdout, for example "\x1b[36m(TaskRunner pid=304860)\x1b[0m {json}".
+_RAY_PREFIX = re.compile(r"^(?:\x1b\[[0-9;]*m)*\([^)\n]*\)(?:\x1b\[[0-9;]*m)*\s*")
+_TREE_MARK = '{"__rollout_tree_event__":'
+
+
+def rollout_tree_event_from_line(line: str) -> Optional[Dict[str, Any]]:
+    """Return the tree payload from a stdout line, including a Ray-prefixed one."""
+    text = _RAY_PREFIX.sub("", str(line or "").strip())
+    idx = text.find(_TREE_MARK)
+    if idx < 0:
+        return None
+    try:
+        frame = json.loads(text[idx:])
+    except Exception:
+        return None
+    payload = frame.get("__rollout_tree_event__") if isinstance(frame, dict) else None
+    return payload if isinstance(payload, dict) else None
 
 
 class EventBus:

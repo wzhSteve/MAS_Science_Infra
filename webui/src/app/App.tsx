@@ -85,7 +85,9 @@ function Application() {
       samples: workspace?.samples, console: 'training', runId });
   }, [expId, workspace?.panel, workspace?.settings, workspace?.samples, navigate]);
   const viewSamples = useCallback((selection: SampleSelection) => {
-    if (expId) void navigate({ ...workspaceRoute(expId, 'records'), samples: selection });
+    if (expId) void navigate({
+      ...workspaceRoute(expId, 'records'), samples: selection, console: 'training', runId: selection.runId,
+    });
   }, [expId, navigate]);
   const browseResources = useCallback((category: ResourceCategory, experimentId?: string) => {
     void navigate({ kind: 'resources', category, experimentId });

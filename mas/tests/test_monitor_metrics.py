@@ -126,5 +126,32 @@ class TestMonitorMetrics(unittest.TestCase):
         self.assertIn('id="root"', page.text)
 
 
+class TestPreservedRewards(unittest.TestCase):
+    def test_old_files_are_not_appended_onto_the_new_curve(self):
+        from science_infra.control.services import _agl_reward_series, reward_archives
+
+        archives = reward_archives("scale256-grpo")
+        by_id = {row["id"]: row for row in archives}
+        self.assertIn("simple_pev_scale256_grpo", by_id)
+        self.assertIn("simple_pev_fidelity_grpo", by_id)
+        old = by_id["simple_pev_scale256_grpo"]
+        fidelity = by_id["simple_pev_fidelity_grpo"]
+        self.assertTrue(old["resumable"])
+        self.assertFalse(fidelity["resumable"])
+        self.assertEqual(old["step_rewards"][0]["dataset"], "train")
+        self.assertEqual(old["val_rewards"], [])
+        self.assertEqual(fidelity["val_rewards"], [])
+        self.assertIn("train_10k.parquet", old["note"])
+        self.assertIn("train.parquet", fidelity["note"])
+        self.assertNotEqual(old["step_rewards"][0]["reward"], fidelity["step_rewards"][0]["reward"])
+        live = _agl_reward_series(
+            {},
+            experiment_id="scale256-grpo",
+            experiment_name="simple_pev_scale256_grpo_ui",
+        )
+        self.assertEqual(live["step_rewards"], [])
+        self.assertEqual(live["val_rewards"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

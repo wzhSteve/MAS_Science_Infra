@@ -20,7 +20,7 @@ import re
 import threading
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful, creative, and smart assistant."
 _THINK_RE = re.compile(r"<think>[\s\S]*?</think>\s*", re.I)
@@ -33,6 +33,28 @@ try:
 except Exception:  # noqa: BLE001
     def frozen_llm_scope(role: str) -> Any:  # type: ignore[misc]
         return nullcontext()
+
+
+def _note_active_http(client: Any) -> None:
+    """Let a window timeout close this socket. Missing the helper is not fatal."""
+    try:
+        from workflow.user_gateway.sandbox import note_active_http
+    except Exception:  # noqa: BLE001
+        return
+    note_active_http(client)
+
+
+def build_chat_client(http_client: Any, *, base_url: str, api_key: str, timeout: float) -> Any:
+    """One attempt. The SDK default retries a 90s read until the window is full."""
+    from openai import OpenAI
+
+    return OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        http_client=http_client,
+        timeout=timeout,
+        max_retries=0,
+    )
 
 
 _LOG_LOCK = threading.Lock()
@@ -127,12 +149,128 @@ def _no_think() -> bool:
     return os.environ.get("AGENTFLOW_NO_THINK", "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def clamp_max_tokens(requested: int, prompt: str, cap: int) -> int:
+_CONTEXT_MARGIN = 128
+_PROMPT_SLACK = 192
+_TRUNC_MARK = "...[truncated]..."
+
+
+def _serving_model_len(override: Optional[int] = None) -> int:
+    if override is not None:
+        return int(override)
+    raw = int(os.environ.get("TIR_MAX_MODEL_LEN") or 0)
+    return raw or 8192
+
+
+def _conservative_tokens(text: str) -> int:
+    """Non-ASCII is one token each. ASCII is one token per two characters."""
+    ascii_chars = 0
+    other = 0
+    for ch in text or "":
+        if ord(ch) < 128:
+            ascii_chars += 1
+        else:
+            other += 1
+    return other + (ascii_chars + 1) // 2
+
+
+def count_chat_tokens(system_prompt: str, user: str) -> int:
+    """Token count for the chat the server will see, plus no char/3 estimate."""
+    try:
+        tok = _load_tokenizer()
+        ids = tok.apply_chat_template(
+            [
+                {"role": "system", "content": system_prompt or ""},
+                {"role": "user", "content": user or ""},
+            ],
+            add_generation_prompt=True,
+            tokenize=True,
+        )
+        return max(1, len(list(ids)))
+    except Exception:
+        return max(1, _conservative_tokens(system_prompt) + _conservative_tokens(user) + 32)
+
+
+def truncate_user_middle(user: str, head: int = 1200, tail: int = 1200) -> str:
+    """Keep the question at the start and the rules at the end."""
+    text = str(user or "")
+    head = max(1, int(head))
+    tail = max(1, int(tail))
+    if len(text) <= head + tail:
+        return text
+    return text[:head] + _TRUNC_MARK + text[-tail:]
+
+
+def fit_user_to_context(
+    user: str,
+    *,
+    system_prompt: str = "",
+    model_len: Optional[int] = None,
+    counter: Optional[Callable[[str], int]] = None,
+) -> str:
+    """Drop the middle of the user prompt when it exceeds the context slack."""
+    limit = _serving_model_len(model_len)
+    budget = limit - _PROMPT_SLACK
+    current = str(user or "")
+    head, tail = 1200, 1200
+
+    def _tokens(text: str) -> int:
+        if counter is not None:
+            return int(counter(system_prompt + text))
+        return count_chat_tokens(system_prompt, text)
+
+    for _ in range(8):
+        if _tokens(current) <= budget:
+            return current
+        nxt = truncate_user_middle(current, head, tail)
+        if nxt == current:
+            head = max(200, head // 2)
+            tail = max(200, tail // 2)
+            nxt = truncate_user_middle(current, head, tail)
+            if nxt == current:
+                return current
+        current = nxt
+        head = max(200, (head * 2) // 3)
+        tail = max(200, (tail * 2) // 3)
+    return current
+
+
+def clamp_max_tokens(
+    requested: int,
+    prompt: str,
+    cap: int,
+    *,
+    counter: Optional[Callable[[str], int]] = None,
+    model_len: Optional[int] = None,
+) -> int:
     """Fit the completion inside the serving context (``TIR_MAX_MODEL_LEN``)."""
-    model_len = int(os.environ.get("TIR_MAX_MODEL_LEN") or 0) or 8192
-    prompt_tokens = max(1, (len(prompt) + 3) // 3)
-    remaining = max(64, model_len - prompt_tokens - 64)
+    limit = _serving_model_len(model_len)
+    if counter is not None:
+        prompt_tokens = max(1, int(counter(prompt)))
+    else:
+        prompt_tokens = max(1, _conservative_tokens(prompt) + 32)
+    remaining = limit - prompt_tokens - _CONTEXT_MARGIN
     return max(64, min(int(requested), int(cap), remaining))
+
+
+def _is_context_error(exc: BaseException) -> bool:
+    parts = [str(exc).lower()]
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            parts.append(str(getattr(response, "text", "") or "").lower())
+        except Exception:
+            pass
+    blob = " ".join(parts)
+    return any(
+        s in blob
+        for s in (
+            "context length",
+            "maximum context",
+            "context window",
+            "contextwindow",
+            "please reduce the length",
+        )
+    )
 
 
 _TOKENIZER: Any = None
@@ -313,43 +451,54 @@ class LocalChatEngine:
 
     def _complete(self, prompt: str, system_prompt: str, max_tokens: int) -> str:
         import httpx
-        from openai import OpenAI
 
         frozen = not self.trainable
         model = _model(frozen, self._pinned)
         # /no_think is a local switch. Default off so official f-strings stay intact.
         user = prompt.rstrip() + "\n/no_think" if _no_think() else prompt
+        model_len = _serving_model_len()
+        user = fit_user_to_context(user, system_prompt=system_prompt, model_len=model_len)
         # trust_env=False: an ambient HTTP proxy 502s the trainable rollout URL
         # (172.17/10.x) and the planner window never reaches exec.
         entry: Dict[str, Any] = {"role": self.role, "model": model, "prompt_head": " ".join(prompt.split())[:300]}
-        kwargs: Dict[str, Any] = {
-            "model": model,
-            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user}],
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "frequency_penalty": _FREQUENCY_PENALTY,
-            "presence_penalty": 0,
-            "max_tokens": clamp_max_tokens(max_tokens, system_prompt + user, self.max_tokens_cap),
-        }
-        if self.trainable:
-            # ARPO reads the entropy of the tool-decision generation. Top-10
-            # logprobs match the official vLLM rollout (logprobs=10).
-            kwargs["logprobs"] = True
-            kwargs["top_logprobs"] = 10
-        if _no_think():
-            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
-        try:
+
+        def _send(user_text: str) -> str:
+            kwargs: Dict[str, Any] = {
+                "model": model,
+                "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "frequency_penalty": _FREQUENCY_PENALTY,
+                "presence_penalty": 0,
+                "max_tokens": clamp_max_tokens(
+                    max_tokens,
+                    user_text,
+                    self.max_tokens_cap,
+                    model_len=model_len,
+                    counter=lambda _prompt: count_chat_tokens(system_prompt, user_text),
+                ),
+            }
+            if self.trainable:
+                # ARPO reads the entropy of the tool-decision generation. Top-10
+                # logprobs match the official vLLM rollout (logprobs=10).
+                kwargs["logprobs"] = True
+                kwargs["top_logprobs"] = 10
+            if _no_think():
+                kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
             # trust_env=False: the ambient HTTP proxy 502s the rollout URL.
             # The response hook fills prompt/response token ids. vLLM 0.9.2
             # does not honor return_token_ids; agentops reads them off the
             # parsed body of with_raw_response.create().
-            with httpx.Client(trust_env=False) as http_client:
-                _install_token_hook(http_client)
-                client = OpenAI(
+            # max_retries=0: the SDK default of 2 retries stacked three 90s
+            # waits into the 300s window and left the last request on the GPU.
+            llm_timeout = float(os.environ.get("AGENTFLOW_LLM_TIMEOUT") or 90)
+            with httpx.Client(trust_env=False, timeout=llm_timeout) as http_client:
+                _note_active_http(http_client)
+                client = build_chat_client(
+                    http_client,
                     base_url=_endpoint(frozen, self._pinned),
                     api_key=_api_key(self._pinned),
-                    http_client=http_client,
-                    timeout=float(os.environ.get("AGENTFLOW_LLM_TIMEOUT") or 90),
+                    timeout=llm_timeout,
                 )
                 resp = client.chat.completions.with_raw_response.create(**kwargs).parse()
             text = _THINK_RE.sub("", str(resp.choices[0].message.content or "")).strip()
@@ -361,6 +510,17 @@ class LocalChatEngine:
                 if per_token:
                     entry["token_entropies"] = per_token
             return text
+
+        try:
+            try:
+                return _send(user)
+            except Exception as exc:
+                if not _is_context_error(exc):
+                    raise
+                shorter = truncate_user_middle(user, 600, 600)
+                if shorter == user:
+                    shorter = truncate_user_middle(user, 200, 200)
+                return _send(shorter)
         except Exception as exc:
             detail = ""
             response = getattr(exc, "response", None)

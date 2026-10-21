@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from science_infra.control.events import BUS, format_sse
+from science_infra.control.events import BUS, format_sse, rollout_tree_event_from_line
 from science_infra.control.experiments import (
     HARNESS_PLUGINS,
     STUB_HARNESS,
@@ -607,7 +607,12 @@ def create_app() -> FastAPI:
                     return
                 if str(mp.run_id) != tail_state["run_id"]:
                     tail_state["run_id"] = str(mp.run_id)
-                    tail_state["offset"] = 0
+                    # Follow new frames only. Replaying a multi-hour log would
+                    # flood the open page; the tree itself is already on disk.
+                    try:
+                        tail_state["offset"] = mp.log_path.stat().st_size
+                    except OSError:
+                        tail_state["offset"] = 0
                 try:
                     with open(mp.log_path, "r", encoding="utf-8", errors="replace") as f:
                         f.seek(tail_state["offset"])
@@ -616,13 +621,8 @@ def create_app() -> FastAPI:
                 except Exception:
                     return
                 for line in chunk.splitlines():
-                    line = line.strip()
-                    if not line.startswith('{"__rollout_tree_event__"'):
-                        continue
-                    try:
-                        frame = json.loads(line)
-                        payload = frame.get("__rollout_tree_event__") or {}
-                    except Exception:
+                    payload = rollout_tree_event_from_line(line)
+                    if payload is None:
                         continue
                     BUS.publish(experiment_id, "rollout_tree", payload)
 

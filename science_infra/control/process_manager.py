@@ -20,6 +20,7 @@ import psutil
 from science_infra.control.events import BUS
 from science_infra.control.experiments import artifacts_dir
 from science_infra.control.paths import tir_agent_root
+from science_infra.control.train_progress import read_train_progress
 
 ACTIVE_STATES = {"preparing", "starting", "running", "stopping"}
 TERMINAL_STATES = {"succeeded", "failed", "cancelled", "interrupted"}
@@ -103,11 +104,11 @@ class ProcessManager:
         for process in items:
             if experiment_id and process.experiment_id != experiment_id:
                 continue
-            row = self._status_dict(process)
+            row = self._attach_progress(self._status_dict(process))
             output.append(row)
             seen.add(process.run_id)
         output.extend(
-            row
+            self._attach_progress(row)
             for row in self._disk_runs(experiment_id)
             if row["run_id"] not in seen
         )
@@ -133,11 +134,20 @@ class ProcessManager:
         with self._lock:
             process = self._procs.get(run_id)
             if process:
-                return self._status_dict(process)
+                return self._attach_progress(self._status_dict(process))
             pending = self._pending.get(run_id)
             if pending:
-                return dict(pending)
-        return self.disk_run(run_id, experiment_id)
+                return self._attach_progress(dict(pending))
+        row = self.disk_run(run_id, experiment_id)
+        return self._attach_progress(row) if row else None
+
+    @staticmethod
+    def _attach_progress(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        out = dict(row)
+        out["progress"] = read_train_progress(out.get("log_path"))
+        return out
 
     def write_preparing(
         self,

@@ -13,13 +13,15 @@ function parseEvent(data: string): ScienceEvent {
 
 export interface ExperimentEvents {
   latest: string;
+  seq: number;
+  data?: Record<string, unknown>;
   error: string | null;
   connected: boolean;
 }
 
 export function useExperimentEvents(expId: string, onTrain: () => Promise<void>, onEvent: () => Promise<void>, active = true) {
   const [state, setState] = useState<ExperimentEvents>({
-    latest: '', error: null, connected: false,
+    latest: '', seq: 0, error: null, connected: false,
   });
   useEffect(() => {
     if (!active) {
@@ -34,8 +36,9 @@ export function useExperimentEvents(expId: string, onTrain: () => Promise<void>,
       try {
         const payload = parseEvent(event.data);
         if (payload.experiment_id !== expId) return;
+        const data = payload.data && typeof payload.data === 'object' ? payload.data as Record<string, unknown> : undefined;
         setState(previous => ({
-          ...previous, latest: payload.type, error: null,
+          ...previous, latest: payload.type, seq: previous.seq + 1, data, error: null,
         }));
         if (payload.type.includes('train')) void onTrain();
         void onEvent();

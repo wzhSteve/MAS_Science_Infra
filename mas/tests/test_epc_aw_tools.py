@@ -400,6 +400,33 @@ class TestEpcAwChromeDemote(unittest.TestCase):
             ctx._google_navigate(_Driver(), raw_get, "https://www.google.com", 0.2, (), {}, "")
         self.assertLess(time.monotonic() - started, 2.0)
 
+    def test_run_isolated_closes_inflight_client_on_timeout(self) -> None:
+        import time
+
+        from workflow.user_gateway.sandbox import note_active_http, run_isolated
+
+        closed: list[str] = []
+
+        class _Client:
+            def close(self) -> None:
+                closed.append("closed")
+
+        def slow() -> None:
+            note_active_http(_Client())
+            time.sleep(30)
+
+        started = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            run_isolated(slow, timeout_s=0.3)
+        self.assertEqual(closed, ["closed"])
+        self.assertLess(time.monotonic() - started, 3.0)
+
+    def test_verifier_continue_is_not_an_execution_failure(self) -> None:
+        from workflow.centralized_runtime import verifier_node_failed
+
+        self.assertFalse(verifier_node_failed("verify"))
+        self.assertTrue(verifier_node_failed("error"))
+
     def test_run_isolated_returns_when_eval_cancelled(self) -> None:
         import threading
         import time

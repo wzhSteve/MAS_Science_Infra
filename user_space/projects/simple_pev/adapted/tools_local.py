@@ -10,8 +10,16 @@ plain-text kernel output and does not fill ``retrieved_information``.
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Tuple
+
+# The training worker already imports this venv, but code must run in a child
+# of this interpreter so input() cannot read the worker stdin.
+PYTHON_BIN = "/root/autodl-tmp/MAS_Science_Infra/.venv/bin/python3"
+_PYTHON_BLOCK = re.compile(r"```python\s*(.*?)\s*```", re.I | re.S)
+_INPUT_CALL = re.compile(r"\binput\s*\(")
 
 # Short class names accepted in runtime.yaml -> official module path.
 # Bing has no upstream class; an empty path marks the local tool.
@@ -43,9 +51,43 @@ _BASE_DESCRIPTION = (
     "Does not search the web and can invent facts."
 )
 _PYTHON_DESCRIPTION = (
-    "Write and run one short program for arithmetic or another numeric task where code is more accurate than guessing. "
-    "Does not look up facts, import libraries, or open web pages."
+    "Write and run one short program for arithmetic or another numeric task. "
+    "May import math, sympy, or numpy. Must print the result. "
+    "Does not call input(), look up facts, or open web pages."
 )
+
+
+def run_python_locally(query: str) -> str:
+    """Run executor-written code with the pinned venv interpreter.
+
+    The query is the program. This does not call another model.
+    """
+    code = str(query or "").strip()
+    fenced = _PYTHON_BLOCK.search(code)
+    if fenced:
+        code = fenced.group(1).strip()
+    if not code:
+        return "Error: no python code"
+    if _INPUT_CALL.search(code):
+        return "Error: input() is not allowed"
+    if not os.path.isfile(PYTHON_BIN):
+        return f"Error: python interpreter not found: {PYTHON_BIN}"
+    try:
+        proc = subprocess.run(
+            [PYTHON_BIN, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "Error: Execution timed out after 10 seconds"
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "python failed").strip()
+        return f"Error: {err[:2000]}"
+    printed = (proc.stdout or "").strip()
+    return printed or "(no output)"
 
 
 @contextmanager
@@ -203,6 +245,7 @@ def build_toolbox(
                     inst.tool_description = _BASE_DESCRIPTION
                 elif short == "Python_Coder_Tool":
                     inst.tool_description = _PYTHON_DESCRIPTION
+                    inst.execute = run_python_locally
         if hasattr(inst, "llm_engine"):
             inst.llm_engine = tool_engine()
         instances[inst.tool_name] = inst
