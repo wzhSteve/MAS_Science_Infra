@@ -8,11 +8,17 @@ A wrong answer with successful tool calls is not a fault.
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 INFRA_MARKERS = (
     "tir_offline_search",
     "search_unavailable_in_cache",
+    "search_unavailable",
+    "proxy_down",
+    "proxyerror",
+    "bing unreachable",
+    "brightdata_failed",
+    "http 429",
     "http 5",
     "connectionerror",
     "connecttimeout",
@@ -32,6 +38,28 @@ _DEGENERATE = {0.0, -1.0}
 
 class MasHealthError(RuntimeError):
     """The training step saw MAS faults, so its reward must not update the policy."""
+
+
+def keep_indices_drop_infra(
+    rollout_ids: Sequence[str],
+    group_ids: Sequence[str],
+    faults: Sequence[str],
+    min_group: int = 2,
+) -> List[int]:
+    """Drop infra-fault rows; skip a group that would have fewer than min_group survivors."""
+    n = len(rollout_ids)
+    alive: Dict[str, List[int]] = {}
+    for i in range(n):
+        if str(faults[i] if i < len(faults) else "").strip():
+            continue
+        gid = str(group_ids[i] if i < len(group_ids) else "") or f"row:{i}"
+        alive.setdefault(gid, []).append(i)
+    keep: List[int] = []
+    for members in alive.values():
+        if len(members) >= min_group:
+            keep.extend(members)
+    keep.sort()
+    return keep
 
 
 def _texts_from_messages(messages: Any) -> list[str]:
@@ -100,9 +128,13 @@ def episode_faults(
         evs = list(getattr(traj, "events", None) or [])
     for ev in evs:
         kind = str(getattr(ev, "kind", None) or (ev.get("kind") if isinstance(ev, dict) else "") or "")
-        if kind.lower() in ("error", "eventkind.error"):
-            payload = getattr(ev, "payload", None) or (ev.get("payload") if isinstance(ev, dict) else {}) or {}
-            faults.append(f"error event: {payload.get('error') or payload}"[:240])
+        if kind.lower() not in ("error", "eventkind.error"):
+            continue
+        payload = getattr(ev, "payload", None) or (ev.get("payload") if isinstance(ev, dict) else {}) or {}
+        text = str(payload.get("error") or payload)
+        hit = _marker_hit(text)
+        if hit:
+            faults.append(f"{hit}: {text[:240]}")
             break
     answer = final_answer or str(getattr(raw, "final_answer", None) or getattr(traj, "final_answer", None) or "")
     if not answer.strip() and faults:

@@ -2,7 +2,7 @@
 
 ``Bing_Search_Tool`` is local: it calls ``mas.tools.search.bing_search`` and does
 not open result pages. ``Web_Fetch_Tool`` is local: it calls
-``mas.tools.search.fetch_page`` with one URL. ``Wikipedia_Search_Tool`` keeps
+``mas.tools.search.fetch_pages`` with up to three URLs. ``Wikipedia_Search_Tool`` keeps
 the official class for metadata shape, but ``execute`` returns the same
 plain-text kernel output and does not fill ``retrieved_information``.
 """
@@ -30,7 +30,7 @@ OFFICIAL_TOOLS: Dict[str, str] = {
     "Wikipedia_Search_Tool": "agentflow.tools.wikipedia_search.tool",
     "Web_Fetch_Tool": "",
 }
-DEFAULT_TOOLS = list(OFFICIAL_TOOLS)
+DEFAULT_TOOLS = [name for name in OFFICIAL_TOOLS if name != "Wikipedia_Search_Tool"]
 
 _BING_DESCRIPTION = (
     "Search keywords. Returns titles, URLs, and short snippets only. "
@@ -42,9 +42,9 @@ _WIKI_DESCRIPTION = (
     "Does not open pages and does not call web search."
 )
 _FETCH_DESCRIPTION = (
-    "Open exactly one URL and return page text or an error. Does not search. "
-    "A valid URL may still lack the needed fact. "
-    "Get the URL from Bing_Search_Tool or Wikipedia_Search_Tool first."
+    "Open one to three URLs from the latest Bing result and return each page's text. "
+    "Does not search and does not invent URLs. "
+    "A valid URL may still lack the needed fact."
 )
 _BASE_DESCRIPTION = (
     "Another LLM call. Reason or draft from the question and information already obtained. "
@@ -122,10 +122,14 @@ def local_wikipedia_search(query: str) -> str:
         return str(wikipedia_search(text) or "")
 
     result = _call(asked)
+    if "proxy_down" in result.lower():
+        return soften_wikipedia_miss(asked, result)
     wait = 1
     while _wiki_busy(result) and wait <= 4:
         time.sleep(wait)
         result = _call(asked)
+        if "proxy_down" in result.lower():
+            return soften_wikipedia_miss(asked, result)
         wait *= 2
     if _wiki_no_hits(result):
         short = " ".join(asked.split()[:6])
@@ -201,9 +205,12 @@ def local_bing_search(query: str) -> str:
 
 
 def local_web_fetch(url: str) -> str:
-    from mas.tools.search import fetch_page
+    from mas.tools.search import extract_http_urls, fetch_page, fetch_pages
 
-    return str(fetch_page(str(url or "")) or "")
+    urls = extract_http_urls(str(url or ""), limit=3)
+    if len(urls) <= 1:
+        return str(fetch_page(urls[0] if urls else str(url or "")) or "")
+    return str(fetch_pages(urls) or "")
 
 
 class Bing_Search_Tool:
@@ -244,18 +251,18 @@ class Bing_Search_Tool:
 class Web_Fetch_Tool:
     """Local page fetch. Matches official ``BaseTool`` methods the Executor calls.
 
-    Input is a single URL. Does not search and does not reuse official
-    ``Web_Search_Tool`` / Web_RAG.
+    Input is one to three URLs copied from a Bing result. A single URL
+    still uses ``fetch_page``. Does not reuse official ``Web_Search_Tool``.
     """
 
     tool_name = "Web_Fetch_Tool"
     tool_description = _FETCH_DESCRIPTION
     tool_version = "1.0.0"
-    input_types = {"url": "str - the page URL to open."}
-    output_type = "str - truncated visible text from the page."
+    input_types = {"url": "str - one to three page URLs, separated by newlines."}
+    output_type = "str - truncated visible text from each page."
     demo_commands = [{
-        "command": 'execution = tool.execute(url="https://example.com")',
-        "description": "Read one page.",
+        "command": 'execution = tool.execute(url="https://example.com\\nhttps://example.com/b")',
+        "description": "Read up to three pages.",
     }]
     user_metadata: Dict[str, Any] = {}
     require_llm_engine = False
@@ -271,8 +278,14 @@ class Web_Fetch_Tool:
     def set_llm_engine(self, model_string: Any) -> None:
         self.model_string = model_string
 
-    def execute(self, url: str, **_kwargs: Any) -> str:
-        return local_web_fetch(url)
+    def execute(self, url: str = "", **kwargs: Any) -> str:
+        extra = kwargs.get("urls")
+        raw = str(url or "")
+        if isinstance(extra, (list, tuple)):
+            raw = raw + "\n" + "\n".join(str(item) for item in extra)
+        elif extra:
+            raw = raw + "\n" + str(extra)
+        return local_web_fetch(raw)
 
 
 _LOCAL_TOOL_CLASSES = {

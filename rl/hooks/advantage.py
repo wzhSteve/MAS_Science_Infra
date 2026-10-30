@@ -87,6 +87,19 @@ def apply_tir_advantages(
 
     spec = resolve_pipeline_spec(config)
 
+    if any(op.id == "failure_reallocation" for op in spec.operators):
+        batch = inject_failure_reallocation_rewards(batch, tir)
+    batch = record_reward_density(batch)
+    density_meta = {
+        key: value
+        for key, value in (getattr(batch, "meta_info", None) or {}).items()
+        if key in (
+            "fcr/nonzero_token_reward_frac",
+            "fcr/mean_abs_score_nonfinal",
+            "fcr/n_corr_hits",
+            "fcr_correction_hits",
+        )
+    }
     batch = compute_advantage(
         batch,
         adv_estimator=adv_estimator,
@@ -105,6 +118,7 @@ def apply_tir_advantages(
     n_flat = count_zero_variance_groups(batch)
     meta = dict(getattr(batch, "meta_info", None) or {})
     meta["n_zero_variance_groups"] = n_flat
+    meta.update(density_meta)
     batch.meta_info = meta
     print(f"n_zero_variance_groups={n_flat}", flush=True)
     return batch
@@ -237,6 +251,7 @@ _PIPELINE_EXPANSION: Dict[str, List[str]] = {
     "aepo": ["aepo_entropy"],
     "igpo": [],
     "gigpo": [],
+    "fcr_grpo": ["failure_reallocation"],
 }
 _PIPELINE_EXPANSION_BASE = {
     "grpo": "grpo",
@@ -247,6 +262,7 @@ _PIPELINE_EXPANSION_BASE = {
     "aepo": "grpo",
     "igpo": "igpo",
     "gigpo": "gigpo",
+    "fcr_grpo": "grpo",
 }
 # NOTE (RL5): _PIPELINE_EXPANSION/_PIPELINE_EXPANSION_BASE above now mirror
 # the authoritative PRESET_EXPANSION_* tables in rl/loss.py (via expand_preset);
@@ -565,12 +581,176 @@ def _op_rae_full_tgt(batch: DataProto, params: Dict[str, Any], tir: Dict[str, An
     return apply_rae_full_tgt_advantages(batch, epsilon_f=float(epsilon_f))
 
 
+def failure_reallocation_rewards(
+    *,
+    rollout_ids: Sequence[Any],
+    roles: Sequence[Any],
+    resume_parent_ids: Sequence[Any],
+    event_ids: Sequence[Any],
+    parent_event_ids: Sequence[Any],
+    recovery_chain_ids: Sequence[Any],
+    p_satisfy: Sequence[Any],
+    actual_satisfied: Sequence[Any],
+    failure_confirmed: Sequence[Any],
+    k: int = 2,
+    threshold: float = 0.5,
+) -> tuple[List[float], List[bool]]:
+    """Compute fixed-K paired FCR rewards without touching tensors."""
+    size = len(rollout_ids)
+    rewards = [0.0] * size
+    valid = [False] * size
+    parent_by_event: Dict[str, int] = {}
+    for i in range(size):
+        event = str(event_ids[i] if i < len(event_ids) else "")
+        if event:
+            parent_by_event[event] = i
+    denom = float(max(1, int(k)))
+    for i in range(size):
+        if not _is_branch_role(roles[i] if i < len(roles) else ""):
+            continue
+        parent_event = str(parent_event_ids[i] if i < len(parent_event_ids) else "")
+        parent_idx = parent_by_event.get(parent_event)
+        if parent_idx is None:
+            continue
+        expected_rollout = str(resume_parent_ids[i] if i < len(resume_parent_ids) else "")
+        if expected_rollout and str(rollout_ids[parent_idx]) != expected_rollout:
+            continue
+        child_chain = str(recovery_chain_ids[i] if i < len(recovery_chain_ids) else "")
+        parent_chain = str(
+            recovery_chain_ids[parent_idx] if parent_idx < len(recovery_chain_ids) else ""
+        )
+        if not child_chain or child_chain != parent_chain:
+            continue
+        if not bool(failure_confirmed[parent_idx] if parent_idx < len(failure_confirmed) else False):
+            continue
+        try:
+            probability = float(p_satisfy[i])
+        except (TypeError, ValueError, IndexError):
+            continue
+        label = actual_satisfied[i] if i < len(actual_satisfied) else None
+        if not isinstance(label, (bool, np.bool_)):
+            continue
+        valid[i] = True
+        if probability >= float(threshold) and bool(label):
+            rewards[i] = 1.0 / denom
+    return rewards, valid
+
+
+def record_reward_density(batch: DataProto) -> DataProto:
+    """Local reward density: nonzero response tokens and non-final-turn |score|."""
+    ntb = batch.non_tensor_batch or {}
+    target_key = "token_level_rewards" if "token_level_rewards" in batch.batch else "token_level_scores"
+    if target_key not in batch.batch:
+        return batch
+    target = batch.batch[target_key]
+    response_mask = batch.batch.get("response_mask")
+    if response_mask is None:
+        response_mask = torch.ones_like(target)
+    token_mask = response_mask > 0
+    token_count = int(token_mask.sum().item())
+    nonzero = int(((target.abs() > 0) & token_mask).sum().item())
+    roles = [str(item).lower() for item in _as_list(ntb.get("rollout_role"))]
+    n = int(target.size(0))
+    if len(roles) < n:
+        roles = roles + [""] * (n - len(roles))
+    child_idx = [i for i, role in enumerate(roles[:n]) if role in ("child", "probe", "branch")]
+    if child_idx:
+        nonfinal = child_idx
+    else:
+        uids_raw = ntb.get("data_id_list")
+        if uids_raw is None:
+            uids_raw = ntb.get("uid")
+        uids = [str(item) for item in _as_list(uids_raw)]
+        if len(uids) < n:
+            uids = [str(i) for i in range(n)]
+        last = {}
+        for i, uid in enumerate(uids[:n]):
+            last[uid] = i
+        nonfinal = [i for i in range(n) if last.get(uids[i]) != i]
+    abs_vals = []
+    for i in nonfinal:
+        masked = target[i][token_mask[i]]
+        if masked.numel():
+            abs_vals.append(float(masked.abs().mean().item()))
+    meta = dict(getattr(batch, "meta_info", None) or {})
+    meta["fcr/nonzero_token_reward_frac"] = float(nonzero / max(1, token_count))
+    meta["fcr/mean_abs_score_nonfinal"] = float(sum(abs_vals) / len(abs_vals)) if abs_vals else 0.0
+    meta["fcr/n_corr_hits"] = float(meta.get("fcr_correction_hits", 0) or 0)
+    batch.meta_info = meta
+    return batch
+
+
+def inject_failure_reallocation_rewards(batch: DataProto, tir: Dict[str, Any]) -> DataProto:
+    """Add λ·r_i/K across the correction child's response tokens before GRPO."""
+    ntb = batch.non_tensor_batch
+    required = (
+        "rollout_id_list", "rollout_role", "resume_parent_id",
+        "prediction_event_id_list", "parent_prediction_event_id_list",
+        "recovery_chain_id_list", "p_satisfy_list", "actual_satisfied_list",
+        "failure_confirmed_list",
+    )
+    missing = [key for key in required if key not in ntb]
+    if missing:
+        _noop_bump(f"failure_reallocation:missing={','.join(missing)}")
+        return batch
+    rewards, valid = failure_reallocation_rewards(
+        rollout_ids=_as_list(ntb.get("rollout_id_list")),
+        roles=_as_list(ntb.get("rollout_role")),
+        resume_parent_ids=_as_list(ntb.get("resume_parent_id")),
+        event_ids=_as_list(ntb.get("prediction_event_id_list")),
+        parent_event_ids=_as_list(ntb.get("parent_prediction_event_id_list")),
+        recovery_chain_ids=_as_list(ntb.get("recovery_chain_id_list")),
+        p_satisfy=_as_list(ntb.get("p_satisfy_list")),
+        actual_satisfied=_as_list(ntb.get("actual_satisfied_list")),
+        failure_confirmed=_as_list(ntb.get("failure_confirmed_list")),
+        k=int(tir.get("fcr_k", 2)),
+        threshold=float(tir.get("fcr_threshold", 0.5)),
+    )
+    ntb["fcr_correction_reward"] = np.array(rewards, dtype=np.float64)
+    ntb["correction_valid_list"] = np.array(valid, dtype=object)
+    target_key = "token_level_rewards" if "token_level_rewards" in batch.batch else "token_level_scores"
+    if target_key not in batch.batch:
+        _noop_bump("failure_reallocation:missing=token_level_rewards|token_level_scores")
+        return batch
+    target = batch.batch[target_key]
+    response_mask = batch.batch.get("response_mask")
+    if response_mask is None:
+        response_mask = torch.ones_like(target)
+    bonus = float(tir.get("fcr_lambda", 0.1))
+    for i, reward in enumerate(rewards):
+        if not reward:
+            continue
+        positions = torch.nonzero(response_mask[i] > 0, as_tuple=False).flatten()
+        if len(positions):
+            target[i, positions] += bonus * float(reward)
+    batch.batch[target_key] = target
+    meta = dict(getattr(batch, "meta_info", None) or {})
+    meta.update({
+        "fcr_reward_injected": True,
+        "fcr_valid_pairs": int(sum(valid)),
+        "fcr_correction_hits": int(sum(1 for value in rewards if value > 0)),
+        "fcr_brier_beta": float(tir.get("fcr_brier_beta", 0.1)),
+    })
+    batch.meta_info = meta
+    return batch
+
+
+def _op_failure_reallocation(
+    batch: DataProto, params: Dict[str, Any], tir: Dict[str, Any]
+) -> DataProto:
+    """Reward was injected before stage-0 GRPO; keep the ordered operator explicit."""
+    if not bool((getattr(batch, "meta_info", None) or {}).get("fcr_reward_injected")):
+        _noop_bump("failure_reallocation:not_preinjected")
+    return batch
+
+
 _OPERATORS = {
     "zero_prefix": _op_zero_prefix,
     "appo_credit": _op_appo_credit,
     "aepo_entropy": _op_aepo_entropy,
     "rae_verdict": _op_rae_verdict,
     "rae_full_tgt": _op_rae_full_tgt,
+    "failure_reallocation": _op_failure_reallocation,
 }
 
 OPERATOR_CONSUMED_COLUMNS = {
@@ -579,6 +759,11 @@ OPERATOR_CONSUMED_COLUMNS = {
     "aepo_entropy": (),
     "rae_verdict": ("verdict_list",),
     "rae_full_tgt": ("verdict_list", "action_key_list"),
+    "failure_reallocation": (
+        "rollout_role", "resume_parent_id", "prediction_event_id_list",
+        "parent_prediction_event_id_list", "recovery_chain_id_list",
+        "p_satisfy_list", "actual_satisfied_list", "failure_confirmed_list",
+    ),
 }
 
 

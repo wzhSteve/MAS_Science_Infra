@@ -11,5 +11,4 @@ enabled_tools:
 - Base_Generator_Tool
 - Python_Coder_Tool
 - Bing_Search_Tool
-- Wikipedia_Search_Tool
 - Web_Fetch_Tool

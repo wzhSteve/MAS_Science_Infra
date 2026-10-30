@@ -33,6 +33,7 @@ FROZEN = {
     "gigpo": ("gigpo", []),
     "rae": ("grpo", ["zero_prefix", "rae_verdict"]),
     "flow_grpo": ("grpo", []),
+    "fcr_grpo": ("grpo", ["failure_reallocation"]),
 }
 
 

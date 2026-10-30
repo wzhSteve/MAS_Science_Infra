@@ -20,6 +20,14 @@ artifacts/
 # Accidental lock / stray files
 /1
 /1.lock
+.vscode/
+
+# Experiment runtime (logs / pids / sqlite dumps)
+/experiments/*.log
+/experiments/*.pid
+**/*.sqlite
+/experiments/cghe_hotpot/rounds/
+/experiments/cghe_hotpot/ledger.json
 
 # Python
 __pycache__/

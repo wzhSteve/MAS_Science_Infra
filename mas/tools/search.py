@@ -16,11 +16,12 @@ Bright Data SERP API:
 
 from __future__ import annotations
 
-import html
+import fcntl
 import html
 import json
 import os
 import re
+import socket
 import threading
 import time
 import urllib.parse
@@ -59,9 +60,13 @@ _UA_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 _WIKI_API_HEADERS = {
-    "User-Agent": "MAS-Science-Infra-fetch/1.0 (research training; wikipedia api)",
+    # Wikimedia blocks browser UAs on api.php with HTTP 429. Identify as a bot.
+    "User-Agent": "MAS-Science-Infra/1.0 (academic-rl-training; wikipedia-api)",
     "Accept": "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
 }
+_WIKI_GATE = os.getenv("TIR_WIKI_GATE", "/tmp/mas_wiki_gate.lock")
+_BING_GATE = os.getenv("TIR_BING_GATE", "/tmp/mas_bing_gate.lock")
 
 
 def _normalize_proxy(proxy: str) -> str:
@@ -79,14 +84,204 @@ def _env_proxy() -> str:
     )
 
 
+_proxy_alive_lock = threading.Lock()
+_proxy_alive_memo: Dict[str, object] = {"t": 0.0, "ok": False}
+
+
+def _proxy_host_port(proxy: str) -> Tuple[str, int]:
+    parsed = urllib.parse.urlparse(_normalize_proxy(proxy))
+    host = parsed.hostname or "127.0.0.1"
+    if parsed.port:
+        port = int(parsed.port)
+    else:
+        port = 443 if parsed.scheme == "https" else 80
+    return host, port
+
+
+def proxy_alive(ttl: float = 15.0) -> bool:
+    """Cheap TCP probe of SCIENCE_INFRA_PROXY. Cached so rollouts do not stall."""
+    force = os.getenv("TIR_PROXY_FORCE", "").strip().lower()
+    if force in ("0", "down", "off", "false", "no"):
+        return False
+    if force in ("1", "up", "on", "true", "yes"):
+        return True
+    now = time.time()
+    with _proxy_alive_lock:
+        if now - float(_proxy_alive_memo["t"]) < ttl:
+            return bool(_proxy_alive_memo["ok"])
+        proxy = _env_proxy()
+        ok = False
+        if proxy:
+            host, port = _proxy_host_port(proxy)
+            try:
+                sock = socket.create_connection((host, port), timeout=0.25)
+                sock.close()
+                ok = True
+            except OSError:
+                ok = False
+        _proxy_alive_memo["t"] = now
+        _proxy_alive_memo["ok"] = ok
+        return ok
+
+
+def wiki_proxy_map() -> Optional[Dict[str, str]]:
+    """Wikipedia-only outbound: reverse proxy, or None if it is down."""
+    if not proxy_alive():
+        return None
+    proxy = _env_proxy()
+    if not proxy:
+        return None
+    return {"http": proxy, "https": proxy}
+
+
+def wiki_proxy_candidates() -> List[Dict[str, str]]:
+    mapped = wiki_proxy_map()
+    return [mapped] if mapped else []
+
+
+def _wiki_min_interval() -> float:
+    try:
+        return max(0.0, float(os.getenv("TIR_WIKI_MIN_INTERVAL", "0.25")))
+    except ValueError:
+        return 0.25
+
+
+def wiki_throttle(extra_wait: float = 0.0) -> None:
+    """Serialize Wikipedia calls across runners so one SSH IP is not 429-stormed."""
+    wait_extra = max(0.0, float(extra_wait))
+    interval = _wiki_min_interval()
+    path = _WIKI_GATE
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            handle.seek(0)
+            raw = handle.read().strip()
+            try:
+                last = float(raw) if raw else 0.0
+            except ValueError:
+                last = 0.0
+            now = time.time()
+            wait = max(last + interval - now, wait_extra)
+            if wait > 0:
+                time.sleep(wait)
+                now = time.time()
+            handle.seek(0)
+            handle.truncate()
+            handle.write(f"{now:.6f}")
+            handle.flush()
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _bing_min_interval() -> float:
+    try:
+        return max(0.0, float(os.getenv("TIR_BING_MIN_INTERVAL", "0.15")))
+    except ValueError:
+        return 0.15
+
+
+def bing_throttle(extra_wait: float = 0.0) -> None:
+    """Serialize Bright Data SERP calls across runners."""
+    wait_extra = max(0.0, float(extra_wait))
+    interval = _bing_min_interval()
+    path = _BING_GATE
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            handle.seek(0)
+            raw = handle.read().strip()
+            try:
+                last = float(raw) if raw else 0.0
+            except ValueError:
+                last = 0.0
+            now = time.time()
+            wait = max(last + interval - now, wait_extra)
+            if wait > 0:
+                time.sleep(wait)
+                now = time.time()
+            handle.seek(0)
+            handle.truncate()
+            handle.write(f"{now:.6f}")
+            handle.flush()
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _bd_timeout() -> Optional[float]:
+    """Read deadline in seconds. Unset, 0, or invalid means wait until the body finishes."""
+    raw = os.getenv("BRIGHT_DATA_TIMEOUT", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _bd_max_retries() -> int:
+    raw = os.getenv("BRIGHT_DATA_MAX_RETRIES", "").strip()
+    try:
+        return max(1, int(raw or BRIGHT_DATA_MAX_RETRIES or 2))
+    except (TypeError, ValueError):
+        return 2
+
+
+def wiki_get(url: str, *, params: Optional[Dict[str, str]] = None, timeout: float = 15.0) -> Tuple[str, str]:
+    """GET wikipedia.org via the reverse proxy, with UA + 429 backoff."""
+    proxies = wiki_proxy_map()
+    if proxies is None:
+        return "", "proxy_down"
+    last_err = "HTTP 429"
+    for attempt in range(4):
+        wiki_throttle()
+        try:
+            resp = requests.get(
+                url,
+                params=params,
+                headers=_WIKI_API_HEADERS,
+                proxies=proxies,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            return "", f"{type(exc).__name__}: {exc}"
+        if resp.status_code in (429, 503):
+            raw_retry = str(resp.headers.get("Retry-After") or "").strip()
+            try:
+                wait = float(raw_retry) if raw_retry else (1.0 * (2 ** attempt))
+            except ValueError:
+                wait = 1.0 * (2 ** attempt)
+            wait = min(max(wait, 0.5), 8.0)
+            last_err = f"HTTP {resp.status_code}"
+            wiki_throttle(extra_wait=wait)
+            continue
+        if resp.status_code >= 400:
+            return "", f"HTTP {resp.status_code}"
+        return resp.text or "", ""
+    return "", last_err
+
+
 def proxy_candidates() -> List[Optional[Dict[str, str]]]:
-    """Proxy first, then direct. First candidate that answers wins."""
+    """Deprecated mixed list. Prefer wiki_proxy_candidates or direct-only."""
     out: List[Optional[Dict[str, str]]] = []
-    p = _env_proxy()
-    if p:
-        out.append({"http": p, "https": p})
+    mapped = wiki_proxy_map()
+    if mapped:
+        out.append(mapped)
     out.append(None)
     return out
+
+
+def is_wikipedia_host(url: str) -> bool:
+    host = _url_host(url)
+    return host.endswith("wikipedia.org") or host.endswith("wikimedia.org")
 
 
 def _request(method: str, url: str, headers: Optional[Dict[str, str]] = None,
@@ -164,13 +359,71 @@ def _organic_hits(body: object, max_results: int) -> List[Dict[str, str]]:
     return hits
 
 
+def _hits_from_brightdata_response(resp: object, max_results: int) -> Tuple[List[Dict[str, str]], str]:
+    """Parse a Bright Data /request envelope. Empty body is not JSON."""
+    text = str(getattr(resp, "text", None) or "")
+    try:
+        envelope = resp.json()  # type: ignore[union-attr]
+    except Exception:
+        hits = _parse_bing(text, max_results)
+        if hits:
+            return hits, ""
+        return [], f"non-json len={len(text)}"
+    if not isinstance(envelope, dict):
+        return [], "unexpected envelope"
+    if envelope.get("organic"):
+        hits = _organic_hits(envelope, max_results)
+        if hits:
+            return hits, ""
+    upstream = envelope.get("status_code")
+    try:
+        up_code = int(upstream) if upstream is not None else 200
+    except (TypeError, ValueError):
+        up_code = 200
+    headers = envelope.get("headers") if isinstance(envelope.get("headers"), dict) else {}
+    proxy_status = str(headers.get("proxy-status") or headers.get("Proxy-Status") or "")
+    body = envelope.get("body")
+    if up_code in (407, 401, 403) or "http_request_denied" in proxy_status.lower():
+        return [], f"upstream {up_code} denied"
+    if up_code in (429, 503) or up_code >= 500:
+        return [], f"upstream {up_code}"
+    if isinstance(body, dict):
+        hits = _organic_hits(body, max_results)
+        if hits:
+            return hits, ""
+        html = body.get("html") if isinstance(body.get("html"), str) else ""
+        if html:
+            hits = _parse_bing(html, max_results)
+            if hits:
+                return hits, ""
+    elif isinstance(body, str) and body.strip():
+        stripped = body.strip()
+        if stripped[:1] in "{[":
+            try:
+                inner = json.loads(stripped)
+            except json.JSONDecodeError:
+                inner = None
+            if isinstance(inner, dict):
+                hits = _organic_hits(inner, max_results)
+                if hits:
+                    return hits, ""
+        hits = _parse_bing(body, max_results)
+        if hits:
+            return hits, ""
+        return [], f"empty organic body_len={len(body)}"
+    if up_code != 200:
+        return [], f"upstream {up_code} empty body"
+    return [], "empty body"
+
+
 def _brightdata_search(query: str, max_results: int = 10) -> Tuple[List[Dict[str, str]], str]:
     """Call Bright Data Bing SERP and return (hits, error).
 
     Hits are ``{"title", "url", "description"}``. ``description`` is not truncated
     here; ``format_title_url`` applies ``TIR_SEARCH_DESC_CHARS``.
     """
-    if not BRIGHT_DATA_API_KEY:
+    api_key = (os.getenv("BRIGHT_DATA_API_KEY", "") or BRIGHT_DATA_API_KEY).strip()
+    if not api_key:
         return [], "BRIGHT_DATA_API_KEY not set"
 
     search_url = (
@@ -180,12 +433,17 @@ def _brightdata_search(query: str, max_results: int = 10) -> Tuple[List[Dict[str
     )
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {BRIGHT_DATA_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
     }
-    formats = ("parsed", "parsed_bing")
+    formats = ("parsed_bing", "parsed")
     last_err = ""
     fmt_idx = 0
-    for attempt in range(BRIGHT_DATA_MAX_RETRIES):
+    retries = _bd_max_retries()
+    timeout = _bd_timeout()
+    proxy = _env_proxy()
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    for attempt in range(retries):
+        bing_throttle()
         payload = {
             "zone": _next_zone(),
             "url": search_url,
@@ -197,29 +455,42 @@ def _brightdata_search(query: str, max_results: int = 10) -> Tuple[List[Dict[str
                 BRIGHT_DATA_BASE_URL,
                 headers=headers,
                 json=payload,
-                timeout=BRIGHT_DATA_TIMEOUT,
+                # Connect still fails fast. Read timeout is optional so a slow SERP body is not cut off.
+                timeout=(30.0, timeout),
+                proxies=proxies,
             )
+            if resp.status_code in (429, 503) or resp.status_code >= 500:
+                last_err = f"HTTP {resp.status_code}: {resp.text[:300]}"
+                wait = min(8.0, 1.0 * (2 ** attempt))
+                bing_throttle(extra_wait=wait)
+                continue
             if resp.status_code != 200:
                 last_err = f"HTTP {resp.status_code}: {resp.text[:300]}"
                 continue
-            envelope = resp.json()
-            body_str = envelope.get("body", "")
-            body = json.loads(body_str) if isinstance(body_str, str) else body_str
-            hits = _organic_hits(body, max_results)
+            hits, err = _hits_from_brightdata_response(resp, max_results)
             if hits:
                 return hits, ""
-            last_err = "empty organic results"
+            last_err = err or "empty organic results"
+            if "denied" in last_err:
+                break
             fmt_idx += 1
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
-        if attempt < BRIGHT_DATA_MAX_RETRIES - 1:
+        if attempt < retries - 1:
             time.sleep(1.5 * (attempt + 1))
 
     return [], f"brightdata_failed: {last_err}"
 
 
+_BD_ZONE_DENIED = False
+
+
 def _brightdata_enabled() -> bool:
-    return BRIGHT_DATA_MODE in ("auto", "force", "1", "true", "yes", "on") and bool(BRIGHT_DATA_API_KEY)
+    mode = (os.getenv("BRIGHT_DATA_MODE", "") or BRIGHT_DATA_MODE or "auto").strip().lower()
+    api_key = (os.getenv("BRIGHT_DATA_API_KEY", "") or BRIGHT_DATA_API_KEY).strip()
+    if _BD_ZONE_DENIED and mode in ("auto",):
+        return False
+    return mode in ("auto", "force", "1", "true", "yes", "on") and bool(api_key)
 
 
 # --- Search-result cache (cache-first wiring) ------------------------------
@@ -366,11 +637,19 @@ def _cache_consume_url(url: str) -> Optional[str]:
 
 
 def _cache_store_query(query: str, value: str) -> None:
-    """Write-back a successful fresh SERP result for the query key."""
+    """Write-back a successful fresh SERP result. Never store failures as gaps."""
     try:
         if not _cache_active():
             return
-        cache_store("query", _cache_query_key(query), value)
+        text = str(value or "")
+        low = text.lower()
+        if (
+            not text
+            or text == GAP_SENTINEL
+            or low.startswith(("search_unavailable", "bing unreachable", "error"))
+        ):
+            return
+        cache_store("query", _cache_query_key(query), text)
     except Exception:
         pass
 
@@ -475,6 +754,48 @@ def _unpack_bing_ck(href: str) -> str:
     return u
 
 
+_RELEVANCE_STOP = {
+    "from", "with", "that", "this", "film", "home", "search", "about",
+    "which", "where", "when", "what", "have", "been", "were", "your",
+    "into", "over", "after", "before", "their", "there", "would",
+    "could", "should", "wikipedia",
+}
+
+
+def _query_tokens(query: str) -> set:
+    """Distinctive tokens. Short words like ``ada`` match unrelated ADA sites."""
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9]{4,}", query or "")
+        if token.lower() not in _RELEVANCE_STOP
+    }
+
+
+def _relevant_hits(query: str, hits: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Drop SERP cards that share no distinctive token with the query.
+
+    Datacenter Bing sometimes returns ``li.b_algo`` cards for hotels, VPNs, or
+    other injected links. Those must not count as a successful search.
+    Queries with no Latin token of length >= 4 keep the parsed hits.
+    """
+    tokens = _query_tokens(query)
+    if not tokens:
+        return list(hits)
+    kept: List[Dict[str, str]] = []
+    for hit in hits:
+        blob = " ".join(
+            str(hit.get(key) or "") for key in ("title", "description", "url")
+        ).lower()
+        if any(token in blob for token in tokens):
+            kept.append(hit)
+    return kept
+
+
+def _is_empty_bing_serp(html: str) -> bool:
+    low = (html or "").lower()
+    return "there are no results" in low or 'class="b_no"' in low
+
+
 def format_title_url(hits: List[Dict[str, str]], header: str = "") -> str:
     """Numbered title, URL, and truncated description. Does not include page text."""
     lines: List[str] = []
@@ -504,21 +825,36 @@ def bing_search(query: str, top_k: int = _MAX_RESULTS) -> str:
         return cached
 
     # Bright Data SERP API (primary when enabled)
+    bd_err = ""
     if _brightdata_enabled():
         hits, err = _brightdata_search(query, max_results=top_k)
         if hits:
             out = format_title_url(hits[:top_k], header=f"bing results for: {query}")
             _cache_store_query(query, out)
             return out
-        if BRIGHT_DATA_MODE == "force":
-            return f"Bing unreachable: Bright Data force mode failed: {err}"
+        bd_err = err or "brightdata_failed"
+        mode = (os.getenv("BRIGHT_DATA_MODE", "") or BRIGHT_DATA_MODE or "auto").strip().lower()
+        # 407 is a zone denial. Timeouts are the same for this process:
+        # retrying api.brightdata.com on every query stalls the rollout.
+        low_err = bd_err.lower()
+        if mode == "auto" and any(
+            marker in low_err for marker in ("407", "denied", "timeout", "connectionerror")
+        ):
+            global _BD_ZONE_DENIED
+            _BD_ZONE_DENIED = True
+        if mode in ("force", "1", "true", "yes", "on"):
+            return f"search_unavailable: {bd_err}"
 
-    # Local fallback
+    # Last-resort datacenter HTML. Do not send Bing through SCIENCE_INFRA_PROXY.
+    # This egress gets an explicit empty SERP ("There are no results") or
+    # li.b_algo cards that do not mention the query. Only token-overlapping
+    # cards are returned; otherwise Wikipedia is the fallback.
     q = re.sub(r"\s+", " ", query)[:160]
     encoded = urllib.parse.quote(q)
     errors: List[str] = []
-    for proxies in proxy_candidates():
-        label = (proxies or {}).get("http") or "direct"
+    for proxies in (None,):
+        label = "direct"
+        bing_throttle()
         hdrs = dict(_UA_HEADERS)
         hdrs["Referer"] = "https://www.bing.com/"
         html, err = _request(
@@ -531,14 +867,30 @@ def bing_search(query: str, top_k: int = _MAX_RESULTS) -> str:
         if err:
             errors.append(f"{label}: {err}")
             continue
-        organic = _parse_bing(html, top_k)
+        parsed = _parse_bing(html, top_k)
+        organic = _relevant_hits(q or query, parsed)
         if organic:
             out = format_title_url(organic[:top_k], header=f"bing results for: {query}")
             _cache_store_query(query, out)
             return out
-        why = "anomaly page (bot risk control)" if _is_anomaly_page(html) else f"0 results html={len(html)}"
+        if parsed:
+            why = f"irrelevant organic n={len(parsed)} html={len(html)}"
+        elif _is_empty_bing_serp(html):
+            why = f"empty_serp html={len(html)}"
+        elif _is_anomaly_page(html):
+            why = "anomaly page (bot risk control)"
+        else:
+            why = f"0 results html={len(html)}"
         errors.append(f"{label}: {why}")
-    return "Bing unreachable: " + "; ".join(errors[-4:])
+    wiki_hits = _wikipedia_search_hits("en", q or query)
+    if wiki_hits:
+        out = format_title_url(wiki_hits[:top_k], header=f"wikipedia results for: {query}")
+        _cache_store_query(query, out)
+        return out
+    detail = "; ".join(errors[-4:])
+    if bd_err:
+        return f"search_unavailable: {bd_err}; Bing unreachable: {detail}"
+    return f"search_unavailable: Bing unreachable: {detail}"
 
 
 _WIKI_URL_RE = re.compile(
@@ -615,24 +967,22 @@ def _is_bot_wall(text: str) -> bool:
 
 def _wikipedia_search_hits(lang: str, query: str, *, _follow_suggest: bool = True) -> List[Dict[str, str]]:
     api = f"https://{lang}.wikipedia.org/w/api.php"
-    params = urllib.parse.urlencode({
+    suggestion = ""
+    if wiki_proxy_map() is None:
+        return []
+    body, err = wiki_get(api, params={
         "action": "query",
         "list": "search",
         "srsearch": query,
         "srlimit": "5",
         "format": "json",
         "utf8": "1",
-    })
-    endpoint = f"{api}?{params}"
-    suggestion = ""
-    for proxies in proxy_candidates():
-        body, err = _request("GET", endpoint, headers=_WIKI_API_HEADERS, proxies=proxies, timeout=10.0)
-        if err or not body:
-            continue
+    }, timeout=10.0)
+    if not err and body:
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
-            continue
+            payload = {}
         query_block = payload.get("query") or {}
         hits = query_block.get("search") or []
         out: List[Dict[str, str]] = []
@@ -645,8 +995,6 @@ def _wikipedia_search_hits(lang: str, query: str, *, _follow_suggest: bool = Tru
         if out:
             return out
         suggestion = str((query_block.get("searchinfo") or {}).get("suggestion") or "").strip()
-        if suggestion:
-            break
     if _follow_suggest and suggestion and suggestion.lower() != query.lower():
         return _wikipedia_search_hits(lang, suggestion, _follow_suggest=False)
     return []
@@ -685,6 +1033,50 @@ def _repair_failed_fetch(url: str, max_chars: int, errors: List[str]) -> str:
     return _fetch_search_fallback(url, reason=reason)
 
 
+_HTTP_URL_RE = re.compile(r"https?://[^\s\"'<>\]\)]+", re.I)
+_FETCH_URL_CAP = 3
+
+
+def extract_http_urls(text: str, limit: int = _FETCH_URL_CAP) -> List[str]:
+    """Unique http(s) URLs in first-seen order, capped at ``limit``."""
+    seen: List[str] = []
+    for match in _HTTP_URL_RE.findall(str(text or "")):
+        url = match.rstrip(".,);]")
+        if url and url not in seen:
+            seen.append(url)
+        if len(seen) >= max(0, int(limit)):
+            break
+    return seen
+
+
+def fetch_pages(urls: List[str], max_chars: int = _MAX_SNIPPET_CHARS, *, limit: int = _FETCH_URL_CAP) -> str:
+    """Open up to ``limit`` pages. One failure does not drop the others.
+
+    Duplicate URLs in this call are skipped. Hosts on the block list are
+    skipped instead of falling through to a search. A cached page is still
+    returned, so the caller sees the text.
+    """
+    chosen: List[str] = []
+    for raw in urls or []:
+        for url in extract_http_urls(str(raw), limit=limit):
+            if url in chosen:
+                continue
+            chosen.append(url)
+            if len(chosen) >= max(1, int(limit)):
+                break
+        if len(chosen) >= max(1, int(limit)):
+            break
+    if not chosen:
+        return "fetch_unavailable: no urls"
+    blocks: List[str] = []
+    for url in chosen:
+        if is_blocked_fetch_host(url):
+            blocks.append(f"skipped_blocked: {url}")
+            continue
+        blocks.append(fetch_page(url, max_chars=max_chars))
+    return "\n\n".join(blocks)
+
+
 def fetch_page(url: str, max_chars: int = _MAX_SNIPPET_CHARS, *, _repair: bool = True) -> str:
     """Fetch a URL and return truncated visible text (web_fetch kernel).
 
@@ -702,8 +1094,29 @@ def fetch_page(url: str, max_chars: int = _MAX_SNIPPET_CHARS, *, _repair: bool =
         return f"url: {url}\n{cached}"
     if _repair and is_blocked_fetch_host(url):
         return _repair_failed_fetch(url, max_chars, ["blocked_host"])
+    if is_wikipedia_host(url):
+        html_text, err = wiki_get(url, timeout=8.0)
+        proxy_tries: List[Optional[Dict[str, str]]] = []
+        errors: List[str] = []
+        if err:
+            if err == "proxy_down":
+                return "fetch_unavailable: proxy_down"
+            errors.append(err)
+        else:
+            text = _visible_text(html_text, max_chars)
+            if not text:
+                errors.append("empty page")
+            elif _is_bot_wall(text):
+                errors.append("bot_wall")
+            else:
+                _cache_store_url(url, text)
+                return f"url: {url}\n{text}"
+        if _repair:
+            return _repair_failed_fetch(url, max_chars, errors)
+        return "fetch_unavailable: " + "; ".join(errors[-4:])
+    proxy_tries = [None]
     errors: List[str] = []
-    for proxies in proxy_candidates():
+    for proxies in proxy_tries:
         html_text, err = _request("GET", url, headers=_UA_HEADERS, proxies=proxies, timeout=8.0)
         if err:
             errors.append(err)
@@ -733,7 +1146,18 @@ def fetch_by_type(url: str, query: str = "", max_chars: int = _MAX_SNIPPET_CHARS
         return _repair_failed_fetch(target, max_chars, ["blocked_host"])
     errors: List[str] = []
     path = target.lower().split("?", 1)[0]
-    for proxies in proxy_candidates():
+    if is_wikipedia_host(target):
+        body, err = wiki_get(target, timeout=8.0)
+        if err == "proxy_down":
+            return "fetch_unavailable: proxy_down"
+        if err:
+            return f"fetch_unavailable: {err}"
+        text = _visible_text(body, max_chars)
+        if not text:
+            return "fetch_unavailable: empty page"
+        return f"url: {target}\n{text}"
+    proxy_tries: List[Optional[Dict[str, str]]] = [None]
+    for proxies in proxy_tries:
         try:
             resp = requests.get(target, headers=_UA_HEADERS, timeout=8.0, proxies=proxies, stream=True)
         except Exception as exc:

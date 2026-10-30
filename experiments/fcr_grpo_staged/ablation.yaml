@@ -1,0 +1,102 @@
+schema_version: "1.0"
+name: fcr_grpo_staged_validation
+base_experiment: simple-pev
+do_not_overlap_gpu_jobs: true
+shared:
+  seeds: [11, 23, 42, 71, 101]
+  train_steps: 20
+  rollout_budget_per_prompt: 4
+  max_response_length: 4096
+  temperature: 0.7
+  fcr_k: 2
+  fcr_threshold: 0.5
+  max_branches_per_episode: 1
+  validation_primary: paired_prompt_success
+  minimum_effect_pp: 3.0
+  integrity_gates:
+    prediction_coverage_min: 0.99
+    label_coverage_min: 0.99
+    leakage_count_max: 0
+    cross_chain_pair_count_max: 0
+    budget_violation_count_max: 0
+
+stages:
+  - id: 01_schema_audit
+    train: false
+    algos: [grpo]
+    overrides:
+      algorithm.tir.fcr_brier_beta: 0.0
+      algorithm.tir.fcr_lambda: 0.0
+      algorithm.tir.sites: []
+    advance_when: integrity_gates
+
+  - id: 02_prediction_only
+    train: true
+    algos: [fcr_grpo]
+    overrides:
+      algorithm.tir.fcr_brier_beta: 0.1
+      algorithm.tir.fcr_lambda: 0.0
+      algorithm.tir.sites: []
+    advance_when:
+      heldout_brier_improves: true
+      prediction_coverage_min: 0.99
+
+  - id: 03_gate_allocation
+    train: false
+    checkpoint_from: 02_prediction_only
+    equal_budget: true
+    variants:
+      - {id: no_branch, gate: none}
+      - {id: random_branch, gate: random}
+      - {id: arpo_entropy, gate: entropy}
+      - {id: failure_confirmed, gate: failure_confirmed}
+    overrides:
+      algorithm.tir.fcr_brier_beta: 0.0
+      algorithm.tir.fcr_lambda: 0.0
+
+  - id: 04_auxiliary_2x2
+    train: true
+    gate: failure_confirmed
+    variants:
+      - {id: neither, brier_beta: 0.0, corr_lambda: 0.0}
+      - {id: brier_only, brier_beta: 0.1, corr_lambda: 0.0}
+      - {id: correction_only, brier_beta: 0.0, corr_lambda: 0.1}
+      - {id: full, brier_beta: 0.1, corr_lambda: 0.1}
+
+  - id: 05_validation_weights
+    train: true
+    validation_only_selection: true
+    lambda_grid: [0.05, 0.1, 0.2]
+    beta_grid: [0.05, 0.1, 0.2]
+    optional_optimizer_ablation: gradient_norm_matching
+    freeze_selected_before_test: true
+
+  - id: 06_equal_budget_final
+    train: true
+    equal_budget: true
+    algos: [grpo, flow_grpo, arpo, appo, fcr_grpo]
+    seeds: [11, 23, 42, 71, 101]
+    report:
+      - paired_success_delta_ci95
+      - heldout_brier_ece
+      - error_step_repair_rate
+      - correction_rate
+      - calls_tokens_wall_time
+      - learning_curve_cost_auc
+
+  - id: 07_negative_controls
+    train: true
+    variants:
+      - shuffled_verifier_labels
+      - shuffled_parent_child_pairs
+      - reward_hacking_binary_hit_lambda_1
+      - k_1_equal_executor_budget
+      - k_4_equal_executor_budget
+
+stop_conditions:
+  - nan_or_inf
+  - persistent_gradient_explosion
+  - kl_or_clip_outside_baseline_bound
+  - valid_group_ratio_too_low
+  - prediction_or_label_coverage_below_gate
+  - leakage_or_cross_chain_pair_detected

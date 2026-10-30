@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-import requests
-
-from .search import _UA_HEADERS, _cache_query_key, proxy_candidates, truncate_description
+from .search import _cache_query_key, truncate_description, wiki_get, wiki_proxy_map
 from .search_cache import GAP_SENTINEL, cache_lookup, cache_store
 
 _TOP_K = int(os.getenv("TIR_WIKI_TOP_K", "10"))
@@ -58,35 +57,28 @@ def wikipedia_search(query: str, top_k: int = _TOP_K) -> str:
     if cached is not None:
         return cached
 
-    headers = {"User-Agent": _UA_HEADERS["User-Agent"]}
-    last_err = "no proxy candidate"
+    if wiki_proxy_map() is None:
+        return "search_unavailable: proxy_down"
+    body, err = wiki_get(
+        "https://en.wikipedia.org/w/api.php",
+        params={
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "srlimit": str(top_k),
+            "format": "json",
+        },
+        timeout=15.0,
+    )
     hits: List[Dict[str, Any]] = []
-    for proxies in proxy_candidates():
-        label = (proxies or {}).get("http") or "direct"
+    last_err = err or "0 hits"
+    if body and not err:
         try:
-            search_resp = requests.get(
-                "https://en.wikipedia.org/w/api.php",
-                params={
-                    "action": "query",
-                    "list": "search",
-                    "srsearch": query,
-                    "srlimit": top_k,
-                    "format": "json",
-                },
-                headers=headers,
-                timeout=15,
-                proxies=proxies,
-            )
-            if search_resp.status_code >= 400:
-                last_err = f"{label}: HTTP {search_resp.status_code}"
-                continue
-            hits = search_resp.json().get("query", {}).get("search", [])
-            if hits:
-                break
-            last_err = f"{label}: 0 hits"
-        except Exception as e:
-            last_err = f"{label}: {type(e).__name__}: {e}"
-            continue
+            hits = (json.loads(body).get("query") or {}).get("search") or []
+        except json.JSONDecodeError as exc:
+            last_err = f"JSONDecodeError: {exc}"
+        if not hits and "0 hits" not in last_err:
+            last_err = "0 hits"
 
     if not hits:
         return f"search_unavailable: {last_err}"
@@ -103,7 +95,7 @@ def wikipedia_search(query: str, top_k: int = _TOP_K) -> str:
         if desc:
             lines.append(f"   {desc}")
     if len(lines) <= 1:
-        return f"search_unavailable: {label}: 0 hits"
+        return "search_unavailable: 0 hits"
     out = "\n".join(lines)
     _cache_store_query(query, out)
     return out

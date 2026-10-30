@@ -1,0 +1,12 @@
+experiment:
+  id: fcr_short
+  seed: 42
+  refs:
+    llm: llm.yaml
+    workflow: workflow.yaml
+    rl: rl_grpo.yaml
+    harness: harness.yaml
+  pipeline:
+  - train
+  name: fcr_short_pilot
+  agl_metrics_url: /agl/metrics

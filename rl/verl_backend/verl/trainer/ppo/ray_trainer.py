@@ -21,6 +21,7 @@ This trainer supports model-agonistic model initialization with huggingface
 import csv
 import json
 import os
+import shutil
 import uuid
 from collections import defaultdict
 from contextlib import contextmanager
@@ -55,6 +56,13 @@ from verl.trainer.ppo.metric_utils import (
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
+from verl.utils.checkpoint.retain import (
+    dirs_to_keep,
+    drop_unkept_global_steps,
+    list_global_step_dirs,
+    resolve_best_step,
+    write_step_val_reward,
+)
 from verl.utils.metric import (
     reduce_metrics,
 )
@@ -1706,22 +1714,47 @@ class RayPPOTrainer:
         max_actor_ckpt_to_keep = self.config.trainer.get("max_actor_ckpt_to_keep", None) if not remove_previous_ckpt_in_save else 1
         max_critic_ckpt_to_keep = self.config.trainer.get("max_critic_ckpt_to_keep", None) if not remove_previous_ckpt_in_save else 1
 
-        self.actor_rollout_wg.save_checkpoint(actor_local_path, actor_remote_path, self.global_steps, max_ckpt_to_keep=max_actor_ckpt_to_keep)
+        # FSDP's max_ckpt_to_keep only tracks paths in this process and would
+        # delete the best-val actor shards. Whole-dir retention is below.
+        self.actor_rollout_wg.save_checkpoint(actor_local_path, actor_remote_path, self.global_steps, max_ckpt_to_keep=None)
 
         if self.use_critic:
             critic_local_path = os.path.join(local_global_step_folder, "critic")
             critic_remote_path = None if self.config.trainer.default_hdfs_dir is None else os.path.join(self.config.trainer.default_hdfs_dir, f"global_step_{self.global_steps}", "critic")
-            self.critic_wg.save_checkpoint(critic_local_path, critic_remote_path, self.global_steps, max_ckpt_to_keep=max_critic_ckpt_to_keep)
+            self.critic_wg.save_checkpoint(critic_local_path, critic_remote_path, self.global_steps, max_ckpt_to_keep=None)
 
         # save dataloader
         dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
         dataloader_state_dict = self.train_dataloader.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
 
+        val_reward = getattr(self, "_latest_val_reward", None)
+        write_step_val_reward(local_global_step_folder, self.global_steps, val_reward)
+
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(self.config.trainer.default_local_dir, "latest_checkpointed_iteration.txt")
         with open(local_latest_checkpointed_iteration, "w") as f:
             f.write(str(self.global_steps))
+
+        self._drop_older_global_steps(local_global_step_folder, max_actor_ckpt_to_keep)
+
+    def _drop_older_global_steps(self, keep_folder: str, max_keep: Optional[int] = 1) -> None:
+        root = self.config.trainer.default_local_dir
+        if not root or not os.path.isdir(root):
+            return
+        latest_step = self.global_steps
+        val_reward = getattr(self, "_latest_val_reward", None)
+        best_step = resolve_best_step(root, latest_step, val_reward)
+        keep_paths = dirs_to_keep(
+            list_global_step_dirs(root),
+            latest_step=latest_step,
+            best_step=best_step,
+            max_keep=max_keep,
+        )
+        keep_paths.add(os.path.abspath(keep_folder))
+        drop_unkept_global_steps(root, keep_paths)
+        if best_step is not None:
+            print(f"Keeping latest global_step_{latest_step} and best-val global_step_{best_step}")
 
     def _load_checkpoint(self):
         if self.config.trainer.resume_mode == "disable":
@@ -2144,6 +2177,7 @@ class RayPPOTrainer:
                         metrics.update(val_metrics)
 
                     if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
+                        self._latest_val_reward = metrics.get("val/reward")
                         with _timer("save_checkpoint", timing_raw):
                             self._save_checkpoint()
 

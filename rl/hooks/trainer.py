@@ -37,6 +37,11 @@ class TirAgentLightningTrainer(AgentLightningTrainer):
         trainer_mod.compute_advantage = _wrapped  # type: ignore[assignment]
         try:
             return super()._train_step(batch_dict)
+        except RuntimeError as exc:
+            if "left an empty actor batch" in str(exc):
+                print(f"skip empty actor batch: {exc}", flush=True)
+                return {"training/empty_actor_batch": 1.0}
+            raise
         finally:
             trainer_mod.compute_advantage = orig
 

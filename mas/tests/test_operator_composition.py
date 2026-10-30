@@ -128,6 +128,7 @@ class TestExpansionTable(unittest.TestCase):
         "gigpo": ("gigpo", []),
         "rae": ("grpo", ["zero_prefix", "rae_verdict"]),
         "flow_grpo": ("grpo", []),
+        "fcr_grpo": ("grpo", ["failure_reallocation"]),
     }
 
     def test_all_eight_presets_expand_to_frozen_products(self):
@@ -166,7 +167,10 @@ class TestExpansionTable(unittest.TestCase):
         self.assertEqual(set(ADVANTAGE_BASES), {"grpo", "igpo", "gigpo"})
         self.assertEqual(
             set(ADVANTAGE_OPERATORS),
-            {"zero_prefix", "appo_credit", "aepo_entropy", "rae_verdict", "rae_full_tgt"},
+            {
+                "zero_prefix", "appo_credit", "aepo_entropy", "rae_verdict",
+                "rae_full_tgt", "failure_reallocation",
+            },
         )
         self.assertEqual(set(OPERATOR_CONSUMED_COLUMNS), set(ADVANTAGE_OPERATORS))
         self.assertEqual(set(BASE_CONSUMED_COLUMNS), set(ADVANTAGE_BASES))

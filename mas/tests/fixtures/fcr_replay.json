@@ -1,0 +1,46 @@
+[
+  {
+    "rollout_id": "parent-1",
+    "role": "parent",
+    "resume_parent_id": "",
+    "event_id": "failure-event",
+    "parent_event_id": "",
+    "chain_id": "chain-a",
+    "p_satisfy": 0.2,
+    "actual_satisfied": false,
+    "failure_confirmed": true
+  },
+  {
+    "rollout_id": "child-1",
+    "role": "child",
+    "resume_parent_id": "parent-1",
+    "event_id": "alternative-1",
+    "parent_event_id": "failure-event",
+    "chain_id": "chain-a",
+    "p_satisfy": 0.8,
+    "actual_satisfied": true,
+    "failure_confirmed": false
+  },
+  {
+    "rollout_id": "child-2",
+    "role": "child",
+    "resume_parent_id": "parent-1",
+    "event_id": "alternative-2",
+    "parent_event_id": "failure-event",
+    "chain_id": "chain-a",
+    "p_satisfy": 0.3,
+    "actual_satisfied": false,
+    "failure_confirmed": true
+  },
+  {
+    "rollout_id": "child-cross-chain",
+    "role": "child",
+    "resume_parent_id": "parent-1",
+    "event_id": "alternative-invalid",
+    "parent_event_id": "failure-event",
+    "chain_id": "chain-b",
+    "p_satisfy": 0.9,
+    "actual_satisfied": true,
+    "failure_confirmed": false
+  }
+]

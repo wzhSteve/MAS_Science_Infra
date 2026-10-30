@@ -5,6 +5,16 @@ projects:
   mode: native_mas
   status: ready
   experiment_id: ''
+- id: pure_pev
+  title: pure_PEV
+  mode: native_mas
+  status: ready
+  experiment_id: ''
+- id: cghe_pev
+  title: CGHE PEV
+  mode: native_mas
+  status: ready
+  experiment_id: ''
 - id: agentflow
   title: AgentFlow
   mode: native_mas

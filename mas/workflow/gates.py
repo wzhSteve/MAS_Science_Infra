@@ -89,6 +89,20 @@ def evaluate_gate(gate: BranchGate, ctx: GateContext) -> GateDecision:
         ok = bool(ctx.final_failed)
         return GateDecision(ok, 1.0 if ok else 0.0, "failure_trigger")
 
+    if gtype == "failure_confirmed":
+        ok = bool(signals.get("failure_confirmed"))
+        probability = signals.get("p_satisfy")
+        return GateDecision(
+            ok,
+            1.0 if ok else 0.0,
+            "failure_confirmed",
+            {
+                "prediction_event_id": signals.get("prediction_event_id"),
+                "p_satisfy": probability,
+                "actual_satisfied": signals.get("actual_satisfied"),
+            },
+        )
+
     if gtype == "signal":
         key = str(params.get("signal_key") or params.get("signal") or "")
         if not key:

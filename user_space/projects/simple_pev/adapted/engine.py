@@ -171,6 +171,24 @@ def thinking_enabled() -> bool:
     return False
 
 
+_TOKENIZER: Any = None
+
+
+def _planner_tokenizer() -> Any:
+    """Qwen tokenizer used only to count the prediction-label tokens."""
+    global _TOKENIZER
+    if _TOKENIZER is not None:
+        return _TOKENIZER
+    raw = os.environ.get("VLLM_MODEL_PATH", "").strip()
+    path = Path(raw) if raw else Path("/root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B")
+    if not path.is_dir():
+        return None
+    from transformers import AutoTokenizer
+
+    _TOKENIZER = AutoTokenizer.from_pretrained(str(path), trust_remote_code=True)
+    return _TOKENIZER
+
+
 def skip_thinking(trainable: bool) -> bool:
     """True when this call must send ``enable_thinking=False``.
 
@@ -440,6 +458,7 @@ class LocalChatEngine:
         self.system_prompt = DEFAULT_SYSTEM_PROMPT
         self.is_multimodal = False
         self._log_key = log_key or (lambda: "")
+        self.last_label_probs: Dict[str, Any] = {}
 
     def pin_endpoint(self, bound: Dict[str, str]) -> None:
         """Remember the rollout endpoint on this instance.
@@ -480,6 +499,204 @@ class LocalChatEngine:
         with scope:
             return self._complete(prompt, system_prompt or self.system_prompt, max_tokens)
 
+    def _echo_token_logprobs(self, model: str, frozen: bool, prompt: str) -> List[Any]:
+        """Prompt-token logprobs for ``prompt``. ``max_tokens=0`` adds no new tokens."""
+        import httpx
+
+        llm_timeout = float(os.environ.get("AGENTFLOW_LLM_TIMEOUT") or 90)
+        with httpx.Client(trust_env=False, timeout=llm_timeout) as http_client:
+            _note_active_http(http_client)
+            client = build_chat_client(
+                http_client,
+                base_url=_endpoint(frozen, self._pinned),
+                api_key=_api_key(self._pinned),
+                timeout=llm_timeout,
+            )
+            resp = client.completions.create(
+                model=model,
+                prompt=prompt,
+                max_tokens=0,
+                echo=True,
+                logprobs=1,
+                temperature=0,
+            )
+        choice = resp.choices[0]
+        payload = getattr(choice, "logprobs", None)
+        values = getattr(payload, "token_logprobs", None)
+        if values is None and isinstance(payload, dict):
+            values = payload.get("token_logprobs")
+        return list(values or [])
+
+    def _score_from_choice_logprobs(self, choice: Any, completion: str) -> Dict[str, Any]:
+        """Score 满足/不满足 from the generation's top-logprobs, without a second prefill."""
+        from prediction_probs import SATISFY, UNSATISFY, prediction_record, written_prediction
+
+        logprobs = getattr(choice, "logprobs", None)
+        content = getattr(logprobs, "content", None) if logprobs is not None else None
+        if not content:
+            return {}
+        pieces: List[str] = []
+        items: List[Any] = []
+        for item in content:
+            token = getattr(item, "token", None)
+            if token is None and isinstance(item, dict):
+                token = item.get("token")
+            pieces.append(str(token or "").replace("Ġ", " ").replace("▁", " "))
+            items.append(item)
+        acc = "".join(pieces)
+        match = re.search(r'"prediction"\s*:\s*"', acc)
+        if not match:
+            match = re.search(r'"prediction"\s*:\s*"', str(completion or ""))
+            if not match:
+                return {}
+            # Generation logprobs still include <think> tokens; locate the quote in pieces.
+            match = re.search(r'"prediction"\s*:\s*"', acc)
+            if not match:
+                return {}
+        value_start = match.end()
+        pos = 0
+        start = None
+        for i, piece in enumerate(pieces):
+            nxt = pos + len(piece)
+            if nxt > value_start:
+                start = i if pos >= value_start else i
+                break
+            pos = nxt
+        if start is None or start >= len(items):
+            return {}
+
+        def _top_map(item: Any) -> Dict[str, float]:
+            out: Dict[str, float] = {}
+            lp = getattr(item, "logprob", None)
+            token = getattr(item, "token", None)
+            if isinstance(item, dict):
+                lp = item.get("logprob", lp)
+                token = item.get("token", token)
+            if token is not None and lp is not None:
+                out[str(token)] = float(lp)
+            tops = getattr(item, "top_logprobs", None)
+            if tops is None and isinstance(item, dict):
+                tops = item.get("top_logprobs")
+            for top in tops or []:
+                top_token = getattr(top, "token", None)
+                top_lp = getattr(top, "logprob", None)
+                if isinstance(top, dict):
+                    top_token = top.get("token", top_token)
+                    top_lp = top.get("logprob", top_lp)
+                if top_token is not None and top_lp is not None:
+                    out[str(top_token)] = float(top_lp)
+            return out
+
+        def _pick(dist: Dict[str, float], *targets: str) -> Optional[float]:
+            for target in targets:
+                if target in dist:
+                    return dist[target]
+                for key, value in dist.items():
+                    if target and target in key:
+                        return value
+            return None
+
+        first = _top_map(items[start])
+        s_satisfy = _pick(first, SATISFY)
+        un_first = _pick(first, "不", UNSATISFY)
+        s_unsatisfy = None
+        if un_first is not None and start + 1 < len(items):
+            second = _top_map(items[start + 1])
+            rest = _pick(second, "满足")
+            if rest is not None:
+                s_unsatisfy = float(un_first) + float(rest)
+            elif _pick(first, UNSATISFY) is not None:
+                s_unsatisfy = _pick(first, UNSATISFY)
+        if s_unsatisfy is None:
+            s_unsatisfy = _pick(first, UNSATISFY)
+        if s_satisfy is None or s_unsatisfy is None:
+            return {}
+        record = prediction_record(written_prediction(completion), float(s_satisfy), float(s_unsatisfy))
+        tok = _planner_tokenizer()
+        if tok is not None:
+            record["satisfy_token_ids"] = list(tok.encode(SATISFY, add_special_tokens=False))
+            record["unsatisfy_token_ids"] = list(tok.encode(UNSATISFY, add_special_tokens=False))
+            record["prediction_token_start"] = 0
+        return record
+
+    def _score_prediction_labels(
+        self,
+        system_prompt: str,
+        user_text: str,
+        completion: str,
+        model: str,
+        frozen: bool,
+        choice: Any = None,
+    ) -> None:
+        """Score 满足 and 不满足 at the prediction quote. Failures leave probs empty."""
+        self.last_label_probs = {}
+        if self.role != "planner":
+            return
+        if choice is not None:
+            try:
+                scored = self._score_from_choice_logprobs(choice, completion)
+            except Exception:
+                scored = {}
+            if scored:
+                self.last_label_probs = scored
+                return
+        try:
+            from prediction_probs import (
+                SATISFY,
+                UNSATISFY,
+                prediction_prefix,
+                prediction_record,
+                sum_suffix_logprobs,
+                written_prediction,
+            )
+        except Exception:
+            return
+        prefix = prediction_prefix(completion)
+        if not prefix:
+            return
+        try:
+            tok = _planner_tokenizer()
+            if tok is None:
+                return
+            base = tok.apply_chat_template(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_text},
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=not skip_thinking(self.trainable),
+            )
+            stem = str(base) + prefix
+            stem_ids = tok.encode(stem, add_special_tokens=False)
+            scores: Dict[str, float] = {}
+            candidate_token_ids: Dict[str, List[int]] = {}
+            for label in (SATISFY, UNSATISFY):
+                full = stem + label
+                full_ids = tok.encode(full, add_special_tokens=False)
+                if full_ids[: len(stem_ids)] == stem_ids:
+                    n_prefix = len(stem_ids)
+                    n_label = len(full_ids) - n_prefix
+                else:
+                    label_ids = tok.encode(label, add_special_tokens=False)
+                    n_label = len(label_ids)
+                    n_prefix = max(0, len(full_ids) - n_label)
+                candidate_token_ids[label] = list(full_ids[n_prefix:])
+                echoed = self._echo_token_logprobs(model, frozen, full)
+                scores[label] = sum_suffix_logprobs(echoed, n_prefix, n_label)
+            self.last_label_probs = prediction_record(
+                written_prediction(completion),
+                scores[SATISFY],
+                scores[UNSATISFY],
+            )
+            self.last_label_probs["satisfy_token_ids"] = candidate_token_ids[SATISFY]
+            self.last_label_probs["unsatisfy_token_ids"] = candidate_token_ids[UNSATISFY]
+            self.last_label_probs["prediction_token_start"] = len(
+                tok.encode(prefix, add_special_tokens=False)
+            )
+        except Exception:
+            self.last_label_probs = {}
+
     def _complete(self, prompt: str, system_prompt: str, max_tokens: int) -> str:
         import httpx
 
@@ -492,6 +709,7 @@ class LocalChatEngine:
         user = fit_user_to_context(user, system_prompt=system_prompt, model_len=model_len)
         # trust_env=False: an ambient HTTP proxy 502s the trainable rollout URL
         # (172.17/10.x) and the planner window never reaches exec.
+        self.last_label_probs = {}
         entry: Dict[str, Any] = {"role": self.role, "model": model, "prompt_head": " ".join(prompt.split())[:300]}
 
         def _send(user_text: str) -> str:
@@ -510,9 +728,8 @@ class LocalChatEngine:
                     counter=lambda _prompt: count_chat_tokens(system_prompt, user_text),
                 ),
             }
-            if self.trainable:
-                # ARPO reads the entropy of the tool-decision generation. Top-10
-                # logprobs match the official vLLM rollout (logprobs=10).
+            if self.trainable or self.role == "planner":
+                # ARPO reads entropy; FCR reads 满足/不满足 from the same top-10.
                 kwargs["logprobs"] = True
                 kwargs["top_logprobs"] = 10
             enabled = not quiet
@@ -538,6 +755,11 @@ class LocalChatEngine:
                 resp = client.chat.completions.with_raw_response.create(**kwargs).parse()
             text = _THINK_RE.sub("", str(resp.choices[0].message.content or "")).strip()
             entry["response_head"] = " ".join(text.split())[:300]
+            self._score_prediction_labels(
+                system_prompt, user_text, text, model, frozen, choice=resp.choices[0]
+            )
+            if self.last_label_probs:
+                entry["prediction_probs"] = dict(self.last_label_probs)
             if self.trainable:
                 entropy, per_token = _choice_entropy(resp.choices[0])
                 if entropy is not None:

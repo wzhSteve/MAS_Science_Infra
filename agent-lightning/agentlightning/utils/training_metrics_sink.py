@@ -100,6 +100,8 @@ def _keep_key(key: str) -> bool:
         return True
     if lower.startswith("actor/") or lower.startswith("critic/"):
         return True
+    if lower.startswith("fcr/") or lower.startswith("cost/"):
+        return True
     return False
 
 

@@ -19,8 +19,11 @@ from workflow.sampling.contracts import (
 
 class ConfiguredGateAdapter(SamplingStrategyAdapter):
     id = "configured_gate"
-    aliases = ("aepo", "appo", "rae")
-    allowed_gates = ("entropy_delta", "arpo", "always", "dual_entropy", "verifier_fail", "verifier_pass")
+    aliases = ("aepo", "appo", "rae", "fcr_grpo")
+    allowed_gates = (
+        "entropy_delta", "arpo", "always", "dual_entropy", "verifier_fail",
+        "verifier_pass", "failure_confirmed",
+    )
 
     def supports_window(self, window: SamplingWindow) -> bool:
         return window.kind in (
@@ -59,6 +62,7 @@ class ConfiguredGateAdapter(SamplingStrategyAdapter):
             tool_ok=metrics.get("tool_ok", context.get("tool_ok")),
             verifier_ok=metrics.get("verifier_ok", context.get("verifier_ok")),
             final_failed=bool(metrics.get("final_failed", context.get("final_failed", False))),
+            signals=metrics,
             h_branch=context.get("h_branch"),
             rng=context.get("rng"),
         )

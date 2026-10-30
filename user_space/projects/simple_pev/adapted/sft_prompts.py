@@ -20,8 +20,7 @@ TOOL_LINES: List[str] = [
     "Generalist_Solution_Generator_Tool: another LLM call to reason or draft from the question and information already obtained. It does not search and can invent facts.",
     "Python_Code_Generator_Tool: write and run one short ASCII program for a numeric task. Import before use. Common modules are math, itertools, statistics, fractions, sympy, and numpy. It must print the result. It does not call input(), look up facts, or open pages.",
     "Bing_Search_Tool: search keywords. Returns titles, URLs, and short snippets only. It does not open pages. Snippets are not the page text.",
-    "Wikipedia_RAG_Search_Tool: Wikipedia search. Returns titles, URLs, and short snippets only. It does not open pages.",
-    "Web_Fetch_Tool: open exactly one URL and return page text or an error. It does not search. A valid URL may still lack the needed fact.",
+    "Web_Fetch_Tool: open one to three URLs copied from the latest Bing result, one per line. It does not search and does not invent URLs. A valid URL may still lack the needed fact.",
 ]
 
 _SEARCH_RE = re.compile(r"<search>(.*?)</search>", re.I | re.S)
@@ -41,7 +40,7 @@ _EMPTY_RESULT_MARKERS = (
     "output=[]",
     "command: no command found",
 )
-_PREDICTIONS = ("failure", "partial", "success")
+_PREDICTIONS = ("满足", "不满足")
 _OUTLINE_HEAD = re.compile(r"(?im)^outline\s*:")
 _STEP_PREFIX = re.compile(r"^(?:\d+[\.\)]\s*|[-*]\s+)")
 
@@ -80,6 +79,33 @@ def _tool_name_of(action: Dict[str, Any]) -> str:
 
 def _result_text(action: Dict[str, Any]) -> str:
     return str(action.get("result") or action.get("output") or "")
+
+
+def latest_bing_urls(memory: Any, *, limit: int = 10) -> List[str]:
+    """URLs from the newest Bing result, if that step returned any."""
+    actions = memory.get_actions() if memory is not None else {}
+    for _key, action in reversed(list((actions or {}).items())):
+        if not isinstance(action, dict):
+            continue
+        if "bing" not in _tool_name_of(action):
+            continue
+        return _extract_urls(_result_text(action), limit=limit)
+    return []
+
+
+def listed_fetch_command(tool_name: str, tool_input: Any, memory: Any) -> str:
+    """Execute copied Bing URLs directly. An invented URL returns an empty string."""
+    if "fetch" not in str(tool_name or "").lower():
+        return ""
+    wanted = _extract_urls(tool_input, limit=3)
+    if not wanted:
+        return ""
+    listed = {url.rstrip("/") for url in latest_bing_urls(memory)}
+    if not listed:
+        return ""
+    if any(url.rstrip("/") not in listed for url in wanted):
+        return ""
+    return f"execution = tool.execute(url={repr(chr(10).join(wanted))})"
 
 
 def recent_has_search_urls(memory: Any) -> bool:
@@ -387,7 +413,8 @@ def add_obtained_information(memory: Any, text: Any) -> bool:
 
 
 def normalize_prediction(value: Any) -> str:
-    token = str(value or "").strip().lower()
+    """Only the two planner labels. ``partial`` and English words are dropped."""
+    token = str(value or "").strip().strip("\"'").strip()
     return token if token in _PREDICTIONS else ""
 
 
@@ -488,8 +515,20 @@ def tags_to_execute(tool_name: str, raw: str, extracted: str) -> str:
         bodies = [b.strip() for b in _ARPO_SEARCH_RE.findall(text) if b.strip()]
     if not bodies:
         return extracted
-    key = "url" if is_fetch else "query"
-    return f"execution = tool.execute({key}={repr(bodies[-1])})"
+    if is_fetch:
+        urls: List[str] = []
+        for body in bodies:
+            for url in _extract_urls(body, limit=3):
+                if url not in urls:
+                    urls.append(url)
+                if len(urls) >= 3:
+                    break
+            if len(urls) >= 3:
+                break
+        if urls:
+            return f"execution = tool.execute(url={repr(chr(10).join(urls))})"
+        return f"execution = tool.execute(url={repr(bodies[-1])})"
+    return f"execution = tool.execute(query={repr(bodies[-1])})"
 
 
 def _tools_block() -> str:
@@ -541,6 +580,9 @@ def resolve_tool_name(text: Any) -> Optional[str]:
     raw = str(text or "")
     if _is_planner_placeholder(raw):
         return None
+    if "wikipedia" in raw.lower() or "wiki" in _compact_name(raw):
+        if "bing" not in raw.lower() and "fetch" not in raw.lower() and "python" not in raw.lower():
+            return "Bing_Search_Tool"
     found = _registered_tools_in(raw)
     if len(found) == 1:
         return found[0]
@@ -838,6 +880,7 @@ def parse_conclusion(text: str) -> str | None:
 
 _REASON_LINE = re.compile(r"^Reason:\s*(.*)$", re.I)
 _OBTAINED_LINE = re.compile(r"^Obtained:\s*(.*)$", re.I)
+_SATISFIED_LINE = re.compile(r"^Satisfied:\s*(YES|NO)\s*$", re.I)
 
 
 def parse_verifier_text(text: str) -> Dict[str, str]:
@@ -863,14 +906,22 @@ def parse_verifier_text(text: str) -> Dict[str, str]:
             obtained_text = "NONE"
         conclusion = decision.upper()
         reason = str(payload.get("reason") or "").strip()
+        satisfied_raw = payload.get("satisfied", payload.get("actual_satisfied"))
+        if isinstance(satisfied_raw, bool):
+            satisfied = "YES" if satisfied_raw else "NO"
+        else:
+            normalized = str(satisfied_raw or "").strip().upper()
+            satisfied = normalized if normalized in ("YES", "NO") else "UNKNOWN"
         return {
             "conclusion": conclusion,
             "reason": reason or _default_reason(conclusion),
             "obtained": obtained_text,
+            "satisfied": satisfied,
         }
     conclusion = parse_conclusion(raw) or "CONTINUE"
     reason = ""
     obtained = "NONE"
+    satisfied = "UNKNOWN"
     for line in raw.splitlines():
         reason_match = _REASON_LINE.match(line.strip())
         if reason_match and not reason:
@@ -878,12 +929,16 @@ def parse_verifier_text(text: str) -> Dict[str, str]:
         obtained_match = _OBTAINED_LINE.match(line.strip())
         if obtained_match:
             obtained = obtained_match.group(1).strip() or "NONE"
+        satisfied_match = _SATISFIED_LINE.match(line.strip())
+        if satisfied_match:
+            satisfied = satisfied_match.group(1).upper()
     if _blank_obtained(obtained):
         obtained = "NONE"
     return {
         "conclusion": conclusion,
         "reason": reason or _default_reason(conclusion),
         "obtained": obtained,
+        "satisfied": satisfied,
     }
 
 
@@ -891,9 +946,12 @@ def format_verdict(verdict: Dict[str, str]) -> str:
     conclusion = verdict.get("conclusion") if verdict.get("conclusion") in ("STOP", "CONTINUE") else "CONTINUE"
     reason = str(verdict.get("reason") or "").strip() or _default_reason(conclusion)
     obtained = verdict.get("obtained") or "NONE"
+    satisfied = str(verdict.get("satisfied") or "UNKNOWN").upper()
+    if satisfied not in ("YES", "NO"):
+        satisfied = "UNKNOWN"
     if _blank_obtained(obtained):
         obtained = "NONE"
-    return f"Conclusion: {conclusion}\nReason: {reason}\nObtained: {obtained}"
+    return f"Conclusion: {conclusion}\nSatisfied: {satisfied}\nReason: {reason}\nObtained: {obtained}"
 
 
 def _verifier_for_parser(text: str) -> str:
@@ -938,7 +996,8 @@ def generate_next_step(self, question, image, query_analysis, memory, step_count
     if recent_has_search_urls(memory) and not recent_has_fetch_body(memory):
         fetch_rule = (
             "Search already listed URLs and no page text has been fetched. "
-            "Choose Web_Fetch_Tool and one of those URLs. Do not search again yet.\n"
+            "Choose Web_Fetch_Tool. tool_input is 1 to 3 relevant URLs copied from that list, one per line. "
+            "Do not invent a URL and do not search again yet.\n"
         )
     prompt = f"""Question: {question}
 
@@ -954,17 +1013,17 @@ Using the question, the notes, Obtained information, and Recent steps, first rew
 The outline is the ordered work still required. Drop a step that is already done or no longer needed.
 Then fill subgoal, selected_tool, tool_input, prediction, and prediction_reason for the first outline item only.
 Rules:
-- If you do not know where the fact is, use Bing_Search_Tool or Wikipedia_RAG_Search_Tool.
-- If a search URL is relevant and the snippet is not enough, use Web_Fetch_Tool on that URL.
-- If a fetch is not enough, do not open that URL again. Change the URL or the keywords.
+- If you do not know where the fact is, use Bing_Search_Tool.
+- If a search URL is relevant and the snippet is not enough, use Web_Fetch_Tool. tool_input copies 1 to 3 URLs from that Bing result, one per line. Do not invent a URL.
+- If a fetch is not enough, do not open those URLs again. Change the URL or the keywords.
 - If Obtained information already has the fact, do not search or fetch it again.
 - subgoal is the first outline sentence, copied exactly.
-- prediction is about that first item, not whether the tool process starts. Search snippets are partial. A page that should contain the fact is success. No usable path is failure.
+- prediction is whether this first item will satisfy the subgoal. Write 满足 or 不满足 and nothing else. Do not write partial.
 
 Reply with one JSON object and nothing else.
 Fields, in this order: outline, subgoal, selected_tool, tool_input, prediction, prediction_reason
 outline is a list of short step sentences and has no status.
-prediction is failure, partial, or success.
+prediction is 满足 or 不满足, with no space after the quote.
 selected_tool is exactly one name from the tool list.
 If you cannot write JSON, use exactly these three lines instead:
 Context: <query or one URL>
@@ -973,6 +1032,15 @@ Tool Name: <query or one URL>
 """
     raw = str(self.llm_engine(prompt) or "")
     self._last_plan = parse_planner_payload(raw) or {}
+    scored = getattr(self.llm_engine, "last_label_probs", None) or {}
+    if isinstance(self._last_plan, dict) and isinstance(scored, dict):
+        for key in (
+            "p_satisfy", "p_unsatisfy", "s_satisfy", "s_unsatisfy",
+            "prediction_mismatch", "satisfy_token_ids", "unsatisfy_token_ids",
+            "prediction_token_start",
+        ):
+            if key in scored:
+                self._last_plan[key] = scored[key]
     next_step = _planner_for_parser(raw)
     if json_data is not None:
         json_data[f"action_predictor_{step_count}_prompt"] = prompt
@@ -989,9 +1057,9 @@ def generate_tool_command(self, question, image, context, sub_goal, tool_name, t
         spec = PYTHON_CODE_SPEC
     elif "fetch" in name.lower():
         spec = (
-            "Pick one concrete https URL from the suggestion, the sub-goal, or recent urls. "
-            "Output exactly one line and nothing else:\n"
-            "<search>https://one-url-from-previous-search</search>"
+            "Copy 1 to 3 https URLs from the suggestion or the latest Bing list. "
+            "Do not invent a URL. Put every URL inside one search tag, one URL per line:\n"
+            "<search>\nhttps://first-url-from-previous-search\nhttps://second-url-from-previous-search\n</search>"
         )
     else:
         spec = "Output exactly one line and nothing else:\n<search>short query</search>"
@@ -1023,6 +1091,7 @@ def verificate_context(self, question, image, query_analysis, memory, step_count
     if steps == "(none)":
         stop_verification = format_verdict({
             "conclusion": "CONTINUE",
+            "satisfied": "NO",
             "reason": "no tool has run",
             "obtained": "NONE",
         })
@@ -1043,8 +1112,10 @@ def verificate_context(self, question, image, query_analysis, memory, step_count
 
 {memory_view(memory)}
 
-{guard}Reply with exactly three lines and nothing else:
+{guard}Judge Satisfied only against the current sub-goal, independently of whether the whole task should stop.
+Reply with exactly four lines and nothing else:
 Conclusion: STOP or CONTINUE
+Satisfied: YES or NO
 Reason: one short line
 Obtained: one new fact that is not already listed, or NONE
 """

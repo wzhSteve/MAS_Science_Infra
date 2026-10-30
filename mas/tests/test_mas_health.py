@@ -64,6 +64,60 @@ class TestMasHealth(unittest.TestCase):
         )
         self.assertTrue(any("tir_offline_search" in item for item in faults))
 
+    def test_proxy_down_is_a_fault(self):
+        faults = episode_faults(
+            messages=[{
+                "kind": "tool_result",
+                "payload": {"output": "search_unavailable: proxy_down", "ok": False, "evidence_type": "ERROR"},
+            }],
+            final_answer="",
+            reward=0.0,
+        )
+        self.assertTrue(any("proxy_down" in item for item in faults))
+
+    def test_bing_unreachable_is_a_fault(self):
+        faults = episode_faults(
+            messages=[{
+                "kind": "tool_result",
+                "payload": {
+                    "output": "Bing unreachable: direct: 0 results html=95871",
+                    "ok": False,
+                    "evidence_type": "ERROR",
+                },
+            }],
+            final_answer="",
+            reward=0.0,
+        )
+        self.assertTrue(any("bing unreachable" in item for item in faults))
+
+    def test_search_unavailable_brightdata_is_a_fault(self):
+        faults = episode_faults(
+            messages=[{
+                "kind": "tool_result",
+                "payload": {
+                    "output": "search_unavailable: brightdata_failed: HTTP 429",
+                    "ok": False,
+                    "evidence_type": "ERROR",
+                },
+            }],
+            final_answer="",
+            reward=0.0,
+        )
+        self.assertTrue(faults)
+
+    def test_http_429_is_a_fault(self):
+        faults = episode_faults(
+            messages=[{
+                "kind": "tool_result",
+                "payload": {"output": "search_unavailable: HTTP 429", "ok": False, "evidence_type": "ERROR"},
+            }],
+            final_answer="",
+            reward=0.0,
+        )
+        self.assertTrue(
+            any("http 429" in item or "search_unavailable" in item for item in faults)
+        )
+
     def test_degenerate_reward_without_a_fault_stays_a_model_error(self):
         report = assess_step([
             {"reward": 0.0, "mas_fault": ""},
@@ -87,3 +141,15 @@ class TestMasHealth(unittest.TestCase):
     def test_nan_reward_is_a_fault(self):
         faults = episode_faults(reward=float("nan"))
         self.assertTrue(any("not finite" in item for item in faults))
+
+    def test_unmarked_error_event_is_not_infra(self):
+        class _Ev:
+            kind = "error"
+            payload = {"error": "OpenTelemetry logging error in set_attributes"}
+
+        faults = episode_faults(
+            events=[_Ev()],
+            final_answer="<answer>U2</answer>",
+            reward=1.0,
+        )
+        self.assertEqual(faults, [])

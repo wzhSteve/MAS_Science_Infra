@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
 import time
 from typing import Any, Dict, List, Optional, cast
@@ -32,11 +33,53 @@ from workflow.runtime import (
     run_episode,
 )
 from workflow.spec import load_spec
+from workflow.centralized_runtime import agentflow_state_from_messages
 
 load_repo_dotenv()
 
 agl.setup_logging(apply_to=[__name__])
 logger = logging.getLogger(__name__)
+
+
+def prediction_events_from_messages(messages: Any) -> List[Dict[str, Any]]:
+    """Return ordered, JSON-safe planner prediction/verifier label events."""
+    state = agentflow_state_from_messages(messages)
+    if not isinstance(state, dict):
+        return []
+    events: List[Dict[str, Any]] = []
+    for action in (state.get("actions") or {}).values():
+        if not isinstance(action, dict) or not action.get("prediction_event_id"):
+            continue
+        event = {
+            key: action.get(key)
+            for key in (
+                "prediction_event_id", "planner_step", "predicted_at",
+                "predicted_before_execution_at", "executed_at", "prediction",
+                "p_satisfy", "p_unsatisfy", "prediction_mismatch", "actual_satisfied",
+                "satisfy_token_ids", "unsatisfy_token_ids",
+                "prediction_token_start",
+                "verifier_reason", "failure_confirmed", "recovery_chain_id",
+                "parent_prediction_event_id",
+                "tool_name", "command",
+            )
+        }
+        events.append(event)
+    events.sort(key=lambda item: int(item.get("planner_step") or 0))
+    by_id = {
+        str(item.get("prediction_event_id")): item
+        for item in events if item.get("prediction_event_id")
+    }
+    for event in events:
+        parent = by_id.get(str(event.get("parent_prediction_event_id") or ""))
+        event["correction_valid"] = bool(
+            parent
+            and parent.get("failure_confirmed")
+            and parent.get("recovery_chain_id")
+            and parent.get("recovery_chain_id") == event.get("recovery_chain_id")
+            and isinstance(event.get("actual_satisfied"), bool)
+            and event.get("p_satisfy") is not None
+        )
+    return events
 
 
 def hydrate_rl_task(task: Dict[str, Any]) -> None:
@@ -288,6 +331,21 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
         from workflow.mas_health import episode_faults
 
         mas_faults = episode_faults(raw, traj, reward=reward)
+        prediction_events = prediction_events_from_messages(
+            getattr(raw, "messages", None) or getattr(raw, "branch_messages", None) or []
+        )
+        if resume_parent and task_run.get("resume_messages"):
+            resume_state = agentflow_state_from_messages(task_run.get("resume_messages"))
+            prior_steps = [
+                int(action.get("planner_step") or 0)
+                for action in ((resume_state or {}).get("actions") or {}).values()
+                if isinstance(action, dict)
+            ]
+            boundary_step = max(prior_steps, default=0)
+            prediction_events = [
+                event for event in prediction_events
+                if int(event.get("planner_step") or 0) > boundary_step
+            ]
         agl.emit_reward(reward)
         archive_id = ""
         snapshot_id = ""
@@ -296,6 +354,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             "arpo",
             "aepo",
             "rae",
+            "fcr_grpo",
         )
         if dump_ok and not raw.error:
             try:
@@ -330,6 +389,7 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     "tir.n_search": int(n_search),
                     "tir.n_python": int(n_python),
                     "tir.n_fetch": int(n_fetch),
+                    "tir.wall_time": float(time.time() - start),
                     "tir.format_ok": bool(format_ok),
                     "tir.mas_fault": (mas_faults[0][:500] if mas_faults else ""),
                     "tir.obs_hashes": "|".join(hashes),
@@ -357,6 +417,9 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     "tir.reward_scheme": str(task_run.get("reward_scheme") or ""),
                     "tir.resume_boundary": int(task_run.get("resume_boundary") or 0),
                     "tir.verdict": str(task_run.get("verdict") or "none"),
+                    "tir.prediction_events": json.dumps(
+                        prediction_events, ensure_ascii=False, separators=(",", ":")
+                    ),
                 }
             )
         except Exception as e:

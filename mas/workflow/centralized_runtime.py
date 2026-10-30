@@ -201,6 +201,29 @@ def agentflow_state_from_messages(messages: Any) -> Optional[Dict[str, Any]]:
     return found
 
 
+def failure_confirmation_metrics(payload: Any) -> Dict[str, Any]:
+    """Expose the latest user-space verifier label to after_verifier gates."""
+    if not isinstance(payload, dict):
+        return {}
+    state = payload.get("agentflow_state")
+    if not isinstance(state, dict):
+        return {}
+    actions = state.get("actions")
+    if not isinstance(actions, dict) or not actions:
+        return {}
+    action = next(
+        (item for item in reversed(list(actions.values())) if isinstance(item, dict)),
+        {},
+    )
+    return {
+        "failure_confirmed": bool(action.get("failure_confirmed", False)),
+        "prediction_event_id": str(action.get("prediction_event_id") or ""),
+        "recovery_chain_id": str(action.get("recovery_chain_id") or ""),
+        "p_satisfy": action.get("p_satisfy"),
+        "actual_satisfied": action.get("actual_satisfied"),
+    }
+
+
 def _snapshot_branch_messages(messages: List[Dict[str, Any]], *, rollout_id: str = "") -> None:
     """Persist the window prefix on the episode Archive when it carries AgentFlow state."""
     if not agentflow_state_from_messages(messages):
@@ -1028,7 +1051,9 @@ def _run_centralized_episode_body(
                     failed=verifier_node_failed(v_msg.kind),
                     metrics={"ok": v_ok},
                 )
-            _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics=_entropy_metrics(v_ok), recorder=execution_recorder)
+            verifier_metrics = _entropy_metrics(v_ok)
+            verifier_metrics.update(failure_confirmation_metrics(v_msg.payload))
+            _emit_window(window_events, all_messages, agent_id="verifier", kind="after_verifier", turn=turn, metrics=verifier_metrics, recorder=execution_recorder)
         else:
             tool_summary = "\n".join(f"- {m.src}: {m.payload.get('output')}" for m in tool_msgs)
             v_user = (
@@ -1096,7 +1121,9 @@ def _run_centralized_episode_body(
                 failed=verifier_node_failed(v_msg.kind),
                 metrics={"ok": v_ok},
             )
-            _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics=_entropy_metrics(v_ok), recorder=execution_recorder)
+            verifier_metrics = _entropy_metrics(v_ok)
+            verifier_metrics.update(failure_confirmation_metrics(v_msg.payload))
+            _emit_window(window_events, all_messages, agent_id=verifier_id, kind="after_verifier", turn=turn, metrics=verifier_metrics, recorder=execution_recorder)
 
         # 5. termination / feedback / fact commit
         if v_msg.kind == "verify":

@@ -591,6 +591,11 @@ def _training_env(exp_id: str) -> dict[str, str]:
         env.update(OPENAI_API_BASE=base, OPENAI_BASE_URL=base)
     if model:
         env.update(OPENAI_MODEL=model, MODEL=model)
+    cache = os.environ.get("MAS_SEARCH_CACHE", "").strip()
+    if cache:
+        env["MAS_SEARCH_CACHE"] = cache
+    else:
+        env["MAS_SEARCH_CACHE"] = str(repo_root() / "data" / "search_cache.json")
     return env
 
 

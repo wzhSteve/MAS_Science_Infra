@@ -235,6 +235,8 @@ class Episode:
         self.memory.outline = []
         self.memory.obtained_information = []
         self._pending_plan: Dict[str, Any] = {}
+        self.recovery_chain_id = uuid4().hex
+        self._resume_parent_prediction_event_id = ""
         # Planner keeps query_analysis on self; Executor keeps its cache dir.
         self.planner = copy.copy(comps.planner)
         self.executor = copy.copy(comps.executor)
@@ -276,7 +278,17 @@ class Episode:
                 "command": action.get("command"),
                 "result": action.get("result"),
             }
-            for extra in ("prediction", "prediction_reason", "tool_input", "actual", "conclusion"):
+            for extra in (
+                "prediction", "prediction_reason", "tool_input", "actual", "conclusion",
+                "prediction_event_id", "planner_step", "predicted_at", "p_satisfy",
+                "predicted_before_execution_at",
+                "executed_at",
+                "p_unsatisfy", "s_satisfy", "s_unsatisfy", "prediction_mismatch",
+                "satisfy_token_ids", "unsatisfy_token_ids",
+                "prediction_token_start",
+                "actual_satisfied", "verifier_reason", "recovery_chain_id",
+                "parent_prediction_event_id", "failure_confirmed",
+            ):
                 if action.get(extra) not in (None, ""):
                     saved[extra] = action.get(extra)
             actions[str(key)] = saved
@@ -294,6 +306,8 @@ class Episode:
             "query": self.memory.get_query(),
             "files": list(self.memory.get_files()),
             "analyzed": bool(self.query_analysis),
+            "recovery_chain_id": self.recovery_chain_id,
+            "parent_prediction_event_id": self._latest_prediction_event_id(),
         }
 
     def restore_state(self, state: Dict[str, Any]) -> None:
@@ -302,6 +316,8 @@ class Episode:
 
         self.query_analysis = str(state.get("query_analysis") or "")
         self.step_count = int(state.get("step_count") or 0)
+        self.recovery_chain_id = str(state.get("recovery_chain_id") or self.recovery_chain_id)
+        self._resume_parent_prediction_event_id = str(state.get("parent_prediction_event_id") or "")
         self.memory.actions = {}
         for key, action in (state.get("actions") or {}).items():
             if not isinstance(action, dict):
@@ -312,7 +328,17 @@ class Episode:
                 "command": action.get("command"),
                 "result": action.get("result"),
             }
-            for extra in ("prediction", "prediction_reason", "tool_input", "actual", "conclusion"):
+            for extra in (
+                "prediction", "prediction_reason", "tool_input", "actual", "conclusion",
+                "prediction_event_id", "planner_step", "predicted_at", "p_satisfy",
+                "predicted_before_execution_at",
+                "executed_at",
+                "p_unsatisfy", "s_satisfy", "s_unsatisfy", "prediction_mismatch",
+                "satisfy_token_ids", "unsatisfy_token_ids",
+                "prediction_token_start",
+                "actual_satisfied", "verifier_reason", "recovery_chain_id",
+                "parent_prediction_event_id", "failure_confirmed",
+            ):
                 if action.get(extra) not in (None, ""):
                     saved[extra] = action.get(extra)
             self.memory.actions[str(key)] = saved
@@ -324,6 +350,12 @@ class Episode:
         self.memory.obtained_information = [
             str(item) for item in (state.get("obtained_information") or []) if str(item or "").strip()
         ]
+
+    def _latest_prediction_event_id(self) -> str:
+        for action in reversed(list(self.memory.get_actions().values())):
+            if isinstance(action, dict) and action.get("prediction_event_id"):
+                return str(action["prediction_event_id"])
+        return ""
 
 
 def tool_result_failed(result: Any) -> bool:
@@ -451,6 +483,15 @@ class EpisodeContext:
         )
         plan = getattr(ep.planner, "_last_plan", None) or {}
         ep._pending_plan = plan if isinstance(plan, dict) else {}
+        predicted_at = time.time()
+        ep._pending_plan.update({
+            "prediction_event_id": uuid4().hex,
+            "planner_step": int(ep.step_count),
+            "predicted_at": predicted_at,
+            "predicted_before_execution_at": predicted_at,
+            "recovery_chain_id": ep.recovery_chain_id,
+            "parent_prediction_event_id": ep._resume_parent_prediction_event_id,
+        })
         if ep._pending_plan.get("outline"):
             apply_outline(ep.memory, ep._pending_plan["outline"])
         ep.context, ep.sub_goal, ep.tool_name = ep.planner.extract_context_subgoal_and_tool(next_step)
@@ -494,6 +535,7 @@ class EpisodeContext:
         from agentflow.models.utils import make_json_serializable_truncated
 
         ep = self.episode(_payload(message))
+        executed_at = time.time()
         self.pin_engines()
         from sft_prompts import last_python_error, repeated_python_program
 
@@ -504,12 +546,19 @@ class EpisodeContext:
             ok = False
         else:
             ep.executor._python_repair = last_python_error(ep.memory) if "python" in tool_name.lower() else ""
-            tool_command = ep.executor.generate_tool_command(
-                ep.question, None, ep.context, ep.sub_goal, tool_name,
-                ep.toolbox_metadata[tool_name], ep.step_count, ep.json_data,
-            )
-            _analysis, _explanation, command = ep.executor.extract_explanation_and_command(tool_command)
-            command = apply_sft_tags(tool_name, tool_command, command)
+            from sft_prompts import listed_fetch_command
+
+            direct = listed_fetch_command(tool_name, ep.context, ep.memory)
+            if direct:
+                tool_command = direct
+                command = direct
+            else:
+                tool_command = ep.executor.generate_tool_command(
+                    ep.question, None, ep.context, ep.sub_goal, tool_name,
+                    ep.toolbox_metadata[tool_name], ep.step_count, ep.json_data,
+                )
+                _analysis, _explanation, command = ep.executor.extract_explanation_and_command(tool_command)
+                command = apply_sft_tags(tool_name, tool_command, command)
             if "python" in tool_name.lower() and repeated_python_program(command, ep.memory):
                 result = "Error: this program already ran"
             else:
@@ -532,11 +581,22 @@ class EpisodeContext:
             tool_input = str(plan.get("tool_input") or ep.context or "")
             if prediction:
                 action["prediction"] = prediction
+            for key in (
+                "p_satisfy", "p_unsatisfy", "s_satisfy", "s_unsatisfy", "prediction_mismatch",
+                "satisfy_token_ids", "unsatisfy_token_ids",
+                "prediction_token_start",
+                "prediction_event_id", "planner_step", "predicted_at", "recovery_chain_id",
+                "predicted_before_execution_at",
+                "parent_prediction_event_id",
+            ):
+                if key in plan:
+                    action[key] = plan[key]
             if reason:
                 action["prediction_reason"] = reason
             if tool_input:
                 action["tool_input"] = tool_input
             action["actual"] = actual_label(result)
+            action["executed_at"] = executed_at
         output = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
         short = _short_tool_name(tool_name)
         return {
@@ -578,6 +638,16 @@ class EpisodeContext:
         action = ep.memory.actions.get(f"Action Step {ep.step_count}")
         if isinstance(action, dict):
             action["conclusion"] = verdict["conclusion"]
+            satisfied = str(verdict.get("satisfied") or "").upper()
+            if satisfied in ("YES", "NO"):
+                action["actual_satisfied"] = satisfied == "YES"
+                action["failure_confirmed"] = bool(
+                    action.get("p_satisfy") is not None
+                    and float(action["p_satisfy"]) < 0.5
+                    and satisfied == "NO"
+                    and not tool_result_failed(action.get("result"))
+                )
+            action["verifier_reason"] = str(verdict.get("reason") or "")
         _analysis, _token = ep.verifier.extract_conclusion(stop_verification)
         conclusion = verdict["conclusion"]
         analysis = str(verdict.get("reason") or _analysis or "")
@@ -651,7 +721,8 @@ def _short_tool_name(long_name: Optional[str]) -> str:
         "Generalist_Solution_Generator_Tool": "Base_Generator_Tool",
         "Python_Code_Generator_Tool": "Python_Coder_Tool",
         "Bing_Search_Tool": "Bing_Search_Tool",
-        "Wikipedia_RAG_Search_Tool": "Wikipedia_Search_Tool",
+        "Wikipedia_RAG_Search_Tool": "Bing_Search_Tool",
+        "Wikipedia_Search_Tool": "Bing_Search_Tool",
         "Web_Fetch_Tool": "Web_Fetch_Tool",
     }
     name = mapping.get(str(long_name or ""), str(long_name or ""))

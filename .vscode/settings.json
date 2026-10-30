@@ -1,9 +1,21 @@
 {
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
   "python.terminal.activateEnvironment": true,
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/node_modules/**": true,
+    "**/artifacts/**": true,
+    "**/.tir_archives/**": true,
+    "**/agent-lightning/**": true,
+    "**/ref_Rep/**": true,
+    "**/webui/dist/**": true,
+    "**/__pycache__/**": true,
+    "**/.chrome_profile/**": true
+  },
   "python.analysis.extraPaths": [
     "${workspaceFolder}/rl/verl_backend",
     "${workspaceFolder}/ref_Rep/APPO-main/APPO/verl_arpo_entropy",
     "${workspaceFolder}/ref_Rep/APPO-main/ARPO/verl_arpo_entropy"
-  ]
+  ],
+  "python.terminal.useEnvFile": true
 }

@@ -70,6 +70,7 @@ class AsyncServerBase(ABC):
 
         app = fastapi.FastAPI(lifespan=lifespan)
         app.router.add_api_route("/v1/chat/completions", self.chat_completion, methods=["POST"])
+        app.router.add_api_route("/v1/completions", self.completion, methods=["POST"])
 
         self.port = _get_free_port()
         config = uvicorn.Config(app, host=["::", "0.0.0.0"], port=self.port, log_level="warning")
@@ -88,6 +89,15 @@ class AsyncServerBase(ABC):
         API reference: https://platform.openai.com/docs/api-reference/chat/create
         """
         raise NotImplementedError
+
+    async def completion(self, raw_request: Request):
+        """OpenAI completions API used by planner echo logprobs.
+
+        Missing this route 404s LiteLLM and puts rollout deployments in cooldown.
+        """
+        from starlette.responses import JSONResponse
+
+        return JSONResponse({"error": {"message": "Not Found", "type": "NotFoundError"}}, status_code=404)
 
     @abstractmethod
     async def init_engine(self):
@@ -335,7 +345,10 @@ class AsyncLLMServerManager:
             for ref in pending:
                 ray.cancel(ref, force=True)
         if ready:
-            ray.get(ready)
+            try:
+                ray.get(ready)
+            except Exception as exc:
+                print(f"vLLM sleep failed ({type(exc).__name__}: {exc}); continuing")
 
     def submit_chat_completions(
         self,

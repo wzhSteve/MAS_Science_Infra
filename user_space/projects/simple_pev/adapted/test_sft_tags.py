@@ -144,7 +144,7 @@ class MemoryPromptTest(unittest.TestCase):
         raw = """<think>look</think>
 {"outline":[{"subgoal":"find birth dates","status":"pending"}],
  "subgoal":"search both names","selected_tool":"Bing_Search_Tool",
- "tool_input":"William Green birth","prediction":"partial",
+ "tool_input":"William Green birth","prediction":"满足",
  "prediction_reason":"snippets only"}
 """
         cleaned = _planner_for_parser(raw)
@@ -153,7 +153,7 @@ class MemoryPromptTest(unittest.TestCase):
         self.assertIn("Tool Name: Bing_Search_Tool", cleaned)
         payload = parse_planner_payload(raw)
         assert payload is not None
-        self.assertEqual(payload["prediction"], "partial")
+        self.assertEqual(payload["prediction"], "满足")
         self.assertEqual(payload["outline"], ["find birth dates"])
         self.assertEqual(payload["subgoal"], "find birth dates")
 
@@ -216,11 +216,11 @@ class MemoryPromptTest(unittest.TestCase):
 """
         payload = parse_planner_payload(raw)
         assert payload is not None
-        self.assertEqual(payload["tool_name"], "Wikipedia_RAG_Search_Tool")
+        self.assertEqual(payload["tool_name"], "Bing_Search_Tool")
         self.assertEqual(payload["subgoal"], "birth date of Eleanor")
         self.assertEqual(payload["outline"], ["birth date of Eleanor"])
         cleaned = _planner_for_parser(raw)
-        self.assertIn("Tool Name: Wikipedia_RAG_Search_Tool", cleaned)
+        self.assertIn("Tool Name: Bing_Search_Tool", cleaned)
         self.assertIn("Sub-Goal: birth date of Eleanor", cleaned)
         self.assertNotIn("this step", cleaned)
         self.assertNotIn("open the page", cleaned)
@@ -246,7 +246,7 @@ class MemoryPromptTest(unittest.TestCase):
         )
         payload = parse_planner_payload(raw)
         assert payload is not None
-        self.assertEqual(payload["tool_name"], "Wikipedia_RAG_Search_Tool")
+        self.assertEqual(payload["tool_name"], "Bing_Search_Tool")
         self.assertEqual(payload["subgoal"], "Eleanor of Lancaster birth")
         self.assertEqual(payload["outline"], [])
         self.assertEqual(payload["prediction_reason"], "")
@@ -338,7 +338,7 @@ class MemoryPromptTest(unittest.TestCase):
         )
         odd = parse_planner_payload(odd_case)
         assert odd is not None
-        self.assertEqual(odd["tool_name"], "Wikipedia_RAG_Search_Tool")
+        self.assertEqual(odd["tool_name"], "Bing_Search_Tool")
         two_fields = (
             '"selected_tool": "Bing_Search_Tool", "selected_tool": "Web_Fetch_Tool"'
         )

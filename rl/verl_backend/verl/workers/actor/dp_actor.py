@@ -37,6 +37,7 @@ from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import logprobs_from_logits
 from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad, ulysses_pad_and_slice_inputs
 from verl.workers.actor import BasePPOActor
+from rl.fcr import binary_brier_from_scores
 
 if is_cuda_available:
     from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
@@ -48,6 +49,17 @@ __all__ = ["DataParallelPPOActor"]
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+
+
+def _find_subsequence(sequence, needle):
+    needle = [int(value) for value in needle]
+    if not needle:
+        return -1
+    values = [int(value) for value in sequence]
+    for start in range(len(values) - len(needle) + 1):
+        if values[start : start + len(needle)] == needle:
+            return start
+    return -1
 
 
 class DataParallelPPOActor(BasePPOActor):
@@ -329,22 +341,36 @@ class DataParallelPPOActor(BasePPOActor):
             select_keys.append("ref_log_prob")
         batch = data.select(batch_keys=select_keys).batch
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
+        fcr_non_tensor_keys = [
+            "satisfy_token_ids_list", "unsatisfy_token_ids_list",
+            "prediction_token_start_list", "predicted_label_list",
+            "actual_satisfied_list",
+        ]
+        fcr_beta = float(data.meta_info.get("fcr_brier_beta", 0.0) or 0.0)
+        has_fcr_labels = fcr_beta > 0 and all(
+            key in data.non_tensor_batch for key in fcr_non_tensor_keys
+        )
+        non_tensor_select_keys = []
+        if has_multi_modal_inputs:
+            non_tensor_select_keys.append("multi_modal_inputs")
+        if has_fcr_labels:
+            non_tensor_select_keys.extend(fcr_non_tensor_keys)
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
-        if has_multi_modal_inputs:
+        if non_tensor_select_keys:
             num_mini_batches = data.batch.batch_size[0] // self.config.ppo_mini_batch_size
-            non_tensor_select_keys = ["multi_modal_inputs"]
             dataloader = data.select(select_keys, non_tensor_select_keys).chunk(num_mini_batches)
         else:
             dataloader = batch.split(self.config.ppo_mini_batch_size)
 
         metrics = {}
+        fcr_gradient_diagnostic_done = False
         for epoch in range(self.config.ppo_epochs):
             for batch_idx, data in enumerate(dataloader):
                 # split batch into micro_batches
                 mini_batch = data
-                if has_multi_modal_inputs:
+                if non_tensor_select_keys:
                     self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
                     num_micro_batches = mini_batch.batch.batch_size[0] // self.config.ppo_micro_batch_size_per_gpu
                     micro_batches = data.select(select_keys, non_tensor_select_keys).chunk(num_micro_batches)
@@ -442,6 +468,25 @@ class DataParallelPPOActor(BasePPOActor):
                         metrics["actor/kl_loss"] = kl_loss.detach().item()
                         metrics["actor/kl_coef"] = self.config.kl_loss_coef
 
+                    if has_fcr_labels:
+                        brier = self._fcr_brier_loss(data, temperature=temperature)
+                        if brier is not None:
+                            diagnostics_on = os.environ.get("FCR_GRAD_DIAGNOSTICS", "0").lower() not in (
+                                "0", "false", "off",
+                            )
+                            if not fcr_gradient_diagnostic_done and diagnostics_on:
+                                diagnostics = self._fcr_gradient_diagnostics(policy_loss, brier)
+                                append_to_dict(metrics, diagnostics)
+                                fcr_gradient_diagnostic_done = True
+                            elif "actor/fcr_grad_norm_ratio" not in metrics:
+                                pg_abs = pg_loss.detach().abs().clamp_min(1e-12)
+                                metrics["actor/fcr_grad_norm_ratio"] = (
+                                    brier.detach().abs() / pg_abs
+                                ).item()
+                            policy_loss = policy_loss + fcr_beta * brier
+                            metrics["actor/fcr_brier_loss"] = brier.detach().item()
+                            metrics["actor/fcr_brier_beta"] = fcr_beta
+
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
                         loss = policy_loss * (len(data) / self.config.ppo_mini_batch_size)
@@ -461,3 +506,112 @@ class DataParallelPPOActor(BasePPOActor):
                 append_to_dict(metrics, data)
         self.actor_optimizer.zero_grad()
         return metrics
+
+    def _fcr_gradient_diagnostics(self, policy_loss, brier_loss):
+        params = [parameter for parameter in self.actor_module.parameters() if parameter.requires_grad]
+        policy_grads = torch.autograd.grad(
+            policy_loss, params, retain_graph=True, allow_unused=True
+        )
+        brier_grads = torch.autograd.grad(
+            brier_loss, params, retain_graph=True, allow_unused=True
+        )
+        policy_sq = policy_loss.new_zeros(())
+        brier_sq = policy_loss.new_zeros(())
+        dot = policy_loss.new_zeros(())
+        for policy_grad, brier_grad in zip(policy_grads, brier_grads):
+            if policy_grad is not None:
+                policy_sq = policy_sq + policy_grad.float().square().sum()
+            if brier_grad is not None:
+                brier_sq = brier_sq + brier_grad.float().square().sum()
+            if policy_grad is not None and brier_grad is not None:
+                dot = dot + (policy_grad.float() * brier_grad.float()).sum()
+        policy_norm = policy_sq.sqrt()
+        brier_norm = brier_sq.sqrt()
+        denominator = (policy_norm * brier_norm).clamp_min(1e-12)
+        return {
+            "actor/fcr_grad_norm_ratio": (brier_norm / policy_norm.clamp_min(1e-12)).detach().item(),
+            "actor/fcr_grad_cosine": (dot / denominator).detach().item(),
+        }
+
+    def _fcr_brier_loss(self, data, *, temperature: float):
+        """Teacher-force both complete Chinese labels from the emitted prediction prefix."""
+        if self.use_ulysses_sp:
+            return None
+        losses = []
+        max_rows = max(0, int(os.environ.get("FCR_BRIER_MAX_ROWS", "1")))
+        responses = data["responses"]
+        input_ids = data["input_ids"]
+        attention_mask = data["attention_mask"]
+        satisfy_ids = data["satisfy_token_ids_list"]
+        unsatisfy_ids = data["unsatisfy_token_ids_list"]
+        labels = data["actual_satisfied_list"]
+        written_labels = data["predicted_label_list"]
+        prediction_starts = data["prediction_token_start_list"]
+        for row in range(responses.size(0)):
+            if max_rows == 0:
+                break
+            positive = list(satisfy_ids[row] or [])
+            negative = list(unsatisfy_ids[row] or [])
+            label = labels[row]
+            if not positive or not negative or not isinstance(label, (bool,)):
+                continue
+            response_tokens = responses[row].detach().cpu().tolist()
+            actual_tokens = positive if str(written_labels[row]) == "满足" else negative
+            try:
+                preferred_offset = int(prediction_starts[row])
+            except (TypeError, ValueError):
+                preferred_offset = -1
+            if (
+                preferred_offset >= 0
+                and response_tokens[
+                    preferred_offset : preferred_offset + len(actual_tokens)
+                ] == [int(value) for value in actual_tokens]
+            ):
+                response_offset = preferred_offset
+            else:
+                response_offset = _find_subsequence(response_tokens, actual_tokens)
+            if response_offset < 0:
+                continue
+            response_start = int(input_ids.size(1) - responses.size(1))
+            label_start = response_start + response_offset
+            positions = torch.arange(input_ids.size(1), device=input_ids.device)
+            prefix = input_ids[row][attention_mask[row].bool() & (positions < label_start)]
+            prefix_len = int(prefix.numel())
+            if prefix_len <= 0:
+                continue
+            scores = []
+            for candidate in (positive, negative):
+                candidate_tensor = torch.tensor(
+                    candidate, dtype=prefix.dtype, device=prefix.device
+                )
+                candidate_input = torch.cat((prefix, candidate_tensor), dim=0).unsqueeze(0)
+                candidate_mask = torch.ones_like(candidate_input)
+                candidate_positions = torch.arange(
+                    candidate_input.size(1), device=prefix.device, dtype=torch.long
+                ).unsqueeze(0)
+                with torch.autocast(device_type=self.device_name, dtype=torch.bfloat16):
+                    output = self.actor_module(
+                        input_ids=candidate_input,
+                        attention_mask=candidate_mask,
+                        position_ids=candidate_positions,
+                        use_cache=False,
+                    )
+                    logits = getattr(output, "logits", None)
+                    if logits is None:
+                        scores = []
+                        break
+                    logits = logits.float() / float(temperature)
+                    start = prefix_len - 1
+                    token_logits = logits[0, start : start + len(candidate)]
+                    token_targets = candidate_tensor
+                    scores.append(
+                        torch.log_softmax(token_logits, dim=-1)
+                        .gather(-1, token_targets.unsqueeze(-1))
+                        .sum()
+                    )
+            if len(scores) == 2:
+                loss, _probability = binary_brier_from_scores(scores[0], scores[1], bool(label))
+                losses.append(loss)
+            if len(losses) >= max_rows:
+                break
+        return torch.stack(losses).mean() if losses else None

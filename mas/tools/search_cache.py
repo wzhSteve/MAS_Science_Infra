@@ -66,7 +66,10 @@ def resolve_cache_path(path: Optional[str] = None) -> Optional[str]:
         return p or None
     env = os.getenv("MAS_SEARCH_CACHE")
     if env is not None and env.strip():
-        return env.strip()
+        val = env.strip()
+        if val.lower() in ("1", "true", "yes", "on", "default"):
+            return str(_DEFAULT_CACHE)
+        return val
     return str(_DEFAULT_CACHE)
 
 

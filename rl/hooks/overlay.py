@@ -8,9 +8,9 @@ from typing import Any, Dict, TYPE_CHECKING
 if TYPE_CHECKING:
     from rl.train_signal import TrainSignal
 
-VALID_ALGOS = ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae", "flow_grpo")
+VALID_ALGOS = ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae", "flow_grpo", "fcr_grpo")
 # Algorithms that fork extra rollouts. APPO shares ARPO's expansion path; credit differs later.
-BRANCHING_ALGOS = ("arpo", "appo", "aepo", "rae")
+BRANCHING_ALGOS = ("arpo", "appo", "aepo", "rae", "fcr_grpo")
 
 DEFAULT_TIR: Dict[str, Any] = {
     "initial_rollouts": 2,
@@ -39,7 +39,25 @@ DEFAULT_TIR: Dict[str, Any] = {
     "rae_full_tgt": False,
     "rae_dead_end_backprop": True,
     "rae_dead_end_depth": 1,
+    "fcr_k": 2,
+    "fcr_threshold": 0.5,
+    "fcr_lambda": 0.1,
+    "fcr_brier_beta": 0.1,
+    "fcr_max_branches_per_episode": 1,
 }
+
+FCR_SITES = [{
+    "id": "fcr_first_failure",
+    "enabled": True,
+    "anchor": {"kind": "after_verifier"},
+    # Evaluate every verifier window; the first passing gate consumes the
+    # fixed K budget, so later failures cannot trigger another branch.
+    "when": "every",
+    "gate": {"type": "failure_confirmed", "params": {}},
+    "fork": {"beam_size": 2, "share_observation": True, "resume_mode": "messages", "probe_max_tokens": 128},
+    "reward": {"scheme": "scalar_grpo", "p_plus": 0.8, "k_min": 2, "epsilon_f": 0.001, "dead_end_backprop": 1},
+    "priority": 100,
+}]
 
 
 def apply_sample_policy(config: Dict[str, Any], sampling: Any, algo: str | None = None) -> Dict[str, Any]:
@@ -81,6 +99,7 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any, algo: str | None 
         "aepo": "aepo",
         "appo": "appo",
         "rae": "rae",
+        "fcr_grpo": "fcr_grpo",
     }
     explicit = str(algo or "").lower().strip()
     algo = explicit if explicit in VALID_ALGOS else algo_map.get(mode, mode if mode in VALID_ALGOS else "grpo")
@@ -106,7 +125,10 @@ def apply_sample_policy(config: Dict[str, Any], sampling: Any, algo: str | None 
         tir["max_branch_depth"] = max(1, int(max_depth))
     if expand is not None:
         tir["expand_in_runner"] = bool(expand)
-    if algo in BRANCHING_ALGOS:
+    if algo == "fcr_grpo":
+        if tir.get("sites") is None:
+            tir["sites"] = deepcopy(FCR_SITES)
+    elif algo in BRANCHING_ALGOS:
         tir["sites"] = [site.model_dump(mode="json") for site in policy.resolved_sites()]
     else:
         tir["sites"] = []
@@ -268,7 +290,12 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
         else:
             algo_block["advantage"] = _advantage_section_from_spec(preset)
     tir.update(user_tir)
-    if algo in ("arpo", "appo", "aepo", "rae"):
+    if algo == "fcr_grpo" and user_tir.get("sites") is None:
+        tir["sites"] = deepcopy(FCR_SITES)
+        tir["sampling_strategy"] = "fcr_grpo"
+        tir["beam_size"] = int(tir.get("fcr_k", 2))
+        tir["max_branch_depth"] = int(tir.get("fcr_max_branches_per_episode", 1))
+    if algo in ("arpo", "appo", "aepo", "rae", "fcr_grpo"):
         n = int(cfg.get("actor_rollout_ref", {}).get("rollout", {}).get("n", 4))
         tir["initial_rollouts"] = max(1, min(tir["initial_rollouts"], n - 1 if n > 1 else 1))
         tir["ready_batch"] = bool(tir.get("ready_batch", True))

@@ -1,0 +1,26 @@
+n: 1
+max_steps: 10
+# Training episodes stop at the AgentFlow paper cap. Eval keeps max_steps.
+train_max_steps: 10
+max_time: 1800
+max_tokens: 4096
+temperature: 0.7
+memory_result_chars: 4000
+sft_prompts: true
+enabled_tools:
+- Base_Generator_Tool
+- Python_Coder_Tool
+- Bing_Search_Tool
+- Web_Fetch_Tool
+# CGHE. enabled false keeps the original Planner–Executor–Verifier windows.
+cghe:
+  enabled: true
+  n: 4
+  confidence_threshold: 1.0
+  sqlite_path: artifacts/cghe_evidence.sqlite
+  recovery_rounds: 2
+  tool_calls: 12
+  replans: 1
+  pruning: true
+  shared_priority: true
+  isolate_memory: false

@@ -1,6 +1,6 @@
 profile: a800_2gpu
 algo: arpo
-n_runners: 8
+n_runners: 16
 rollout_per_gpu: 8
 devices:
   ids:
@@ -16,8 +16,8 @@ algorithm:
     include_format: false
 data:
   train_files: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/train_10k.parquet
-  val_files: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet
-  test_files: /root/autodl-tmp/MAS_Science_Infra/data/val.parquet
+  val_files: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/valid.parquet
+  test_files: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/valid.parquet
   val_batch_size: null
   shuffle: true
   seed: 1
@@ -56,18 +56,19 @@ actor_rollout_ref:
     enable_gradient_checkpointing: true
 trainer:
   n_gpus_per_node: 2
-  val_before_train: true
+  val_before_train: false
   critic_warmup: 0
   logger:
   - console
   - tensorboard
   project_name: AgentLightning
-  experiment_name: simple_pev_scale256_arpo_ui
-  default_local_dir: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/simple_pev_scale256_arpo_ui
+  experiment_name: simple_pev_scale256_arpo_valid
+  default_local_dir: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/simple_pev_scale256_arpo_valid
   nnodes: 1
   test_freq: 1
   total_epochs: 1
-  total_training_steps: 6
+  total_training_steps: 25
   save_freq: 1
+  max_actor_ckpt_to_keep: 1
   resume_mode: resume_path
-  resume_from_path: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/simple_pev_scale256_arpo/global_step_1
+  resume_from_path: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/simple_pev_scale256_arpo_valid/global_step_20

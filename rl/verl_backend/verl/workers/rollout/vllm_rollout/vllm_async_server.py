@@ -23,8 +23,15 @@ from starlette.responses import JSONResponse, StreamingResponse
 from vllm import SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.logger import RequestLogger
-from vllm.entrypoints.openai.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse
+from vllm.entrypoints.openai.protocol import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    CompletionRequest,
+    CompletionResponse,
+    ErrorResponse,
+)
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
+from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
 from vllm.entrypoints.openai.serving_models import BaseModelPath, OpenAIServingModels
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.executor.abstract import Executor
@@ -235,16 +242,23 @@ class AsyncvLLMServer(AsyncServerBase):
         model_config = self.engine.model_config
         BASE_MODEL_PATHS = [BaseModelPath(name=model_name, model_path=model_path)]
         models = OpenAIServingModels(self.engine, model_config, BASE_MODEL_PATHS)
+        request_logger = RequestLogger(max_log_len=4096)
         self.openai_serving_chat = OpenAIServingChat(
             self.engine,
             model_config,
             models,
             "assistant",
-            request_logger=RequestLogger(max_log_len=4096),
+            request_logger=request_logger,
             chat_template=None,
             chat_template_content_format="auto",
             enable_auto_tools=bool(_auto_tools),
             tool_parser=str(_tool_parser) if _tool_parser else None,
+        )
+        self.openai_serving_completion = OpenAIServingCompletion(
+            self.engine,
+            model_config,
+            models,
+            request_logger=request_logger,
         )
 
     async def chat_completion(self, raw_request: Request):
@@ -263,6 +277,19 @@ class AsyncvLLMServer(AsyncServerBase):
         else:
             assert isinstance(generator, ChatCompletionResponse)
             return JSONResponse(content=generator.model_dump())
+
+    async def completion(self, raw_request: Request):
+        """OpenAI completions endpoint for prompt-echo logprobs."""
+        request_json = await raw_request.json()
+        request = CompletionRequest(**request_json)
+        generator = await self.openai_serving_completion.create_completion(request, raw_request)
+
+        if isinstance(generator, ErrorResponse):
+            return JSONResponse(content=generator.model_dump(), status_code=generator.code)
+        if request.stream:
+            return StreamingResponse(content=generator, media_type="text/event-stream")
+        assert isinstance(generator, CompletionResponse)
+        return JSONResponse(content=generator.model_dump())
 
     async def chat_completion_generator(self, request: ChatCompletionRequest) -> AsyncGenerator[Tuple[int, str]]:
         """Direct chat completion without FastAPI.

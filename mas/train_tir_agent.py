@@ -275,14 +275,11 @@ def train(
     from rl.hooks.trainer import TirAgentLightningTrainer, bound_daemon_cls
 
     daemon_cls = bound_daemon_cls(tir_algo, tir_cfg)
-    if tir_algo == "grpo":
-        algorithm = agl.VERL(config, daemon_cls=daemon_cls)
-    else:
-        algorithm = agl.VERL(
-            config,
-            trainer_cls=TirAgentLightningTrainer,
-            daemon_cls=daemon_cls,
-        )
+    algorithm = agl.VERL(
+        config,
+        trainer_cls=TirAgentLightningTrainer,
+        daemon_cls=daemon_cls,
+    )
     agent_match = window_agent_match(spec_path, active_agents)
     # Skip LLM spans with empty prompt/response token_ids so VERL's
     # remove-padding path never sees a 0-length sequence (Qwen3 reshape crash).

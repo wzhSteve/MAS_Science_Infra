@@ -184,6 +184,10 @@ class TestToolWiringSearch(_CacheFileCase):
         patcher = mock.patch.object(search_mod, "BRIGHT_DATA_API_KEY", "")
         patcher.start()
         self.addCleanup(patcher.stop)
+        bd = mock.patch.object(search_mod, "_brightdata_enabled", return_value=False)
+        bd.start()
+        self.addCleanup(bd.stop)
+        self.addCleanup(os.environ.pop, "BRIGHT_DATA_API_KEY", None)
 
     def _mock_serp_html(self, title: str, url: str) -> str:
         return (
@@ -230,6 +234,10 @@ class TestToolWiringSearch(_CacheFileCase):
             out.startswith("Bing unreachable:") or out.startswith("search_unavailable"),
             out,
         )
+        if self.cache_path.is_file():
+            data = self.read_cache()
+            self.assertNotIn("query::Ada Lovelace", data)
+            self.assertNotIn(GAP_SENTINEL, data.values())
 
     def test_gap_marker_maps_to_explicit_unavailable(self) -> None:
         self.write_cache({"query::Ada Lovelace": GAP_SENTINEL})

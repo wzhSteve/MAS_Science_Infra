@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -47,6 +48,14 @@ def resume_boundary_proxy(messages: Any) -> int:
     return resume_boundary_from_messages(messages if isinstance(messages, list) else None)
 
 
+def cap_expansion_plans(plans: List[Any], *, tir_algo: str, fcr_k: int = 2) -> List[Any]:
+    """Hard-cap FCR children at K so group fill cannot enqueue extra siblings."""
+    items = list(plans or [])
+    if str(tir_algo).lower() != "fcr_grpo":
+        return items
+    return items[: max(1, int(fcr_k or 2))]
+
+
 def _span_attrs(span: Any) -> Dict[str, Any]:
     attrs = getattr(span, "attributes", None) or {}
     if hasattr(attrs, "items"):
@@ -63,6 +72,72 @@ def extract_tir_meta_from_spans(spans: List[Any]) -> Dict[str, Any]:
             if k.startswith("tir.") or k.startswith("tir_"):
                 meta[k.split(".", 1)[-1].replace("tir_", "")] = val
     return meta
+
+
+def binary_prediction_metrics(rows: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Calibration/classification metrics over complete serving-side prediction rows."""
+    predicted = [row for row in rows if row.get("prediction_event_id")]
+    labeled = [
+        row for row in predicted
+        if isinstance(row.get("actual_satisfied"), (bool, np.bool_))
+        and isinstance(row.get("p_satisfy"), (int, float))
+        and np.isfinite(float(row["p_satisfy"]))
+    ]
+    out = {
+        "prediction_coverage": float(len(predicted) / len(rows)) if rows else 0.0,
+        "label_coverage": float(len(labeled) / len(predicted)) if predicted else 0.0,
+    }
+    if not labeled:
+        return out
+    probs = np.asarray([float(row["p_satisfy"]) for row in labeled], dtype=np.float64)
+    labels = np.asarray([bool(row["actual_satisfied"]) for row in labeled], dtype=np.bool_)
+    guesses = probs >= 0.5
+    errors = (probs - labels.astype(np.float64)) ** 2
+    tp = int(np.sum(guesses & labels))
+    fp = int(np.sum(guesses & ~labels))
+    fn = int(np.sum(~guesses & labels))
+    ece = 0.0
+    for bin_index, low in enumerate(np.linspace(0.0, 0.9, 10)):
+        mask = (probs >= low) & (probs < low + 0.1 if low < 0.9 else probs <= 1.0)
+        if np.any(mask):
+            ece += float(np.mean(mask)) * abs(float(np.mean(probs[mask])) - float(np.mean(labels[mask])))
+            out[f"reliability_bin_{bin_index}_confidence"] = float(np.mean(probs[mask]))
+            out[f"reliability_bin_{bin_index}_accuracy"] = float(np.mean(labels[mask]))
+            out[f"reliability_bin_{bin_index}_count"] = float(np.sum(mask))
+    positive_count = int(np.sum(labels))
+    negative_count = int(np.sum(~labels))
+    if positive_count and negative_count:
+        order = np.argsort(probs)
+        ranks = np.empty_like(order, dtype=np.float64)
+        ranks[order] = np.arange(1, len(probs) + 1)
+        out["auroc"] = float(
+            (np.sum(ranks[labels]) - positive_count * (positive_count + 1) / 2)
+            / (positive_count * negative_count)
+        )
+    failure_labels = ~labels
+    failure_scores = 1.0 - probs
+    failure_order = np.argsort(-failure_scores)
+    ordered_failures = failure_labels[failure_order].astype(np.float64)
+    if np.any(ordered_failures):
+        precision_at_k = np.cumsum(ordered_failures) / np.arange(1, len(ordered_failures) + 1)
+        out["failure_auprc"] = float(
+            np.sum(precision_at_k * ordered_failures) / np.sum(ordered_failures)
+        )
+    out.update({
+        "brier": float(np.mean(errors)),
+        "accuracy": float(np.mean(guesses == labels)),
+        "precision": float(tp / (tp + fp)) if tp + fp else 0.0,
+        "recall": float(tp / (tp + fn)) if tp + fn else 0.0,
+        "f1": float(2 * tp / (2 * tp + fp + fn)) if 2 * tp + fp + fn else 0.0,
+        "brier_positive": float(np.mean(errors[labels])) if np.any(labels) else 0.0,
+        "brier_negative": float(np.mean(errors[~labels])) if np.any(~labels) else 0.0,
+        "ece_10": ece,
+        "threshold_density": float(np.mean((probs >= 0.45) & (probs <= 0.55))),
+        "prediction_mismatch_rate": float(np.mean([
+            bool(row.get("prediction_mismatch")) for row in labeled
+        ])),
+    })
+    return out
 
 
 class TirAgentModeDaemon(AgentModeDaemon):
@@ -350,7 +425,11 @@ class TirAgentModeDaemon(AgentModeDaemon):
             self._bump_group_metric("duplicate", 1)
             return 0
         expansion = load_local_expansion(parent_rid) or {}
-        plans = identify_plans(parent_rid, list(expansion.get("plans") or []))
+        plans = cap_expansion_plans(
+            identify_plans(parent_rid, list(expansion.get("plans") or [])),
+            tir_algo=self.tir_algo,
+            fcr_k=int(self.tir_config.get("fcr_k", 2)),
+        )
         if not plans:
             return 0
         sample_parent = self._task_id_to_original_sample.get(parent_rid) or {}
@@ -526,7 +605,11 @@ class TirAgentModeDaemon(AgentModeDaemon):
                     self._bump_group_metric("duplicate", 1)
                     continue
                 expansion = load_local_expansion(rid) or {}
-                plans = identify_plans(rid, list(expansion.get("plans") or []))
+                plans = cap_expansion_plans(
+                    identify_plans(rid, list(expansion.get("plans") or [])),
+                    tir_algo=self.tir_algo,
+                    fcr_k=int(self.tir_config.get("fcr_k", 2)),
+                )
                 if self._tree_recorder and plans:
                     self._tree_recorder.plans(self._task_id_to_original_sample[rid], rid, plans, remaining)
                 if remaining <= 0:
@@ -766,6 +849,56 @@ class TirAgentModeDaemon(AgentModeDaemon):
             return
         raise MasHealthError(report["faults"][0])
 
+    def _drop_infra_rollouts(self, data_proto: Any, data_metrics: Dict[str, Any]) -> Any:
+        """Remove mas_fault rows from the update; skip groups with fewer than 2 survivors."""
+        if data_proto is None:
+            data_metrics["training/n_dropped_infra"] = 0.0
+            return data_proto
+
+        def _as_list(key: str) -> List[Any]:
+            raw = data_proto.non_tensor_batch.get(key, None)
+            if raw is None:
+                return []
+            if isinstance(raw, np.ndarray):
+                return raw.tolist()
+            return list(raw)
+
+        rollout_ids = [str(x) for x in _as_list("rollout_id_list")]
+        n = len(rollout_ids)
+        if n == 0:
+            data_metrics["training/n_dropped_infra"] = 0.0
+            return data_proto
+        group_ids = _as_list("data_id_list") or _as_list("uid")
+        if len(group_ids) < n:
+            group_ids = [str(x) for x in group_ids] + [""] * (n - len(group_ids))
+        else:
+            group_ids = [str(x) for x in group_ids[:n]]
+        faults: List[str] = []
+        for rid in rollout_ids:
+            meta = self._rollout_meta.get(str(rid)) or {}
+            faults.append(str(meta.get("mas_fault") or "").strip())
+        from workflow.mas_health import keep_indices_drop_infra
+
+        keep = keep_indices_drop_infra(rollout_ids, group_ids, faults, min_group=2)
+        dropped = n - len(keep)
+        data_metrics["training/n_dropped_infra"] = float(dropped)
+        unique = sorted({item for item in faults if item})
+        data_metrics["training/n_faulty_triplets"] = float(sum(1 for item in faults if item))
+        if unique:
+            print("mas_fault samples: " + " | ".join(unique[:5]), flush=True)
+        if dropped == 0:
+            return data_proto
+        if not keep:
+            batch = getattr(data_proto, "batch", None)
+            if batch is not None and "token_level_scores" in batch:
+                batch["token_level_scores"] = batch["token_level_scores"] * 0
+            if batch is not None and "token_level_rewards" in batch:
+                batch["token_level_rewards"] = batch["token_level_rewards"] * 0
+            return data_proto
+        if hasattr(data_proto, "select_idxs"):
+            return data_proto.select_idxs(keep)
+        return data_proto
+
     def get_train_data_batch(self, max_prompt_length: int, max_response_length: int, device, global_steps: int):
         require_training_samples(self._completed_rollouts_v0, getattr(self.adapter, "agent_match", None))
         data_proto, data_metrics = super().get_train_data_batch(
@@ -775,6 +908,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
             global_steps=global_steps,
         )
         self._reject_mas_faults(data_proto, data_metrics)
+        data_proto = self._drop_infra_rollouts(data_proto, data_metrics)
         if self.tir_algo == "grpo":
             # RL2 (b): grpo early-return is now conditional. When
             # zero_prefix_adv_for_children is active (DEFAULT_TIR default True;
@@ -808,6 +942,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
         anchors: List[str] = []
         ig_deltas: List[float] = []
         h_roots: List[float] = []
+        prediction_rows: List[Dict[str, Any]] = []
         for i, rid in enumerate(rollout_ids):
             meta = self._rollout_meta.get(str(rid)) or {}
             hashes = str(meta.get("obs_hashes") or "")
@@ -827,11 +962,49 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 h_roots.append(float(meta.get("h_root") or 0.0))
             except (TypeError, ValueError):
                 h_roots.append(0.0)
+            try:
+                events = json.loads(str(meta.get("prediction_events") or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                events = []
+            if isinstance(events, list) and events:
+                event = events[min(turn, len(events) - 1)]
+                prediction_rows.append(dict(event) if isinstance(event, dict) else {})
+            else:
+                prediction_rows.append({})
 
         if n:
             data_proto.non_tensor_batch["anchor_obs"] = np.array(anchors, dtype=object)
             data_proto.non_tensor_batch["ig_logprob_delta"] = np.array(ig_deltas, dtype=np.float64)
             data_proto.non_tensor_batch["h_root"] = np.array(h_roots, dtype=np.float64)
+            event_columns = {
+                "prediction_event_id_list": ("prediction_event_id", ""),
+                "planner_step_list": ("planner_step", -1),
+                "p_satisfy_list": ("p_satisfy", float("nan")),
+                "predicted_label_list": ("prediction", ""),
+                "prediction_mismatch_list": ("prediction_mismatch", False),
+                "predicted_at_list": ("predicted_at", float("nan")),
+                "predicted_before_execution_at_list": (
+                    "predicted_before_execution_at", float("nan")
+                ),
+                "executed_at_list": ("executed_at", float("nan")),
+                "actual_satisfied_list": ("actual_satisfied", None),
+                "verifier_reason_list": ("verifier_reason", ""),
+                "failure_confirmed_list": ("failure_confirmed", False),
+                "recovery_chain_id_list": ("recovery_chain_id", ""),
+                "parent_prediction_event_id_list": ("parent_prediction_event_id", ""),
+                "correction_valid_list": ("correction_valid", False),
+                "satisfy_token_ids_list": ("satisfy_token_ids", []),
+                "unsatisfy_token_ids_list": ("unsatisfy_token_ids", []),
+                "prediction_token_start_list": ("prediction_token_start", -1),
+            }
+            for column, (field, default) in event_columns.items():
+                values = [
+                    row.get(field, default) if row.get(field) is not None else default
+                    for row in prediction_rows
+                ]
+                array = np.empty(len(values), dtype=object)
+                array[:] = values
+                data_proto.non_tensor_batch[column] = array
             roles: List[str] = []
             site_ids: List[str] = []
             verdicts: List[str] = []
@@ -936,6 +1109,116 @@ class TirAgentModeDaemon(AgentModeDaemon):
                         for i, rid in enumerate(rollout_ids)
                     ], global_steps,
                 )
+            prediction_metrics = binary_prediction_metrics(prediction_rows)
+            for key, value in prediction_metrics.items():
+                data_metrics[f"fcr/{key}"] = float(value)
+            leakage_count = 0
+            for row in prediction_rows:
+                try:
+                    if float(row.get("predicted_at")) >= float(row.get("executed_at")):
+                        leakage_count += 1
+                except (TypeError, ValueError):
+                    continue
+            data_metrics["fcr/leakage_count"] = float(leakage_count)
+            event_ids = [str(row.get("prediction_event_id") or "") for row in prediction_rows]
+            chains = [str(row.get("recovery_chain_id") or "") for row in prediction_rows]
+            parent_events = [
+                str(row.get("parent_prediction_event_id") or "") for row in prediction_rows
+            ]
+            event_to_row = {event: i for i, event in enumerate(event_ids) if event}
+            cross_chain = 0
+            for i, parent_event in enumerate(parent_events):
+                parent_row = event_to_row.get(parent_event)
+                if parent_row is not None and chains[i] and chains[i] != chains[parent_row]:
+                    cross_chain += 1
+            data_metrics["fcr/cross_chain_pair_count"] = float(cross_chain)
+            from rl.hooks.advantage import failure_reallocation_rewards
+
+            corr_rewards, corr_valid = failure_reallocation_rewards(
+                rollout_ids=rollout_ids,
+                roles=roles,
+                resume_parent_ids=parent_ids,
+                event_ids=event_ids,
+                parent_event_ids=parent_events,
+                recovery_chain_ids=chains,
+                p_satisfy=[row.get("p_satisfy") for row in prediction_rows],
+                actual_satisfied=[row.get("actual_satisfied") for row in prediction_rows],
+                failure_confirmed=[row.get("failure_confirmed", False) for row in prediction_rows],
+                k=int(self.tir_config.get("fcr_k", 2)),
+                threshold=float(self.tir_config.get("fcr_threshold", 0.5)),
+            )
+            branch_count = sum(
+                str(role).lower() in ("child", "probe", "branch") for role in roles
+            )
+            data_metrics["fcr/pair_valid_rate"] = float(
+                sum(corr_valid) / max(1, branch_count)
+            )
+            data_metrics["fcr/correction_rate"] = float(
+                sum(1 for reward in corr_rewards if reward > 0) / max(1, sum(corr_valid))
+            )
+            data_metrics["fcr/n_corr_hits"] = float(
+                sum(1 for reward in corr_rewards if reward > 0)
+            )
+            failure_count = sum(bool(row.get("failure_confirmed")) for row in prediction_rows)
+            data_metrics["fcr/failure_confirmed_rate"] = float(failure_count / max(1, n))
+            repaired_parent_events = {
+                parent_events[i] for i, reward in enumerate(corr_rewards) if reward > 0
+            }
+            branched_parent_events = {
+                parent_events[i] for i, is_valid in enumerate(corr_valid) if is_valid
+            }
+            data_metrics["fcr/error_step_repair_rate"] = float(
+                len(repaired_parent_events) / max(1, failure_count)
+            )
+            data_metrics["fcr/branch_opportunity_coverage"] = float(
+                len(branched_parent_events) / max(1, failure_count)
+            )
+            recovered_parent_events = {
+                parent_events[i]
+                for i, is_valid in enumerate(corr_valid)
+                if is_valid and bool(prediction_rows[i].get("actual_satisfied"))
+            }
+            data_metrics["fcr/recovery_rate"] = float(
+                len(recovered_parent_events) / max(1, failure_count)
+            )
+            failure_rows = [row for row in prediction_rows if row.get("failure_confirmed")]
+            data_metrics["fcr/branch_trigger_depth"] = float(
+                np.mean([float(row.get("planner_step") or 0) for row in failure_rows])
+                if failure_rows else 0.0
+            )
+            data_metrics["fcr/first_search_trigger_fraction"] = float(
+                np.mean([
+                    int(row.get("planner_step") or 0) == 1
+                    and "bing" in str(row.get("tool_name") or "").lower()
+                    for row in failure_rows
+                ]) if failure_rows else 0.0
+            )
+            commands_by_parent: Dict[str, List[str]] = {}
+            for i, is_valid in enumerate(corr_valid):
+                if is_valid:
+                    commands_by_parent.setdefault(parent_events[i], []).append(
+                        str(prediction_rows[i].get("command") or "")
+                    )
+            duplicate_alternatives = sum(
+                max(0, len(commands) - len(set(commands)))
+                for commands in commands_by_parent.values()
+            )
+            data_metrics["fcr/duplicate_alternative_count"] = float(duplicate_alternatives)
+            failure_by_rollout: Dict[str, int] = {}
+            for rid, row in zip(rollout_ids, prediction_rows):
+                if row.get("failure_confirmed"):
+                    failure_by_rollout[str(rid)] = failure_by_rollout.get(str(rid), 0) + 1
+            data_metrics["fcr/multiple_trigger_count"] = float(
+                sum(max(0, count - 1) for count in failure_by_rollout.values())
+            )
+            children_by_parent: Dict[str, int] = {}
+            for role, parent in zip(roles, parent_ids):
+                if str(role).lower() in ("child", "probe", "branch"):
+                    children_by_parent[parent] = children_by_parent.get(parent, 0) + 1
+            k_budget = int(self.tir_config.get("fcr_k", 2))
+            data_metrics["fcr/budget_violation_count"] = float(
+                sum(max(0, count - k_budget) for count in children_by_parent.values())
+            )
         algo_id = {
             "grpo": 0.0,
             "arpo": 1.0,
@@ -945,9 +1228,23 @@ class TirAgentModeDaemon(AgentModeDaemon):
             "rae": 5.0,
             "appo": 6.0,
             "flow_grpo": 7.0,
+            "fcr_grpo": 8.0,
         }
         data_metrics["training/tir_algo"] = algo_id.get(self.tir_algo, 0.0)
         data_metrics["training/n_with_anchor"] = float(sum(1 for a in anchors if a))
+        rollout_meta_rows = [self._rollout_meta.get(str(rid)) or {} for rid in rollout_ids]
+        for field in ("n_search", "n_fetch", "n_python", "wall_time"):
+            values = []
+            for meta in rollout_meta_rows:
+                try:
+                    values.append(float(meta.get(field) or 0.0))
+                except (TypeError, ValueError):
+                    pass
+            data_metrics[f"cost/mean_{field}"] = float(np.mean(values)) if values else 0.0
+        if "response_mask" in data_proto.batch:
+            data_metrics["cost/mean_response_tokens"] = float(
+                data_proto.batch["response_mask"].sum(dim=-1).float().mean().item()
+            )
         data_metrics["training/branch_local_count"] = float(self._branch_local_count_total)
         data_metrics["training/store_enqueue_branch_count"] = float(self._store_enqueue_branch_count)
         data_metrics["training/incremental_branch_count"] = float(self._incremental_branch_total)
@@ -958,7 +1255,18 @@ class TirAgentModeDaemon(AgentModeDaemon):
         # pipeline. Operators should bump this when they degrade to no-op
         # due to missing columns; RL3 wires the operators, this stage only
         # reserves the metric so dashboards/backends see a stable key.
-        data_metrics["training/pipeline_noop"] = 0.0
+        try:
+            from rl.hooks.advantage import reset_pipeline_noop_counter
+
+            noop_snapshot = reset_pipeline_noop_counter()
+            data_metrics["training/pipeline_noop"] = float(noop_snapshot.get("count", 0))
+        except Exception:
+            data_metrics["training/pipeline_noop"] = 0.0
+        dropped_infra = float(data_metrics.get("training/n_dropped_infra", 0.0))
+        data_metrics["fcr/infra_drop_rate"] = dropped_infra / max(1.0, float(n) + dropped_infra)
+        requested = float(getattr(self, "_group_requested_total", 0))
+        valid = float(getattr(self, "_group_valid_total", 0))
+        data_metrics["training/requested_valid_ratio"] = valid / requested if requested else 0.0
         # RL6 D6 (MAS v2 §9.3 有效样本计量): group-level five-counter —
         # requested/valid/expanded/duplicate (+failed mirrors the existing
         # expansion_enqueue_failures above). requested 是卷面值 (n_target × 组数),

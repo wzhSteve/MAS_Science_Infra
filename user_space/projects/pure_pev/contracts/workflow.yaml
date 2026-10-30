@@ -1,0 +1,82 @@
+schema_version: '0.3'
+topology: centralized
+entry_agent: planner
+hub:
+  role: planner
+  skills: []
+  max_feedback_hops: 10
+  system_prompt: AgentFlow planner window (Planner.generate_next_step).
+tools: []
+agents:
+- id: planner
+  kind: planner
+  role: planner
+  label: pure_pev_planner
+  trainable: true
+  system_prompt: Wrap AgentFlow Planner.analyze_query + generate_next_step. next is the executor window.
+  tools: []
+  profile:
+    backend: user_space
+    user_project: pure_pev
+  meta:
+    origin: user
+    user_project: pure_pev
+    wraps: AgentFlow.Planner
+- id: u_pure_pev__executor
+  kind: blank
+  role: executor
+  label: pure_pev_executor
+  trainable: false
+  system_prompt: Wrap AgentFlow Executor (generate_tool_command + execute_tool_command) and Memory.add_action.
+  profile:
+    backend: user_space
+    user_project: pure_pev
+    llm_required: false
+  meta:
+    origin: user
+    user_project: pure_pev
+    wraps: AgentFlow.Executor
+- id: verifier
+  kind: verifier
+  role: verifier
+  label: pure_pev_verifier
+  trainable: false
+  system_prompt: Wrap AgentFlow Verifier.verificate_context; on STOP Planner.generate_direct_output.
+  profile:
+    backend: user_space
+    user_project: pure_pev
+  meta:
+    origin: user
+    user_project: pure_pev
+    wraps: AgentFlow.Verifier
+routers: []
+edges:
+- from: planner
+  to: u_pure_pev__executor
+  kind: message
+- from: u_pure_pev__executor
+  to: verifier
+  kind: message
+- from: verifier
+  to: planner
+  kind: feedback
+sampling:
+  mode: grpo_n
+  group_n: 4
+  beam_size: 2
+  initial_rollouts: 1
+  sites:
+  - id: after_verifier
+    enabled: true
+    anchor:
+      kind: after_verifier
+      agent_id: verifier
+    gate:
+      type: arpo
+      params:
+        use_official_arpo_gate: true
+        branch_probability: 0.5
+        entropy_weight: 0.2
+    fork:
+      beam_size: 2
+      resume_mode: messages

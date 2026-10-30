@@ -200,7 +200,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 generation_config = None
 
             model_config.save_pretrained(local_path)
-            self.processing_class.save_pretrained(local_path)
+            # Tokenizer files already live with the base model. Skipping them
+            # avoids rewriting tokenizer.json / vocab / merges into every step.
+            print(f"[rank-{self.rank}]: skip tokenizer save; base model already has it")
 
         # wait for everyone to dump to local
         torch.distributed.barrier()

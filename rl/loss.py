@@ -77,6 +77,7 @@ ADVANTAGE_OPERATORS = (
     "aepo_entropy",
     "rae_verdict",
     "rae_full_tgt",
+    "failure_reallocation",
 )
 
 
@@ -186,6 +187,7 @@ PRESET_EXPANSION_BASE: Dict[str, str] = {
     "flow_grpo": "grpo",
     "igpo": "igpo",
     "gigpo": "gigpo",
+    "fcr_grpo": "grpo",
 }
 
 PRESET_EXPANSION_OPERATORS: Dict[str, List[str]] = {
@@ -198,6 +200,7 @@ PRESET_EXPANSION_OPERATORS: Dict[str, List[str]] = {
     "flow_grpo": [],
     "igpo": [],
     "gigpo": [],
+    "fcr_grpo": ["failure_reallocation"],
 }
 
 

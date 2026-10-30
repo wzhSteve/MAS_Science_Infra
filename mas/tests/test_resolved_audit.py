@@ -53,6 +53,7 @@ class TestResolvedAlgoPayload(unittest.TestCase):
             "gigpo": ("gigpo", []),
             "rae": ("grpo", ["zero_prefix", "rae_verdict"]),
             "flow_grpo": ("grpo", []),
+            "fcr_grpo": ("grpo", ["failure_reallocation"]),
         }
         for algo, (base, ops) in expected.items():
             payload = _resolved_algo({"algo": algo})

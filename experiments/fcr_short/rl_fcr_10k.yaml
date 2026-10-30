@@ -1,0 +1,78 @@
+profile: a800_2gpu
+algo: fcr_grpo
+n_runners: 2
+rollout_per_gpu: 2
+devices:
+  ids:
+  - 0
+  - 1
+model_path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+algorithm:
+  adv_estimator: grpo
+  use_kl_in_reward: false
+  tir_algo: fcr_grpo
+  tir:
+    fcr_k: 2
+    fcr_threshold: 0.5
+    fcr_lambda: 0.1
+    fcr_brier_beta: 0.1
+    fcr_max_branches_per_episode: 1
+    max_branch_depth: 1
+    beam_size: 2
+    sampling_strategy: fcr_grpo
+data:
+  train_files: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/train_10k.parquet
+  val_files: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/valid.parquet
+  shuffle: true
+  seed: 42
+  train_batch_size: 2
+  max_prompt_length: 6144
+  max_response_length: 4096
+  truncation: left
+actor_rollout_ref:
+  rollout:
+    tensor_model_parallel_size: 1
+    n: 4
+    log_prob_micro_batch_size_per_gpu: 1
+    name: vllm
+    gpu_memory_utilization: 0.35
+    engine_kwargs:
+      vllm:
+        enable_auto_tool_choice: true
+        tool_call_parser: hermes
+        max_model_len: 10240
+        served_model_name: LLM/Qwen3-4B
+  actor:
+    ppo_mini_batch_size: 1
+    ppo_micro_batch_size_per_gpu: 1
+    optim:
+      lr: 1.0e-06
+    entropy_coeff: 0
+    fsdp_config:
+      param_offload: true
+      optimizer_offload: true
+  ref:
+    log_prob_micro_batch_size_per_gpu: 1
+    fsdp_config:
+      param_offload: true
+  model:
+    path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+    use_remove_padding: true
+    enable_gradient_checkpointing: true
+trainer:
+  n_gpus_per_node: 2
+  val_before_train: false
+  critic_warmup: 0
+  logger:
+  - console
+  - tensorboard
+  project_name: AgentLightning
+  experiment_name: fcr_10k_full
+  default_local_dir: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/fcr_10k_full
+  nnodes: 1
+  test_freq: 1
+  total_epochs: 1
+  total_training_steps: 5
+  save_freq: 1
+  max_actor_ckpt_to_keep: 1
+  resume_mode: disable
