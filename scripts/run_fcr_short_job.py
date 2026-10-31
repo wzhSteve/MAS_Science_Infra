@@ -81,6 +81,8 @@ def main() -> int:
     )
     with rl.open(encoding="utf-8") as fh:
         rl_raw = yaml.safe_load(fh) or {}
+    for key, value in (rl_raw.get("env") or {}).items():
+        env[str(key)] = str(value)
     algo = str(rl_raw.get("algo") or (rl_raw.get("algorithm") or {}).get("tir_algo") or "grpo").lower()
     cmd = [
         PYTHON,

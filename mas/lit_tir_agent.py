@@ -58,7 +58,7 @@ def prediction_events_from_messages(messages: Any) -> List[Dict[str, Any]]:
                 "p_satisfy", "p_unsatisfy", "prediction_mismatch", "actual_satisfied",
                 "satisfy_token_ids", "unsatisfy_token_ids",
                 "prediction_token_start",
-                "verifier_reason", "failure_confirmed", "recovery_chain_id",
+                "verifier_reason", "failure_confirmed", "tool_fault", "recovery_chain_id",
                 "parent_prediction_event_id",
                 "tool_name", "command",
             )

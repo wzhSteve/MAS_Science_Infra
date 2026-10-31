@@ -15,7 +15,7 @@ enabled_tools:
 # CGHE. enabled false keeps the original Planner–Executor–Verifier windows.
 cghe:
   enabled: true
-  n: 4
+  n: 10
   confidence_threshold: 1.0
   sqlite_path: artifacts/cghe_evidence.sqlite
   recovery_rounds: 2
@@ -24,3 +24,8 @@ cghe:
   pruning: true
   shared_priority: true
   isolate_memory: false
+  # v1 keeps shared-node recovery. v2 enables constraint inference, EPV and counterfactuals.
+  algorithm: v1
+  lambda_cost: 0.0
+  mu_risk: 0.0
+  epv_threshold: 0.0

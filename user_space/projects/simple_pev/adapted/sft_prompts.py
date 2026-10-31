@@ -40,7 +40,7 @@ _EMPTY_RESULT_MARKERS = (
     "output=[]",
     "command: no command found",
 )
-_PREDICTIONS = ("满足", "不满足")
+_PREDICTIONS = ("YES", "NO")
 _OUTLINE_HEAD = re.compile(r"(?im)^outline\s*:")
 _STEP_PREFIX = re.compile(r"^(?:\d+[\.\)]\s*|[-*]\s+)")
 
@@ -413,8 +413,14 @@ def add_obtained_information(memory: Any, text: Any) -> bool:
 
 
 def normalize_prediction(value: Any) -> str:
-    """Only the two planner labels. ``partial`` and English words are dropped."""
-    token = str(value or "").strip().strip("\"'").strip()
+    """Only the two planner labels, aligned with verifier Satisfied: YES|NO."""
+    try:
+        from prediction_probs import canonical_prediction
+    except Exception:
+        canonical_prediction = None
+    if canonical_prediction is not None:
+        return canonical_prediction(value)
+    token = str(value or "").strip().strip("\"'").strip().upper()
     return token if token in _PREDICTIONS else ""
 
 
@@ -1018,12 +1024,12 @@ Rules:
 - If a fetch is not enough, do not open those URLs again. Change the URL or the keywords.
 - If Obtained information already has the fact, do not search or fetch it again.
 - subgoal is the first outline sentence, copied exactly.
-- prediction is whether this first item will satisfy the subgoal. Write 满足 or 不满足 and nothing else. Do not write partial.
+- prediction is whether this first item will satisfy the subgoal. Write YES or NO and nothing else, matching Satisfied: YES|NO. Do not write partial.
 
 Reply with one JSON object and nothing else.
 Fields, in this order: outline, subgoal, selected_tool, tool_input, prediction, prediction_reason
 outline is a list of short step sentences and has no status.
-prediction is 满足 or 不满足, with no space after the quote.
+prediction is YES or NO, with no space after the quote.
 selected_tool is exactly one name from the tool list.
 If you cannot write JSON, use exactly these three lines instead:
 Context: <query or one URL>

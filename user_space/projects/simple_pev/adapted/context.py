@@ -641,11 +641,12 @@ class EpisodeContext:
             satisfied = str(verdict.get("satisfied") or "").upper()
             if satisfied in ("YES", "NO"):
                 action["actual_satisfied"] = satisfied == "YES"
+                action["tool_fault"] = bool(tool_result_failed(action.get("result")))
                 action["failure_confirmed"] = bool(
                     action.get("p_satisfy") is not None
                     and float(action["p_satisfy"]) < 0.5
                     and satisfied == "NO"
-                    and not tool_result_failed(action.get("result"))
+                    and not action["tool_fault"]
                 )
             action["verifier_reason"] = str(verdict.get("reason") or "")
         _analysis, _token = ep.verifier.extract_conclusion(stop_verification)

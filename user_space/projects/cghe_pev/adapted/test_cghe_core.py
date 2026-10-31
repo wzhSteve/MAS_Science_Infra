@@ -528,5 +528,84 @@ class SnippetGapTests(unittest.TestCase):
         self.assertEqual(ordinary.evidence.failure_type, FailureType.SUBGOAL_NOT_SATISFIED)
 
 
+class FrontierVoteTests(unittest.TestCase):
+    def test_later_shared_node_does_not_jump_the_frontier(self) -> None:
+        first = _step("Bing_Search_Tool", subgoal="find the fact", cost=1, links_previous=False)
+        graph = PlanningGraph([
+            _plan("a", (first, _step("fetch", subgoal="open the page", cost=1))),
+            _plan("b", (
+                _step("Bing_Search_Tool", subgoal="find the fact", cost=1, links_previous=False),
+                _step("fetch", subgoal="open the page", cost=1),
+            )),
+            _plan("c", (_step("fetch", subgoal="open the page", cost=1, links_previous=False),)),
+        ])
+        shared = graph.select_node(policy="shared")
+        frontier = graph.select_node(policy="frontier")
+        self.assertEqual(shared.tool, "fetch")
+        self.assertEqual(graph.sharing_score(shared.node_id), 3)
+        self.assertEqual(frontier.tool, "bing_search_tool")
+        self.assertEqual(graph.frontier_vote(frontier.node_id), 2)
+
+    def test_failure_removes_only_the_voted_outlines_suffix(self) -> None:
+        from planning_graph import plans_for_snippet_gap
+
+        observation = ExecutionObservation(
+            tool_name="Bing_Search_Tool",
+            environment="sandbox",
+            command="execution = tool.execute(query='paris')",
+            tool_result="1. Paris\n   URL: https://en.wikipedia.org/wiki/Paris",
+            verifier_label="不满足",
+        )
+        plans = list(plans_for_snippet_gap(
+            {"tool_name": "Bing_Search_Tool", "command": observation.command, "result": observation.tool_result},
+            environment="sandbox",
+        ))
+        self.assertGreaterEqual(len(plans[0].steps), 2)
+        graph = PlanningGraph(plans)
+        analysis = FailureAnalyzer().analyze(observation)
+        result = HypothesisPruner().prune(graph, analysis.constraint, evidence=analysis.evidence)
+        self.assertIn("same_query", result.pruned_plan_ids)
+        self.assertNotIn("same_query", graph.active_plan_ids())
+        chosen = graph.select_node(policy="frontier")
+        self.assertEqual(chosen.tool, "web_fetch_tool")
+        self.assertNotIn("same_query", chosen.candidate_plan_ids)
+
+    def test_different_arguments_do_not_merge_and_timeout_does_not_prune(self) -> None:
+        bad = CandidatePlan(
+            "bad",
+            (_step("read", subgoal="read the record", premises=(_valid("read", "r1"),), argument="r1", parameter="id", links_previous=False),),
+            context=Scope(environment="sandbox", tool="read", parameter="id", argument="r1"),
+        )
+        other = CandidatePlan(
+            "other",
+            (_step("read", subgoal="read the record", premises=(_valid("read", "r2"),), argument="r2", parameter="id", links_previous=False),),
+            context=Scope(environment="sandbox", tool="read", parameter="id", argument="r2"),
+        )
+        graph = PlanningGraph([bad, other])
+        self.assertEqual(len([node for node in graph.nodes() if node.tool == "read"]), 2)
+        self.assertEqual(graph.frontier_vote(graph.frontier_node_id("bad")), 2)
+        observation = ExecutionObservation(
+            tool_name="read",
+            environment="sandbox",
+            tool_result="Error: invalid id 'r1'",
+            verifier_label="不满足",
+        )
+        analysis = FailureAnalyzer().analyze(observation)
+        result = HypothesisPruner().prune(graph, analysis.constraint, evidence=analysis.evidence)
+        self.assertEqual(result.pruned_plan_ids, ("bad",))
+        self.assertEqual(graph.active_plan_ids(), ("other",))
+        self.assertFalse(analysis.constraint.disables_tool)
+        before = graph.frontier_vote(graph.frontier_node_id("other"))
+        timeout = FailureAnalyzer().analyze(ExecutionObservation(
+            tool_name="read",
+            environment="sandbox",
+            tool_result="Error: HTTP 503 timeout talking to the host",
+            verifier_label="不满足",
+        ))
+        self.assertFalse(timeout.verified_counterexample)
+        self.assertEqual(graph.active_plan_ids(), ("other",))
+        self.assertEqual(graph.frontier_vote(graph.frontier_node_id("other")), before)
+
+
 if __name__ == "__main__":
     unittest.main()

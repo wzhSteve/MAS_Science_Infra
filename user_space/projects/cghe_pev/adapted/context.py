@@ -64,7 +64,7 @@ RUNTIME_DEFAULTS: Dict[str, Any] = {
     # Used only when contracts/runtime.yaml has no cghe block. enabled stays off.
     "cghe": {
         "enabled": False,
-        "n": 4,
+        "n": 10,
         "confidence_threshold": 1.0,
         "sqlite_path": "artifacts/cghe_evidence.sqlite",
         "recovery_rounds": 2,
@@ -73,6 +73,10 @@ RUNTIME_DEFAULTS: Dict[str, Any] = {
         "pruning": True,
         "shared_priority": True,
         "isolate_memory": False,
+        "algorithm": "v1",
+        "lambda_cost": 0.0,
+        "mu_risk": 0.0,
+        "epv_threshold": 0.0,
     },
 }
 # One environment for tool observations and RecoveryController scope checks.
@@ -179,9 +183,9 @@ def cghe_settings() -> Dict[str, Any]:
     if not path.is_absolute():
         path = _PROJECT / path
     try:
-        count = int(merged.get("n") or 4)
+        count = int(merged.get("n") or 10)
     except (TypeError, ValueError):
-        count = 4
+        count = 10
     try:
         threshold = float(merged.get("confidence_threshold"))
     except (TypeError, ValueError):
@@ -209,7 +213,15 @@ def cghe_settings() -> Dict[str, Any]:
         shared_priority = False
     elif ablation == "no_memory":
         isolate_memory = True
-    elif ablation != "full":
+    elif ablation not in {
+        "full",
+        "shared_only",
+        "constraint_inference_only",
+        "epv_only",
+        "counterfactual_only",
+        "epv_plus_counterfactual",
+        "full_cghe_v2",
+    }:
         raise ValueError(f"unknown CGHE_ABLATION: {ablation}")
     n_env = os.environ.get("CGHE_N", "").strip()
     if n_env.isdigit():
@@ -227,7 +239,25 @@ def cghe_settings() -> Dict[str, Any]:
         "shared_priority": shared_priority,
         "isolate_memory": isolate_memory,
         "ablation": ablation,
+        "algorithm": _algorithm(merged.get("algorithm")),
+        "lambda_cost": _float_setting(merged.get("lambda_cost"), 0.0),
+        "mu_risk": _float_setting(merged.get("mu_risk"), 0.0),
+        "epv_threshold": _float_setting(merged.get("epv_threshold"), 0.0),
     }
+
+
+def _algorithm(value: Any) -> str:
+    name = str(os.environ.get("CGHE_ALGORITHM") or value or "v1").strip().lower()
+    if name not in {"v1", "v2"}:
+        raise ValueError(f"unknown CGHE algorithm: {name}")
+    return name
+
+
+def _float_setting(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def cghe_enabled() -> bool:
@@ -474,6 +504,10 @@ class Episode:
                 db_path=db_path,
                 pruning=bool(cfg.get("pruning", True)),
                 shared_priority=bool(cfg.get("shared_priority", True)),
+                algorithm=str(cfg.get("algorithm") or "v1"),
+                v2_mode=str(cfg.get("ablation") or "full"),
+                lambda_cost=float(cfg.get("lambda_cost") or 0.0),
+                mu_risk=float(cfg.get("mu_risk") or 0.0),
             )
         return self._cghe
 
@@ -799,6 +833,15 @@ def _observation_from_action(action: Dict[str, Any], *, verifier_label: str, hyp
     )
 
 
+def _update_v2_hypotheses(controller: Any, *, observation: str, verified: bool) -> None:
+    if getattr(controller, "algorithm", "v1") != "v2":
+        return
+    from v2.counterfactual import update_hypothesis
+
+    for item in list(getattr(controller, "v2_hypotheses", []) or []):
+        update_hypothesis(item, observation=observation, verified_counterexample=verified)
+
+
 def _verifier_signal(verdict: Dict[str, Any]) -> tuple:
     satisfied = str(verdict.get("satisfied") or "").upper()
     if satisfied == "YES":
@@ -809,20 +852,15 @@ def _verifier_signal(verdict: Dict[str, Any]) -> tuple:
 
 
 def _advance_after_success(ep: "Episode", controller: Any, node_id: str) -> None:
+    """A verified step ends this graph. The next plan builds a new one."""
     graph = getattr(controller, "graph", None)
     if node_id and graph is not None and any(node.node_id == node_id for node in graph.nodes()):
         graph.mark_satisfied(node_id)
-    if not _recovery_round_open(ep):
-        return
-    nxt = graph.select_node() if graph is not None else None
-    if nxt is None:
-        ep._cghe_directive = dict(_PEV_DIRECTIVE)
-        ep._cghe_directive["reason"] = "no executable shared node remains"
-        return
-    round_id = graph.round_id if graph is not None else ""
-    ep._cghe_directive = _directive_continue(
-        nxt, "shared node remains after verified success", round_id,
-    )
+    ep._cghe_snapshot = _graph_snapshot(graph, selected_id=node_id)
+    controller.graph = None
+    ep._cghe_directive = dict(_PEV_DIRECTIVE)
+    ep._cghe_directive["reason"] = "verified success rebuilds the planning graph"
+    ep._cghe_graph_mode = "rebuild"
 
 
 def _cghe_on_verdict(ep: "Episode", verdict: Dict[str, Any]) -> None:
@@ -848,7 +886,10 @@ def _cghe_on_verdict(ep: "Episode", verdict: Dict[str, Any]) -> None:
             source="verifier",
             note="verifier satisfied",
         )
+        _update_v2_hypotheses(controller, observation="verifier_satisfied", verified=False)
         _advance_after_success(ep, controller, str(action.get("cghe_node_id") or ""))
+        return
+    if _switch_after_graph_failure(ep, controller, action, label, flag):
         return
     if not verifier_explicitly_failed(label, flag):
         if str((ep._cghe_directive or {}).get("decision") or "") == "continue_execution":
@@ -869,13 +910,149 @@ def _cghe_on_verdict(ep: "Episode", verdict: Dict[str, Any]) -> None:
     _steer(ep, outcome)
 
 
+def _graph_snapshot(graph: Any, *, selected_id: str = "") -> Dict[str, Any]:
+    if graph is None:
+        return {}
+    from cghe_types import PlanStatus
+
+    outlines = []
+    for plan in graph.plans():
+        if plan.status != PlanStatus.ACTIVE:
+            continue
+        outlines.append({
+            "plan_id": plan.plan_id,
+            "steps": [{"subgoal": step.subgoal, "tool": step.tool} for step in plan.steps],
+        })
+    frontier = []
+    seen = []
+    for plan_id in graph.active_plan_ids():
+        node_id = graph.frontier_node_id(plan_id)
+        if not node_id or node_id in seen:
+            continue
+        seen.append(node_id)
+        node = graph.node(node_id)
+        frontier.append({
+            "node_id": node_id,
+            "subgoal": node.subgoal,
+            "tool": node.tool,
+            "vote": graph.frontier_vote(node_id),
+            "selected": node_id == selected_id,
+        })
+    return {"cghe_outlines": outlines, "cghe_frontier": frontier}
+
+
+def _switch_after_graph_failure(
+    ep: "Episode",
+    controller: Any,
+    action: Dict[str, Any],
+    label: str,
+    flag: Optional[bool],
+) -> bool:
+    """Drop the failed node's suffix and choose another frontier. Timeouts stay."""
+    from failure_analyzer import FailureAnalyzer
+    from cghe_types import FailureType
+
+    node_id = str(action.get("cghe_node_id") or "")
+    graph = getattr(controller, "graph", None)
+    if not node_id or graph is None or not any(node.node_id == node_id for node in graph.nodes()):
+        return False
+    observation = _observation_from_action(
+        action,
+        verifier_label=label,
+        hypothesis="",
+    )
+    analysis = FailureAnalyzer().analyze(observation)
+    if analysis.evidence.failure_type == FailureType.TRANSIENT_ERROR:
+        node = graph.node(node_id)
+        ep._cghe_snapshot = _graph_snapshot(graph, selected_id=node_id)
+        ep._cghe_graph_mode = "switch"
+        ep._cghe_directive = _directive_continue(node, "timeout does not prune", graph.round_id)
+        return True
+    if flag is not False:
+        return False
+    raw_result = action.get("raw_tool_result", action.get("result"))
+    if not tool_result_failed(raw_result):
+        graph.mark_satisfied(node_id)
+        nxt = graph.select_node(policy="frontier")
+        ep._cghe_snapshot = _graph_snapshot(graph, selected_id=getattr(nxt, "node_id", ""))
+        if nxt is None:
+            controller.graph = None
+            ep._cghe_graph_mode = "rebuild"
+            ep._cghe_directive = dict(_PEV_DIRECTIVE)
+            ep._cghe_directive["reason"] = "graph step succeeded and no frontier remains"
+            return True
+        ep._cghe_graph_mode = "switch"
+        ep._cghe_directive = _directive_continue(
+            nxt, "continued to the next graph step", graph.round_id,
+        )
+        return True
+    graph.drop_suffixes(node_id)
+    nxt = graph.select_node(policy="frontier")
+    ep._cghe_snapshot = _graph_snapshot(graph, selected_id=getattr(nxt, "node_id", ""))
+    if nxt is None:
+        controller.graph = None
+        ep._cghe_graph_mode = "rebuild"
+        ep._cghe_directive = dict(_PEV_DIRECTIVE)
+        ep._cghe_directive["reason"] = "failed suffix removed and no frontier remains"
+        return True
+    ep._cghe_graph_mode = "switch"
+    ep._cghe_directive = _directive_continue(
+        nxt, "switched node after dropping the failed suffix", graph.round_id,
+    )
+    return True
+
+
+def _open_layered_plan(ep: "Episode") -> bool:
+    """Build a fresh layered graph and lock its frontier. Empty output does not lock."""
+    from planning_graph import PlanningGraph
+    from sft_prompts import build_layered_outlines
+
+    controller = ep.cghe_controller()
+    engine = getattr(getattr(ep, "planner", None), "llm_engine", None)
+    if controller is None or not callable(engine):
+        return False
+    runtime = load_runtime()
+    depth = min(3, max(1, int(runtime["max_steps"]) - int(ep.step_count) + 1))
+    try:
+        plans = build_layered_outlines(
+            engine, ep.question, roots=4, branches=2, depth=depth,
+        )
+    except Exception:
+        return False
+    if not plans:
+        return False
+    graph = PlanningGraph(list(plans))
+    node = graph.select_node(policy="frontier")
+    if node is None:
+        return False
+    controller.graph = graph
+    controller._round_exhausted = False
+    ep._cghe_graph_mode = "rebuild"
+    ep._cghe_snapshot = _graph_snapshot(graph, selected_id=node.node_id)
+    ep._cghe_directive = _directive_continue(node, "rebuilt planning graph", graph.round_id)
+    if _lock_recovery_step(ep, ep._cghe_directive):
+        return True
+    controller.graph = None
+    ep._cghe_directive = dict(_PEV_DIRECTIVE)
+    ep._cghe_directive["reason"] = "selected node has no executable subgoal or tool"
+    return False
+
+
 def _cghe_trace(ep: "Episode") -> Dict[str, Any]:
     if not cghe_enabled():
         return {}
     directive = getattr(ep, "_cghe_directive", None) or {}
+    snapshot = getattr(ep, "_cghe_snapshot", None) or {}
+    graph = getattr(getattr(ep, "_cghe", None), "graph", None)
+    if graph is not None:
+        snapshot = _graph_snapshot(graph, selected_id=str(directive.get("node_id") or ""))
     return {
         "cghe_decision": str(directive.get("decision") or "continue_pev"),
         "cghe_reason": str(directive.get("reason") or "")[:300],
+        "cghe_mode": str(getattr(ep, "_cghe_graph_mode", "") or ""),
+        "cghe_node_id": str(directive.get("node_id") or ""),
+        "cghe_outlines": snapshot.get("cghe_outlines") or [],
+        "cghe_frontier": snapshot.get("cghe_frontier") or [],
     }
 
 
@@ -883,6 +1060,9 @@ def _close_cghe(ep: "Episode") -> None:
     controller = getattr(ep, "_cghe", None)
     if controller is not None:
         controller.memory.close()
+        evidence = getattr(controller, "_v2_evidence", None)
+        if evidence is not None:
+            evidence.close()
         ep._cghe = None
 
 
@@ -985,7 +1165,19 @@ class EpisodeContext:
             ep.query_analysis = ep.planner.analyze_query(ep.question, None)
             ep.json_data["query_analysis"] = ep.query_analysis
             apply_outline(ep.memory, getattr(ep.planner, "_initial_outline", None))
-        locked = self._plan_cghe_step(ep) if cghe_enabled() else False
+        locked = False
+        if cghe_enabled():
+            directive = dict(getattr(ep, "_cghe_directive", None) or _PEV_DIRECTIVE)
+            if str(directive.get("decision") or "") == "continue_execution":
+                ep._cghe_graph_mode = "switch"
+                locked = _lock_recovery_step(ep, directive)
+                if not locked:
+                    ep._cghe_directive = dict(_PEV_DIRECTIVE)
+                    ep._cghe_directive["reason"] = "selected node has no executable subgoal or tool"
+            if not locked:
+                locked = _open_layered_plan(ep)
+            if not locked:
+                locked = self._plan_cghe_step(ep)
         if not locked:
             runtime = load_runtime()
             next_step = ep.planner.generate_next_step(

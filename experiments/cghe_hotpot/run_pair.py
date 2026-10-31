@@ -29,7 +29,18 @@ PROJECTS = {
     "cghe_pev": ROOT / "user_space" / "projects" / "cghe_pev",
 }
 SPLITS = {"dev": (0, 19), "heldout": (20, 39)}
-ABLATONS = ("full", "graph_only", "no_memory", "no_shared")
+ABLATONS = (
+    "full",
+    "graph_only",
+    "no_memory",
+    "no_shared",
+    "shared_only",
+    "constraint_inference_only",
+    "epv_only",
+    "counterfactual_only",
+    "epv_plus_counterfactual",
+    "full_cghe_v2",
+)
 
 
 def _load_items(split: str) -> List[Dict[str, Any]]:
@@ -64,6 +75,10 @@ def _shrink_trace(trace: Any) -> Dict[str, Any]:
     kept = {
         "cghe_decision": trace.get("cghe_decision", ""),
         "cghe_reason": str(trace.get("cghe_reason") or "")[:300],
+        "cghe_mode": trace.get("cghe_mode", ""),
+        "cghe_node_id": trace.get("cghe_node_id", ""),
+        "cghe_outlines": trace.get("cghe_outlines") or [],
+        "cghe_frontier": trace.get("cghe_frontier") or [],
         "conclusion": trace.get("conclusion", ""),
         "tool": trace.get("tool", ""),
         "llm_calls": int(calls.get("count") or 0),
@@ -82,9 +97,15 @@ def _run_question(ctx: Any, item: Dict[str, Any], system: str, ablation: str, ma
     started = time.time()
     try:
         for _ in range(max_steps):
+            print(f"idx={item['idx']} plan", flush=True)
             plan = ctx.plan_window({"payload": payload})
             body = plan.get("payload") or {}
             args = body.get("args") if isinstance(body.get("args"), dict) else {}
+            print(
+                f"idx={item['idx']} planned tool={args.get('tool_name','')} "
+                f"mode={(body.get('trace') or {}).get('cghe_mode','')}",
+                flush=True,
+            )
             steps.append({
                 "phase": "plan",
                 "done": bool(body.get("done")),
@@ -146,7 +167,7 @@ def _prepare_imports(system: str) -> None:
         if path not in sys.path:
             sys.path.insert(0, path)
     os.environ["AGENTFLOW_TEMPERATURE"] = "0"
-    os.environ["AGENTFLOW_MAX_STEPS"] = "6"
+    os.environ["AGENTFLOW_MAX_STEPS"] = os.environ.get("AGENTFLOW_MAX_STEPS", "6")
     os.environ["AGENTFLOW_TOP_LOGPROBS"] = "5"
     os.environ.setdefault("AGENTFLOW_LLM_TIMEOUT", "120")
     from workflow.env_load import load_repo_dotenv

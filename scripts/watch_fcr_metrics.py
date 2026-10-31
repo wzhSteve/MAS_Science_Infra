@@ -58,8 +58,8 @@ def evaluate_step(
 ) -> Tuple[str, List[str], int, int]:
     """Return gate, reasons, and updated streaks.
 
-    STOP: NaN, leakage, cross-chain, infra drop >0.2, two consecutive coverage misses.
-    WARN: budget violation, no failure triggers, no valid pairs, Brier gradient dominates.
+    STOP: NaN, leakage, cross-chain, infra drop >0.2, budget violation, two consecutive coverage misses.
+    WARN: no failure triggers, no valid pairs, Brier gradient dominates.
     """
     reasons: List[str] = []
     coverage = _num(row, "fcr/prediction_coverage")
@@ -85,6 +85,8 @@ def evaluate_step(
         reasons.append(f"leakage={leakage:g}")
     if cross is not None and cross > 0:
         reasons.append(f"cross_chain={cross:g}")
+    if budget is not None and budget > 0:
+        reasons.append(f"budget_violation={budget:g}")
     if infra is not None and infra > 0.2:
         reasons.append(f"infra_drop_rate={infra:.3f}")
     if grad_ratio is not None and grad_ratio > 50:
@@ -105,8 +107,6 @@ def evaluate_step(
         return "STOP", reasons + ["coverage_miss_streak=2"], next_coverage_misses, 0
 
     warn: List[str] = list(reasons)
-    if budget is not None and budget > 0:
-        warn.append(f"budget_violation={budget:g}")
     if fail_rate is not None and fail_rate <= 0:
         warn.append("failure_confirmed_rate=0")
     if pair_rate is not None and pair_rate <= 0:

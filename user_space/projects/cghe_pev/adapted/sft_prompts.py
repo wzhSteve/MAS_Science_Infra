@@ -40,7 +40,7 @@ _EMPTY_RESULT_MARKERS = (
     "output=[]",
     "command: no command found",
 )
-_PREDICTIONS = ("满足", "不满足")
+_PREDICTIONS = ("YES", "NO")
 _OUTLINE_HEAD = re.compile(r"(?im)^outline\s*:")
 _STEP_PREFIX = re.compile(r"^(?:\d+[\.\)]\s*|[-*]\s+)")
 
@@ -413,9 +413,16 @@ def add_obtained_information(memory: Any, text: Any) -> bool:
 
 
 def normalize_prediction(value: Any) -> str:
-    """Only the two planner labels. ``partial`` and English words are dropped."""
+    """Planner memory labels stay 满足 / 不满足. YES and NO map to those two."""
     token = str(value or "").strip().strip("\"'").strip()
-    return token if token in _PREDICTIONS else ""
+    key = token.upper() if token.isascii() else token
+    aliases = {
+        "满足": "满足",
+        "不满足": "不满足",
+        "YES": "满足",
+        "NO": "不满足",
+    }
+    return aliases.get(key, aliases.get(token, ""))
 
 
 def actual_label(result: Any) -> str:
@@ -990,8 +997,35 @@ Use 2 to 4 numbered steps. Each step is work still required to answer the questi
     return self.query_analysis
 
 
+def remaining_outline_steps(step_count: Any, max_step_count: Any) -> int:
+    """How many steps one outline may still contain."""
+    try:
+        remain = int(max_step_count) - int(step_count)
+    except (TypeError, ValueError):
+        remain = 1
+    return max(1, remain)
+
+
+def planner_outline_limit(n: Optional[int] = None) -> int:
+    """Upper bound on how many outlines one planning call may keep."""
+    if n is None:
+        try:
+            from context import cghe_settings
+
+            n = int(cghe_settings()["n"])
+        except Exception:
+            n = 10
+    try:
+        count = int(n)
+    except (TypeError, ValueError):
+        count = 10
+    return max(1, count)
+
+
 def generate_next_step(self, question, image, query_analysis, memory, step_count, max_step_count, json_data=None):
     del image
+    outline_limit = planner_outline_limit()
+    remaining_steps = remaining_outline_steps(step_count, max_step_count)
     fetch_rule = ""
     if recent_has_search_urls(memory) and not recent_has_fetch_body(memory):
         fetch_rule = (
@@ -1001,37 +1035,63 @@ def generate_next_step(self, question, image, query_analysis, memory, step_count
         )
     prompt = f"""Question: {question}
 
+Return exactly {outline_limit} lines and then stop. Do not write JSON, notes, or a second draft.
+Each line is one route. The two steps are separated by ||. Queries must differ.
+P1: Bing_Search_Tool | <asked fact> || Web_Fetch_Tool | <page for that fact>
+P2: Bing_Search_Tool | <first named entity> || Web_Fetch_Tool | <page for that entity>
+P3: Bing_Search_Tool | <second named entity> || Generalist_Solution_Generator_Tool | <what to read>
+P4: Bing_Search_Tool | <relation between the entities> || Web_Fetch_Tool | <page for the relation>
+P5: Bing_Search_Tool | <encyclopedia page> || Web_Fetch_Tool | <that page>
+P6: Bing_Search_Tool | <cast or creator list> || Web_Fetch_Tool | <that list>
+P7: Bing_Search_Tool | <biography> || Web_Fetch_Tool | <that biography>
+P8: Bing_Search_Tool | <review or summary> || Generalist_Solution_Generator_Tool | <the claimed fact>
+P9: Bing_Search_Tool | <alternate name or spelling> || Web_Fetch_Tool | <page for that name>
+P10: Bing_Search_Tool | <official or primary page> || Web_Fetch_Tool | <that page>
+Replace each angle bracket with a short query about this question. Keep the tool names unchanged.
+Step budget is {remaining_steps}. Do not add a third step.
 Tools (copy one name exactly):
 {_tools_block()}
 
 {memory_view(memory)}
 
 Notes: {_clip(query_analysis, 300)}
-Step {step_count} of {max_step_count}.
+Step {step_count} of {max_step_count}. Remaining step budget: {remaining_steps}.
 {fetch_rule}{_repair_block(memory)}
-Using the question, the notes, Obtained information, and Recent steps, first rewrite the outline.
-The outline is the ordered work still required. Drop a step that is already done or no longer needed.
-Then fill subgoal, selected_tool, tool_input, prediction, and prediction_reason for the first outline item only.
 Rules:
 - If you do not know where the fact is, use Bing_Search_Tool.
-- If a search URL is relevant and the snippet is not enough, use Web_Fetch_Tool. tool_input copies 1 to 3 URLs from that Bing result, one per line. Do not invent a URL.
-- If a fetch is not enough, do not open those URLs again. Change the URL or the keywords.
+- If a search URL is relevant and the snippet is not enough, use Web_Fetch_Tool. Do not invent a URL.
+- If a fetch is not enough, change the query instead of opening the same page again.
 - If Obtained information already has the fact, do not search or fetch it again.
-- subgoal is the first outline sentence, copied exactly.
-- prediction is whether this first item will satisfy the subgoal. Write 满足 or 不满足 and nothing else. Do not write partial.
-
-Reply with one JSON object and nothing else.
-Fields, in this order: outline, subgoal, selected_tool, tool_input, prediction, prediction_reason
-outline is a list of short step sentences and has no status.
-prediction is 满足 or 不满足, with no space after the quote.
-selected_tool is exactly one name from the tool list.
-If you cannot write JSON, use exactly these three lines instead:
-Context: <query or one URL>
-Sub-Goal: <query or one URL>
-Tool Name: <query or one URL>
 """
-    raw = str(self.llm_engine(prompt) or "")
+    engine = self.llm_engine
+    previous_penalty = getattr(engine, "frequency_penalty", None)
+    previous_cap = getattr(engine, "max_tokens_cap", None)
+    engine.frequency_penalty = 0
+    engine.max_tokens_cap = 2200
+    try:
+        raw = str(engine(prompt) or "")
+    finally:
+        if previous_penalty is None and hasattr(engine, "frequency_penalty"):
+            try:
+                del engine.frequency_penalty
+            except Exception:
+                pass
+        elif previous_penalty is not None:
+            engine.frequency_penalty = previous_penalty
+        if previous_cap is None:
+            try:
+                del engine.max_tokens_cap
+            except Exception:
+                pass
+        else:
+            engine.max_tokens_cap = previous_cap
     self._last_plan = parse_planner_payload(raw) or {}
+    if isinstance(self._last_plan, dict):
+        self._last_plan["candidate_plans"] = parse_candidate_plans(
+            raw,
+            limit=outline_limit,
+            max_steps=remaining_steps,
+        )
     scored = getattr(self.llm_engine, "last_label_probs", None) or {}
     if isinstance(self._last_plan, dict) and isinstance(scored, dict):
         for key in (
@@ -1042,6 +1102,21 @@ Tool Name: <query or one URL>
             if key in scored:
                 self._last_plan[key] = scored[key]
     next_step = _planner_for_parser(raw)
+    plans = self._last_plan.get("candidate_plans") if isinstance(self._last_plan, dict) else None
+    if plans and "Tool Name:" not in next_step:
+        step = plans[0].steps[0]
+        self._last_plan.update({
+            "outline": [step.subgoal],
+            "subgoal": step.subgoal,
+            "tool_name": step.tool,
+            "tool_input": step.action,
+            "prediction": self._last_plan.get("prediction") or "满足",
+        })
+        next_step = (
+            f"Context: {step.action}\n"
+            f"Sub-Goal: {step.subgoal}\n"
+            f"Tool Name: {step.tool}"
+        )
     if json_data is not None:
         json_data[f"action_predictor_{step_count}_prompt"] = prompt
         json_data[f"action_predictor_{step_count}_response"] = raw
@@ -1202,7 +1277,8 @@ Notes: {_clip(query_analysis, 300)}
 
 {format_planning_records(records)}
 
-Write {count} different plans that still address the question.
+Write {count} different complete outlines from the current state to the final answer.
+Each outline is an ordered path. The last step states the answer. Do not return only the immediate next action.
 Do not repeat a verified counterexample.
 Unverified hypotheses above are not evidence.
 
@@ -1217,23 +1293,144 @@ Tool Name: one tool name
 """
 
 
-def parse_candidate_plans(text: str, *, limit: int = 4) -> List[Any]:
-    """Parse already-structured candidate plans. Invalid output is an empty list."""
+_UNQUOTED_PLAN_KEY = re.compile(r'([{\[,]\s*)(steps|plan_id)(\s*:)')
+_UNQUOTED_PLAN_ID = re.compile(r'("plan_id"\s*:\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*[,}\]])')
+
+
+def _relax_plan_json(blob: str) -> str:
+    """Quote the keys and plan ids this model sometimes leaves bare."""
+    text = _UNQUOTED_PLAN_KEY.sub(r'\1"\2"\3', blob)
+    return _UNQUOTED_PLAN_ID.sub(r'\1"\2"\3', text)
+
+
+def _unescape_plan_text(text: str) -> str:
+    current = str(text or "")
+    for _ in range(3):
+        updated = current.replace('\\"', '"').replace("\\n", "\n")
+        if updated == current:
+            break
+        current = updated
+    return current
+
+
+def _brace_objects(text: str, marker: str) -> list:
+    found = []
+    start = 0
+    while True:
+        i = text.find(marker, start)
+        if i < 0:
+            break
+        depth = 0
+        closed = False
+        for j in range(i, len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    found.append(text[i:j + 1])
+                    start = j + 1
+                    closed = True
+                    break
+        if not closed:
+            break
+    return found
+
+
+def _plans_from_lines(text: str, *, limit: int) -> List[dict]:
+    """Read `P1: Tool | action || Tool | action` lines when JSON breaks."""
+    rows: List[dict] = []
+    seen = set()
+    for match in re.finditer(r"(?im)^\s*P(\d+)\s*:\s*(.+)$", str(text or "")):
+        number = match.group(1)
+        if number in seen or len(rows) >= limit:
+            continue
+        steps = []
+        for part in match.group(2).split("||"):
+            if "|" not in part:
+                continue
+            tool_raw, action = part.split("|", 1)
+            tool = resolve_tool_name(tool_raw)
+            action = " ".join(action.split())
+            if not tool or not action:
+                continue
+            steps.append({
+                "subgoal": action,
+                "action": action,
+                "tool": tool,
+                "estimated_cost": 1,
+            })
+        if not steps:
+            continue
+        seen.add(number)
+        rows.append({"plan_id": f"p{number}", "steps": steps})
+    return rows
+
+
+def _salvage_plan_blob(text: str) -> str:
+    """Pull plan objects out of a reply whose surrounding JSON is broken."""
+    relaxed = _unescape_plan_text(text)
+    objects = []
+    for blob in _brace_objects(relaxed, '{"plan_id"'):
+        try:
+            item = json.loads(blob)
+        except Exception:
+            try:
+                item = json.loads(_relax_plan_json(blob))
+            except Exception:
+                continue
+        if isinstance(item, dict) and item.get("steps"):
+            objects.append(item)
+    if not objects:
+        return ""
+    return json.dumps({"plans": objects})
+    """Quote the keys and plan ids this model sometimes leaves bare."""
+    text = _UNQUOTED_PLAN_KEY.sub(r'\1"\2"\3', blob)
+    return _UNQUOTED_PLAN_ID.sub(r'\1"\2"\3', text)
+
+
+def parse_candidate_plans(
+    text: str,
+    *,
+    limit: int = 10,
+    max_steps: Optional[int] = None,
+) -> List[Any]:
+    """Parse already-structured candidate plans. Invalid output is an empty list.
+
+    Extra outlines beyond ``limit`` are dropped. Extra steps beyond
+    ``max_steps`` are dropped. The last step's tool is not checked.
+    """
     from cghe_types import candidate_plan_from_dict
 
     cap = max(1, int(limit))
+    step_cap = None if max_steps is None else max(1, int(max_steps))
     raw_plans: Optional[List[Any]] = None
     for blob in _json_blobs(text):
         try:
             parsed = json.loads(blob)
         except Exception:
-            continue
+            try:
+                parsed = json.loads(_relax_plan_json(blob))
+            except Exception:
+                continue
         if isinstance(parsed, dict) and isinstance(parsed.get("plans"), list):
             raw_plans = list(parsed["plans"])
             break
         if isinstance(parsed, list) and parsed and all(isinstance(item, dict) for item in parsed):
             raw_plans = list(parsed)
             break
+    if not raw_plans:
+        salvaged = _salvage_plan_blob(text)
+        if salvaged:
+            try:
+                parsed = json.loads(salvaged)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict) and isinstance(parsed.get("plans"), list):
+                raw_plans = list(parsed["plans"])
+    line_plans = _plans_from_lines(text, limit=cap)
+    if line_plans and (not raw_plans or len(line_plans) > len(raw_plans)):
+        raw_plans = line_plans
     if not raw_plans:
         return []
     plans: List[Any] = []
@@ -1247,6 +1444,8 @@ def parse_candidate_plans(text: str, *, limit: int = 4) -> List[Any]:
                 steps_in = [item]
             else:
                 continue
+        if step_cap is not None:
+            steps_in = list(steps_in)[:step_cap]
         step_dicts: List[Dict[str, Any]] = []
         for step in steps_in:
             if not isinstance(step, dict):
@@ -1300,6 +1499,11 @@ def parse_candidate_plans(text: str, *, limit: int = 4) -> List[Any]:
                 "step_id": str(step.get("step_id") or ""),
                 "predecessor_ids": list(step.get("predecessor_ids") or ()),
                 "links_previous": bool(step.get("links_previous", True)),
+                "parameter": str(step.get("parameter") or ""),
+                "argument": str(step.get("argument") or ""),
+                "resource": str(step.get("resource") or ""),
+                "identity": str(step.get("identity") or ""),
+                "schema_signature": str(step.get("schema_signature") or ""),
             })
         if not step_dicts:
             continue
@@ -1318,7 +1522,6 @@ def parse_candidate_plans(text: str, *, limit: int = 4) -> List[Any]:
             continue
     return plans
 
-
 def solicit_candidate_plans(planner: Any, question: str, query_analysis: str, memory: Any, records: Any, n: int) -> List[Any]:
     """One planner call for N structured plans. Any failure returns an empty list."""
     prompt = _candidate_plans_prompt(question, query_analysis, memory, records, n)
@@ -1333,6 +1536,205 @@ def solicit_candidate_plans(planner: Any, question: str, query_analysis: str, me
         return parse_candidate_plans(raw, limit=n)
     except Exception:
         return []
+
+
+_LAYER_LINE = re.compile(
+    r"(?im)^\s*(?:FROM\s+\S+\s*)?(?:L\d+|N|Z)?-?(\d+)?\s*:\s*([A-Za-z0-9_ ]+)\s*\|\s*(.+?)\s*$"
+)
+_SINK_SUBGOAL = "extract the asked fact from the retrieved evidence"
+
+
+def _planner_completion(engine: Any, prompt: str, *, max_tokens: int = 700) -> str:
+    target = engine
+    previous_penalty = getattr(target, "frequency_penalty", None)
+    previous_cap = getattr(target, "max_tokens_cap", None)
+    tunable = True
+    try:
+        target.frequency_penalty = 0
+        target.max_tokens_cap = max_tokens
+    except Exception:
+        tunable = False
+    try:
+        return str(engine(prompt) or "")
+    finally:
+        if tunable:
+            if previous_penalty is None and hasattr(target, "frequency_penalty"):
+                try:
+                    del target.frequency_penalty
+                except Exception:
+                    pass
+            elif previous_penalty is not None:
+                target.frequency_penalty = previous_penalty
+            if previous_cap is None:
+                try:
+                    del target.max_tokens_cap
+                except Exception:
+                    pass
+            else:
+                target.max_tokens_cap = previous_cap
+
+
+def _layer_steps(text: str, *, limit: int) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    seen = set()
+
+    def add(tool: str, action: str) -> None:
+        action = " ".join(action.split()).strip("<>\"'").strip()
+        if not tool or not action or action.lower() in {"query", "page", "one short query", "which page"}:
+            return
+        key = (tool, action.lower())
+        if key in seen or len(rows) >= limit:
+            return
+        seen.add(key)
+        rows.append({"tool": tool, "action": action, "subgoal": action})
+
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith("<answer"):
+            continue
+        search = re.match(r'(?i)^search\s*:\s*"?(.+?)"?\s*$', line)
+        if search:
+            add("Bing_Search_Tool", search.group(1))
+            continue
+        match = _LAYER_LINE.match(line)
+        if not match:
+            continue
+        tool = resolve_tool_name(match.group(2))
+        if tool:
+            add(tool, match.group(3))
+    return rows
+
+
+def _children_by_parent(text: str, parent_ids: Sequence[str], *, limit: int) -> Dict[str, List[Dict[str, str]]]:
+    grouped: Dict[str, List[Dict[str, str]]] = {parent_id: [] for parent_id in parent_ids}
+    current = ""
+    seen: Dict[str, set] = {parent_id: set() for parent_id in parent_ids}
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        header = re.match(r"(?i)^FROM\s+(L0-\d+|N\d+)\s*:?\s*$", line)
+        if header:
+            current = header.group(1)
+            if current.lower().startswith("l0-"):
+                current = "L0-" + current.split("-", 1)[1]
+            continue
+        if not line or line.lower().startswith("<answer"):
+            continue
+        inline = re.match(
+            r"(?i)^L(\d+)-(\d+)\s*(?:\|\||->)\s*([A-Za-z0-9_ ]+)\s*\|\s*(.+)$",
+            line,
+        )
+        if inline:
+            major, minor = inline.group(1), inline.group(2)
+            current = f"L0-{minor}" if major == "0" else f"L0-{major}"
+            tool = resolve_tool_name(inline.group(3))
+            action = " ".join(inline.group(4).split()).strip("<>\"'").strip()
+            if (
+                not action
+                or action.startswith("<")
+                or action.lower() in {
+                    "which page to open",
+                    "what fact to read from that result",
+                    "the best page for the first search",
+                    "a real page for that search",
+                    "encyclopedia article for the film",
+                }
+            ):
+                continue
+            if current in grouped and tool and action:
+                key = (tool, action.lower())
+                if key not in seen[current] and len(grouped[current]) < limit:
+                    seen[current].add(key)
+                    grouped[current].append({"tool": tool, "action": action, "subgoal": action})
+            continue
+        match = re.match(r"(?i)^(?:N\d+|Z|L\d+-\d+)\s*:\s*([A-Za-z0-9_ ]+)\s*\|\s*(.+)$", line)
+        if not match or current not in grouped:
+            continue
+        tool = resolve_tool_name(match.group(1))
+        action = " ".join(match.group(2).split()).strip("<>").strip()
+        if not tool or not action:
+            continue
+        key = (tool, action.lower())
+        if key in seen[current] or len(grouped[current]) >= limit:
+            continue
+        seen[current].add(key)
+        grouped[current].append({"tool": tool, "action": action, "subgoal": action})
+    return grouped
+
+
+def build_layered_outlines(
+    engine: Any,
+    question: str,
+    *,
+    roots: int = 4,
+    branches: int = 2,
+    depth: int = 3,
+) -> List[Any]:
+    """Grow a DAG one layer at a time.
+
+    Layer 0 is a few different first decisions. Each later layer adds the
+    next step of those decisions and draws the edge back to its parent.
+    The last layer uses one shared extract step so the paths meet again.
+    """
+    from cghe_types import candidate_plan_from_dict
+
+    question = re.sub(r"(?is)\s*when ready, output the final answer.*", "", str(question or "")).strip()
+    root_raw = _planner_completion(engine, f"""Do not answer the question. Write at most {roots} lines and stop.
+Each line is one different first search. Copy the shape exactly.
+L0-1: Bing_Search_Tool | one short query
+
+Question: {question}
+""", max_tokens=400)
+    root_steps = _layer_steps(root_raw, limit=roots)
+    if not root_steps:
+        return []
+    root_ids = [f"L0-{index}" for index in range(1, len(root_steps) + 1)]
+    listed = "\n".join(
+        f"{root_id}: {step['tool']} | {step['action']}"
+        for root_id, step in zip(root_ids, root_steps)
+    )
+    child_raw = _planner_completion(engine, f"""Do not answer the question. Do not copy a search query into the next step.
+For every first decision write two next steps. L1 belongs to L0-1, L2 to L0-2, and so on.
+Each next step names a different page: an encyclopedia article, a cast page, a plot page, or a biography.
+Shape: L1-1 || Web_Fetch_Tool | encyclopedia article for the film
+
+First decisions:
+{listed}
+""", max_tokens=700)
+    children = _children_by_parent(child_raw, root_ids, limit=branches)
+    root_actions = {step["action"].lower() for step in root_steps}
+    for parent_id, items in list(children.items()):
+        children[parent_id] = [
+            item for item in items if item["action"].lower() not in root_actions
+        ]
+    sink = {
+        "tool": "Generalist_Solution_Generator_Tool",
+        "action": _SINK_SUBGOAL,
+        "subgoal": _SINK_SUBGOAL,
+    }
+    plans: List[Any] = []
+    for root_id, root in zip(root_ids, root_steps):
+        next_steps = children.get(root_id) or [sink]
+        for branch_index, child in enumerate(next_steps, 1):
+            steps = [root]
+            if child["tool"] != sink["tool"] or child["subgoal"] != sink["subgoal"]:
+                steps.append(child)
+            if depth >= 3:
+                steps.append(sink)
+            steps = steps[:depth]
+            plans.append(candidate_plan_from_dict({
+                "plan_id": f"{root_id.lower()}-b{branch_index}",
+                "steps": [
+                    {
+                        "subgoal": step["subgoal"],
+                        "action": step["action"],
+                        "tool": step["tool"],
+                        "estimated_cost": 1,
+                        "links_previous": index > 0,
+                    }
+                    for index, step in enumerate(steps)
+                ],
+            }))
+    return plans
 
 
 def bind_episode(planner, executor, verifier) -> None:

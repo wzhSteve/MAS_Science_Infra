@@ -50,8 +50,7 @@ FCR_SITES = [{
     "id": "fcr_first_failure",
     "enabled": True,
     "anchor": {"kind": "after_verifier"},
-    # Evaluate every verifier window; the first passing gate consumes the
-    # fixed K budget, so later failures cannot trigger another branch.
+    # Evaluate every verifier window. Group fill uses ARPO/APPO remaining-to-n.
     "when": "every",
     "gate": {"type": "failure_confirmed", "params": {}},
     "fork": {"beam_size": 2, "share_observation": True, "resume_mode": "messages", "probe_max_tokens": 128},
@@ -293,8 +292,6 @@ def apply_algo_overlay(config: Dict[str, Any], algo: str) -> Dict[str, Any]:
     if algo == "fcr_grpo" and user_tir.get("sites") is None:
         tir["sites"] = deepcopy(FCR_SITES)
         tir["sampling_strategy"] = "fcr_grpo"
-        tir["beam_size"] = int(tir.get("fcr_k", 2))
-        tir["max_branch_depth"] = int(tir.get("fcr_max_branches_per_episode", 1))
     if algo in ("arpo", "appo", "aepo", "rae", "fcr_grpo"):
         n = int(cfg.get("actor_rollout_ref", {}).get("rollout", {}).get("n", 4))
         tir["initial_rollouts"] = max(1, min(tir["initial_rollouts"], n - 1 if n > 1 else 1))

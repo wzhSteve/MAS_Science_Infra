@@ -334,6 +334,10 @@ class RecoveryController:
         db_path: Optional[str] = None,
         pruning: bool = True,
         shared_priority: bool = True,
+        algorithm: str = "v1",
+        v2_mode: str = "full_cghe_v2",
+        lambda_cost: float = 0.0,
+        mu_risk: float = 0.0,
     ) -> None:
         self.memory = memory if memory is not None else EvidenceMemory(
             db_path,
@@ -357,6 +361,14 @@ class RecoveryController:
         self.pruner = HypothesisPruner(confidence_threshold=self.confidence_threshold)
         self.pruning = bool(pruning)
         self.shared_priority = bool(shared_priority)
+        self.algorithm = str(algorithm or "v1")
+        self.v2_mode = str(v2_mode or "full_cghe_v2")
+        self.lambda_cost = float(lambda_cost)
+        self.mu_risk = float(mu_risk)
+        self.v2_trace: list[dict] = []
+        self.v2_candidates: list = []
+        self.v2_hypotheses: list = []
+        self._v2_evidence = None
         self.graph: Optional[PlanningGraph] = None
         self.current_round: Optional[RecoveryRound] = None
         self._rounds_opened = int(self.budget.recovery_rounds_used)
@@ -367,6 +379,82 @@ class RecoveryController:
         self._fingerprint_counts: dict[str, int] = {}
         self._replayed_fingerprints: set[str] = set()
         self._call_log: list[dict[str, object]] = []
+
+    def _v2_log(self):
+        if self.algorithm != "v2":
+            return None
+        if self._v2_evidence is None:
+            from pathlib import Path
+
+            from v2.evidence_log import V2EvidenceLog
+
+            root = Path(__file__).resolve().parents[4]
+            self._v2_evidence = V2EvidenceLog(str(root / "experiments" / "cghe_v2" / "evidence.sqlite"))
+        return self._v2_evidence
+
+    def _audit_v2_prune(self, analysis: FailureAnalysis, result: Any) -> None:
+        log = self._v2_log()
+        constraint = analysis.constraint
+        if log is None or constraint is None:
+            return
+        log.record_prune(
+            task_id=self.task_id,
+            environment_id=constraint.scope.environment,
+            round_id=self.graph.round_id if self.graph is not None else "",
+            constraint_id=constraint.constraint_id,
+            tool=constraint.scope.tool,
+            resource=constraint.scope.resource,
+            identity=constraint.scope.identity,
+            parameter=constraint.scope.parameter,
+            argument=constraint.scope.argument,
+            active_before=result.active_before,
+            active_after=result.active_after,
+            pruned_plan_ids=list(result.pruned_plan_ids),
+            evidence_source=result.evidence_source,
+        )
+
+    def _record_v2(self, observation: ExecutionObservation, analysis: FailureAnalysis) -> None:
+        """Store v2 candidates and hypotheses. They do not change v1 admission."""
+        from v2.constraint_inference import infer
+        from v2.counterfactual import generate_hypotheses
+
+        observation_id = analysis.evidence.evidence_id or "observation"
+        self.v2_candidates = infer(observation, observation_id=observation_id)
+        self.v2_hypotheses = generate_hypotheses(
+            tool=observation.tool_name,
+            argument=observation.command,
+            failure_type=analysis.evidence.failure_type.value if analysis.evidence.failure_type else "",
+            plans=self.graph.active_plan_ids() if self.graph is not None else (),
+        )
+        self.v2_trace.append({
+            "event": "inference",
+            "candidates": [item.evidence_status for item in self.v2_candidates],
+            "hypotheses": [item.hypothesis_id for item in self.v2_hypotheses],
+        })
+        log = self._v2_log()
+        if log is None:
+            return
+        log.record_observation(
+            observation_id=observation_id,
+            task_id=self.task_id,
+            environment_id=observation.environment or self.environment,
+            round_id=self.graph.round_id if self.graph is not None else "",
+            tool=observation.tool_name,
+            resource=observation.resource,
+            identity=observation.identity,
+            parameter=getattr(observation, "parameter", ""),
+            argument=observation.command,
+            source=analysis.evidence.source,
+        )
+        for item in self.v2_hypotheses:
+            log.record_hypothesis(
+                hypothesis_id=item.hypothesis_id,
+                task_id=self.task_id,
+                environment_id=self.environment,
+                tool=item.scope.get("tool", ""),
+                argument=item.scope.get("argument", ""),
+                status=item.status,
+            )
 
     @property
     def logs(self) -> tuple[RecoveryLog, ...]:
@@ -433,6 +521,8 @@ class RecoveryController:
         """
         label = verifier_label or observation.verifier_label
         analysis = self.analyzer.analyze(observation)
+        if self.algorithm == "v2":
+            self._record_v2(observation, analysis)
         trigger = should_enter_recovery(
             verifier_label=label,
             verifier_satisfied=verifier_satisfied,
@@ -797,6 +887,7 @@ class RecoveryController:
             executed_plan_id=observation.plan_id,
             apply=True,
         )
+        self._audit_v2_prune(analysis, result)
         if observation.node_id and result.affected_plan_ids:
             self._mark_failed(observation.node_id)
         if not result.affected_plan_ids:
@@ -836,7 +927,31 @@ class RecoveryController:
     def _select_node(self) -> Optional[GraphNode]:
         if self.graph is None:
             return None
-        policy = "shared" if self.shared_priority else "first_plan"
+        if self.algorithm == "v2":
+            from v2.action_selector import choose_node
+
+            chosen, trace = choose_node(
+                self.graph,
+                mode=self.v2_mode,
+                lambda_cost=self.lambda_cost,
+                mu_risk=self.mu_risk,
+            )
+            self.v2_trace.append(trace)
+            log = self._v2_log()
+            if log is not None:
+                for row in trace.get("scores") or []:
+                    log.record_feedback(
+                        task_id=self.task_id,
+                        round_id=self.graph.round_id,
+                        action_id=row.get("action_id", ""),
+                        epv=row.get("epv"),
+                        cost=row.get("cost"),
+                        risk=row.get("risk"),
+                        score=row.get("score"),
+                    )
+            if chosen is not None:
+                return chosen
+        policy = "frontier" if self.shared_priority else "first_plan"
         return self.graph.select_node(policy=policy)
 
     def _advance_without_pruning(

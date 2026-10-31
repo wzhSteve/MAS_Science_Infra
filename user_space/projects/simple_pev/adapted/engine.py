@@ -528,7 +528,7 @@ class LocalChatEngine:
         return list(values or [])
 
     def _score_from_choice_logprobs(self, choice: Any, completion: str) -> Dict[str, Any]:
-        """Score 满足/不满足 from the generation's top-logprobs, without a second prefill."""
+        """Score YES/NO from the generation's top-logprobs, without a second prefill."""
         from prediction_probs import SATISFY, UNSATISFY, prediction_record, written_prediction
 
         logprobs = getattr(choice, "logprobs", None)
@@ -597,18 +597,8 @@ class LocalChatEngine:
             return None
 
         first = _top_map(items[start])
-        s_satisfy = _pick(first, SATISFY)
-        un_first = _pick(first, "不", UNSATISFY)
-        s_unsatisfy = None
-        if un_first is not None and start + 1 < len(items):
-            second = _top_map(items[start + 1])
-            rest = _pick(second, "满足")
-            if rest is not None:
-                s_unsatisfy = float(un_first) + float(rest)
-            elif _pick(first, UNSATISFY) is not None:
-                s_unsatisfy = _pick(first, UNSATISFY)
-        if s_unsatisfy is None:
-            s_unsatisfy = _pick(first, UNSATISFY)
+        s_satisfy = _pick(first, SATISFY, "ĠYES", " YES")
+        s_unsatisfy = _pick(first, UNSATISFY, "ĠNO", " NO")
         if s_satisfy is None or s_unsatisfy is None:
             return {}
         record = prediction_record(written_prediction(completion), float(s_satisfy), float(s_unsatisfy))
@@ -628,7 +618,7 @@ class LocalChatEngine:
         frozen: bool,
         choice: Any = None,
     ) -> None:
-        """Score 满足 and 不满足 at the prediction quote. Failures leave probs empty."""
+        """Score YES and NO at the prediction quote. Failures leave probs empty."""
         self.last_label_probs = {}
         if self.role != "planner":
             return
@@ -729,7 +719,7 @@ class LocalChatEngine:
                 ),
             }
             if self.trainable or self.role == "planner":
-                # ARPO reads entropy; FCR reads 满足/不满足 from the same top-10.
+                # ARPO reads entropy; FCR reads YES/NO from the same top-10.
                 kwargs["logprobs"] = True
                 kwargs["top_logprobs"] = 10
             enabled = not quiet

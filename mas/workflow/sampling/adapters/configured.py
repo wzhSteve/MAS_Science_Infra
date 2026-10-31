@@ -22,7 +22,7 @@ class ConfiguredGateAdapter(SamplingStrategyAdapter):
     aliases = ("aepo", "appo", "rae", "fcr_grpo")
     allowed_gates = (
         "entropy_delta", "arpo", "always", "dual_entropy", "verifier_fail",
-        "verifier_pass", "failure_confirmed",
+        "verifier_pass", "failure_confirmed", "all_fail", "unexpected_fail",
     )
 
     def supports_window(self, window: SamplingWindow) -> bool:

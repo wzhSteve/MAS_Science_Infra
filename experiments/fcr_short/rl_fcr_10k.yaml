@@ -16,9 +16,10 @@ algorithm:
     fcr_threshold: 0.5
     fcr_lambda: 0.1
     fcr_brier_beta: 0.1
-    fcr_max_branches_per_episode: 1
-    max_branch_depth: 1
+    initial_rollouts: 2
+    max_branch_depth: 2
     beam_size: 2
+    ready_batch: true
     sampling_strategy: fcr_grpo
 data:
   train_files: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/train_10k.parquet

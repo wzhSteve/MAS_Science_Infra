@@ -89,17 +89,30 @@ def evaluate_gate(gate: BranchGate, ctx: GateContext) -> GateDecision:
         ok = bool(ctx.final_failed)
         return GateDecision(ok, 1.0 if ok else 0.0, "failure_trigger")
 
-    if gtype == "failure_confirmed":
-        ok = bool(signals.get("failure_confirmed"))
+    if gtype in ("failure_confirmed", "all_fail", "unexpected_fail"):
         probability = signals.get("p_satisfy")
+        label = signals.get("actual_satisfied")
+        tool_fault = bool(signals.get("tool_fault"))
+        failed = isinstance(label, (bool, int)) and not bool(label) and not tool_fault
+        try:
+            p_value = float(probability)
+        except (TypeError, ValueError):
+            p_value = None
+        if gtype == "failure_confirmed":
+            ok = bool(signals.get("failure_confirmed"))
+        elif gtype == "all_fail":
+            ok = failed
+        else:
+            ok = failed and p_value is not None and p_value >= 0.5
         return GateDecision(
             ok,
             1.0 if ok else 0.0,
-            "failure_confirmed",
+            gtype,
             {
                 "prediction_event_id": signals.get("prediction_event_id"),
                 "p_satisfy": probability,
-                "actual_satisfied": signals.get("actual_satisfied"),
+                "actual_satisfied": label,
+                "tool_fault": tool_fault,
             },
         )
 

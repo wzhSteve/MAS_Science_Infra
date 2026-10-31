@@ -221,6 +221,7 @@ def failure_confirmation_metrics(payload: Any) -> Dict[str, Any]:
         "recovery_chain_id": str(action.get("recovery_chain_id") or ""),
         "p_satisfy": action.get("p_satisfy"),
         "actual_satisfied": action.get("actual_satisfied"),
+        "tool_fault": bool(action.get("tool_fault", False)),
     }
 
 

@@ -198,9 +198,32 @@ def _unavailable(text: str) -> bool:
     return low.startswith(("search_unavailable", "fetch_unavailable", "error"))
 
 
+def _use_secondary_serp_account() -> None:
+    """Point this project's Bing calls at BRIGHT_DATA_API_KEY_2 / SERP_ZONES_2.
+
+    The shared search client only reads BRIGHT_DATA_API_KEY and
+    BRIGHT_DATA_SERP_ZONES. Other projects keep the primary account.
+    """
+    if not os.environ.get("BRIGHT_DATA_API_KEY_2", "").strip():
+        try:
+            from workflow.env_load import load_repo_dotenv
+
+            load_repo_dotenv()
+        except Exception:
+            return
+    key = os.environ.get("BRIGHT_DATA_API_KEY_2", "").strip()
+    zones = os.environ.get("BRIGHT_DATA_SERP_ZONES_2", "").strip()
+    if key:
+        os.environ["BRIGHT_DATA_API_KEY"] = key
+    if zones:
+        os.environ["BRIGHT_DATA_SERP_ZONES"] = zones
+        os.environ["BRIGHT_DATA_SERP_ZONE"] = zones.split(",")[0].strip()
+
+
 def local_bing_search(query: str) -> str:
     from mas.tools.search import bing_search
 
+    _use_secondary_serp_account()
     return str(bing_search(str(query or "")) or "")
 
 

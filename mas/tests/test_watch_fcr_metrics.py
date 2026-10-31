@@ -57,7 +57,7 @@ def test_watch_gates_stop_warn_pass():
             "critic/score/mean": 0.4,
         }
     )
-    assert budget_warn == "WARN"
+    assert budget_warn == "STOP"
     assert any("budget_violation" in item for item in budget_reasons)
     infra_stop, infra_reasons, *_ = watch.evaluate_step(
         {"step": 7, "fcr/infra_drop_rate": 0.25, "critic/score/mean": 0.4}

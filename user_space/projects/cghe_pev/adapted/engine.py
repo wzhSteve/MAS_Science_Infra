@@ -535,7 +535,7 @@ class LocalChatEngine:
         model: str,
         frozen: bool,
     ) -> None:
-        """Score 满足 and 不满足 at the prediction quote. Failures leave probs empty."""
+        """Score YES and NO at the prediction quote. Failures leave probs empty."""
         self.last_label_probs = {}
         if self.role != "planner":
             return
@@ -617,7 +617,7 @@ class LocalChatEngine:
                 "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}],
                 "temperature": self.temperature,
                 "top_p": self.top_p,
-                "frequency_penalty": _FREQUENCY_PENALTY,
+                "frequency_penalty": getattr(self, "frequency_penalty", _FREQUENCY_PENALTY),
                 "presence_penalty": 0,
                 "max_tokens": clamp_max_tokens(
                     max_tokens,

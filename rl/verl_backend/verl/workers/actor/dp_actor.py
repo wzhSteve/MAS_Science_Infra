@@ -346,8 +346,10 @@ class DataParallelPPOActor(BasePPOActor):
             "prediction_token_start_list", "predicted_label_list",
             "actual_satisfied_list",
         ]
-        fcr_beta = float(data.meta_info.get("fcr_brier_beta", 0.0) or 0.0)
-        has_fcr_labels = fcr_beta > 0 and all(
+        fcr_mode = str(data.meta_info.get("fcr_brier_mode") or "magnitude")
+        fcr_enabled = bool(data.meta_info.get("fcr_brier_enabled", False))
+        fcr_fixed_beta = float(data.meta_info.get("fcr_brier_beta", 0.1) or 0.0)
+        has_fcr_labels = fcr_enabled and all(
             key in data.non_tensor_batch for key in fcr_non_tensor_keys
         )
         non_tensor_select_keys = []
@@ -483,9 +485,23 @@ class DataParallelPPOActor(BasePPOActor):
                                 metrics["actor/fcr_grad_norm_ratio"] = (
                                     brier.detach().abs() / pg_abs
                                 ).item()
-                            policy_loss = policy_loss + fcr_beta * brier
+                            brier_abs = brier.detach().abs()
+                            pg_abs = pg_loss.detach().abs()
+                            if fcr_mode == "fixed":
+                                scale = torch.tensor(
+                                    fcr_fixed_beta,
+                                    device=brier.device,
+                                    dtype=brier.dtype,
+                                )
+                            else:
+                                scale = pg_abs / (pg_abs + brier_abs).clamp_min(1e-12)
+                            policy_loss = policy_loss + scale * brier
                             metrics["actor/fcr_brier_loss"] = brier.detach().item()
-                            metrics["actor/fcr_brier_beta"] = fcr_beta
+                            metrics["actor/fcr_brier_beta"] = float(scale.detach().item())
+                            metrics["actor/fcr_brier_scale"] = float(scale.detach().item())
+                            metrics["actor/fcr_loss_ratio"] = float(
+                                (brier_abs / pg_abs.clamp_min(1e-12)).item()
+                            )
 
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
@@ -534,7 +550,7 @@ class DataParallelPPOActor(BasePPOActor):
         }
 
     def _fcr_brier_loss(self, data, *, temperature: float):
-        """Teacher-force both complete Chinese labels from the emitted prediction prefix."""
+        """Teacher-force YES and NO from the emitted prediction prefix."""
         if self.use_ulysses_sp:
             return None
         losses = []
@@ -556,7 +572,8 @@ class DataParallelPPOActor(BasePPOActor):
             if not positive or not negative or not isinstance(label, (bool,)):
                 continue
             response_tokens = responses[row].detach().cpu().tolist()
-            actual_tokens = positive if str(written_labels[row]) == "满足" else negative
+            written = str(written_labels[row] or "").strip().upper()
+            actual_tokens = positive if written in {"YES", "满足", "Y"} else negative
             try:
                 preferred_offset = int(prediction_starts[row])
             except (TypeError, ValueError):

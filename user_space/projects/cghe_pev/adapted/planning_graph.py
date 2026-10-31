@@ -156,6 +156,8 @@ class PlanningGraph:
                     if node_id in ready_set:
                         return copy.deepcopy(self._nodes[node_id])
             return None
+        if policy == "frontier":
+            return self._select_frontier()
         if policy != "shared":
             raise ValueError(f"unknown node selection policy: {policy}")
         ready.sort(
@@ -172,6 +174,21 @@ class PlanningGraph:
 
     def mark_failed(self, node_id: str) -> None:
         self._nodes[node_id].status = NodeStatus.FAILED
+
+    def drop_suffixes(self, node_id: str) -> tuple[str, ...]:
+        """Fail one node and retire every active outline that still contains it.
+
+        Later steps on those outlines leave with the plan. Other outlines stay.
+        """
+        if node_id not in self._nodes:
+            return ()
+        self.mark_failed(node_id)
+        victims = [
+            plan_id
+            for plan_id in self.active_plan_ids()
+            if node_id in self.plan_node_ids(plan_id)
+        ]
+        return self.retire_plans(victims)
 
     def retire_plans(
         self,
@@ -210,6 +227,53 @@ class PlanningGraph:
             if all(self._nodes[pred].status == NodeStatus.SATISFIED for pred in preds):
                 return True
         return False
+
+    def frontier_node_id(self, plan_id: str) -> Optional[str]:
+        """First unfinished step of one outline. Later steps are not eligible."""
+        if plan_id not in self.active_plan_ids():
+            return None
+        for node_id in self.plan_node_ids(plan_id):
+            node = self._nodes[node_id]
+            if node.status != NodeStatus.PENDING:
+                continue
+            preds = self._predecessors.get((plan_id, node_id), ())
+            if all(self._nodes[pred].status == NodeStatus.SATISFIED for pred in preds):
+                return node_id
+        return None
+
+    def _vote_key(self, node_id: str) -> tuple[str, str]:
+        node = self._nodes[node_id]
+        return norm(node.subgoal), norm(node.tool)
+
+    def frontier_vote(self, node_id: str) -> int:
+        """Outlines whose current first step has this subgoal and tool.
+
+        This is not the node's out-degree and not the count of downstream nodes.
+        """
+        key = self._vote_key(node_id)
+        count = 0
+        for plan_id in self.active_plan_ids():
+            frontier = self.frontier_node_id(plan_id)
+            if frontier is not None and self._vote_key(frontier) == key:
+                count += 1
+        return count
+
+    def _select_frontier(self) -> Optional[GraphNode]:
+        candidates = []
+        for plan_id in self.active_plan_ids():
+            frontier = self.frontier_node_id(plan_id)
+            if frontier is not None and frontier not in candidates:
+                candidates.append(frontier)
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda node_id: (
+                -self.frontier_vote(node_id),
+                self._nodes[node_id].estimated_cost,
+                node_id,
+            )
+        )
+        return copy.deepcopy(self._nodes[candidates[0]])
 
     def _build(self, plans: Sequence[CandidatePlan]) -> None:
         grouped: dict[tuple, list[tuple[str, int, PlanStep]]] = {}
@@ -344,6 +408,13 @@ def plans_for_snippet_gap(action: dict, *, environment: str, limit: int = 3) -> 
         parameter="query",
         argument=query,
     )
+    answer = PlanStep(
+        subgoal="answer the question from the retrieved evidence",
+        action="answer",
+        tool="Generalist_Solution_Generator_Tool",
+        estimated_cost=1,
+        links_previous=True,
+    )
     search = CandidatePlan(
         "same_query",
         (PlanStep(
@@ -355,7 +426,7 @@ def plans_for_snippet_gap(action: dict, *, environment: str, limit: int = 3) -> 
             argument=query,
             estimated_cost=2,
             links_previous=False,
-        ),),
+        ), answer),
         context=Scope(
             environment=environment,
             tool=_BING,
@@ -375,7 +446,82 @@ def plans_for_snippet_gap(action: dict, *, environment: str, limit: int = 3) -> 
                 argument=url,
                 estimated_cost=1,
                 links_previous=False,
-            ),),
+            ), answer),
             context=Scope(environment=environment),
         ))
     return (search, *fetches)
+
+
+def render_planner_graph_markdown(
+    *,
+    question: str,
+    n: int,
+    step_count: int,
+    max_steps: int,
+    plans: Sequence[CandidatePlan],
+    graph: Optional[PlanningGraph] = None,
+) -> str:
+    """Markdown view of one planner universe. The vote is not the out-degree."""
+    remaining = max(1, int(max_steps) - int(step_count))
+    lines = [
+        "# Planner 规划图",
+        "",
+        f"- 题目：{question}",
+        f"- n：{int(n)}",
+        f"- step_count：{int(step_count)}",
+        f"- max_steps：{int(max_steps)}",
+        f"- 剩余步数：{remaining}",
+        "",
+        "票数是有多少条 outline 把该步当作当前第一步。它不是出度。",
+        "",
+    ]
+    if not plans:
+        lines.append("Planner 没有返回可解析的 outline。这一步退回原来的单条下一步。")
+        return "\n".join(lines) + "\n"
+    built = graph or PlanningGraph(list(plans))
+    lines.append("## Outlines")
+    lines.append("")
+    for plan in plans:
+        lines.append(f"### {plan.plan_id}")
+        lines.append("")
+        for index, step in enumerate(plan.steps, 1):
+            lines.append(f"{index}. `{step.subgoal}` · `{step.tool}`")
+        lines.append("")
+    lines.append("## 合并后的 DAG")
+    lines.append("")
+    lines.append("```mermaid")
+    lines.append("flowchart LR")
+    successors: dict[str, set[str]] = {node.node_id: set() for node in built.nodes()}
+    for node in built.nodes():
+        shared = len(node.candidate_plan_ids) > 1
+        label = f"{node.subgoal} · {node.tool}"
+        if shared:
+            label += " · shared"
+        safe = label.replace('"', "'")
+        lines.append(f'  {node.node_id}["{safe}"]')
+        for pred in node.dependencies:
+            successors.setdefault(pred, set()).add(node.node_id)
+            lines.append(f"  {pred} --> {node.node_id}")
+    lines.append("```")
+    lines.append("")
+    lines.append("## 前沿")
+    lines.append("")
+    chosen = built.select_node(policy="frontier")
+    seen = []
+    for plan_id in built.active_plan_ids():
+        node_id = built.frontier_node_id(plan_id)
+        if node_id and node_id not in seen:
+            seen.append(node_id)
+    if not seen:
+        lines.append("没有可执行的前沿。")
+    for node_id in seen:
+        node = built.node(node_id)
+        mark = "，选中" if chosen is not None and chosen.node_id == node_id else ""
+        lines.append(
+            f"- `{node_id}` `{node.subgoal}` · `{node.tool}`"
+            f" · 票数 {built.frontier_vote(node_id)}"
+            f" · 出度 {len(successors.get(node_id, ()))}"
+            f"{mark}"
+        )
+    lines.append("")
+    return "\n".join(lines)

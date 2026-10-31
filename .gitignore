@@ -25,9 +25,19 @@ artifacts/
 # Experiment runtime (logs / pids / sqlite dumps)
 /experiments/*.log
 /experiments/*.pid
+/experiments/**/*.log
 **/*.sqlite
 /experiments/cghe_hotpot/rounds/
 /experiments/cghe_hotpot/ledger.json
+/experiments/fcr_short/snapshots/
+/experiments/cghe_v2/*.json.lock
+/experiments/cghe_v2/hotpot_dev.json
+/experiments/cghe_v2/full_cghe_dev5.json
+/experiments/cghe_v2/paired_v1.json
+/experiments/cghe_v2/paired_no_shared.json
+/experiments/cghe_v2/paired_pure.json
+/experiments/cghe_v2/paired_search_cache.json
+/experiments/cghe_v2/planner_rounds/
 
 # Python
 __pycache__/

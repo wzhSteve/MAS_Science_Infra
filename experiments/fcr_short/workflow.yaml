@@ -67,7 +67,7 @@ sampling:
   group_n: 4
   beam_size: 2
   initial_rollouts: 2
-  max_branch_depth: 1
+  max_branch_depth: 2
   expand_in_runner: true
   sites: []
 llm:
