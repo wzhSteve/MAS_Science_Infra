@@ -23,6 +23,7 @@ class ConfiguredGateAdapter(SamplingStrategyAdapter):
     allowed_gates = (
         "entropy_delta", "arpo", "always", "dual_entropy", "verifier_fail",
         "verifier_pass", "failure_confirmed", "all_fail", "unexpected_fail",
+        "failure_or_uncertainty", "random",
     )
 
     def supports_window(self, window: SamplingWindow) -> bool:

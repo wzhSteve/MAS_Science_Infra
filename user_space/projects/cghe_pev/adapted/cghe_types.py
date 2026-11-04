@@ -77,12 +77,25 @@ class NodeStatus(str, Enum):
     PENDING = "pending"
     SATISFIED = "satisfied"
     FAILED = "failed"
+    ORPHANED = "orphaned"
 
 
 class PlanStatus(str, Enum):
     ACTIVE = "active"
+    COMPLETED = "completed"
     PRUNED = "pruned"
+    ABANDONED = "abandoned"
+    # Legacy logs only. New CGHE writes use PRUNED or ABANDONED.
     RETIRED = "retired"
+
+
+class CausalRelation(str, Enum):
+    REQUIRES = "REQUIRES"
+    ENABLES = "ENABLES"
+    OBSERVED_TO_CAUSE = "OBSERVED_TO_CAUSE"
+    INVALIDATES = "INVALIDATES"
+    ELIMINATES = "ELIMINATES"
+    SUPPORTS = "SUPPORTS"
 
 
 def new_id(prefix: str) -> str:
@@ -254,11 +267,17 @@ class PlanStep:
     parameter: str = ""
     argument: str = ""
     schema_signature: str = ""
+    task_id: str = ""
+    consumes: tuple[str, ...] = ()
+    produces: tuple[str, ...] = ()
+    instance_key: str = ""
 
     def __post_init__(self) -> None:
         self.preconditions = tuple(self.preconditions or ())
         self.required_state = normalize_state(self.required_state)
         self.predecessor_ids = tuple(self.predecessor_ids or ())
+        self.consumes = normalize_state(self.consumes)
+        self.produces = normalize_state(self.produces)
         self.estimated_cost = float(self.estimated_cost)
 
 
@@ -270,6 +289,7 @@ class CandidatePlan:
     steps: tuple[PlanStep, ...] = ()
     status: PlanStatus = PlanStatus.ACTIVE
     context: Scope = field(default_factory=Scope)
+    prune_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         if isinstance(self.status, str):
@@ -314,6 +334,10 @@ class GraphNode:
     parameter: str = ""
     argument: str = ""
     schema_signature: str = ""
+    task_id: str = ""
+    consumes: tuple[str, ...] = ()
+    produces: tuple[str, ...] = ()
+    instance_key: str = ""
 
     def __post_init__(self) -> None:
         if isinstance(self.status, str):
@@ -322,11 +346,50 @@ class GraphNode:
         self.dependencies = tuple(self.dependencies or ())
         self.candidate_plan_ids = tuple(self.candidate_plan_ids or ())
         self.required_state = normalize_state(self.required_state)
+        self.consumes = normalize_state(self.consumes)
+        self.produces = normalize_state(self.produces)
         self.estimated_cost = float(self.estimated_cost)
 
     def has_premise(self, premise: AtomicPremise) -> bool:
         target = premise.normalized().key()
         return any(item.normalized().key() == target for item in self.preconditions)
+
+
+@dataclass
+class AttemptRecord:
+    """One real Step-1 Executor invocation under a single DAG."""
+
+    attempt_id: str
+    dag_id: str
+    step1_node_id: str
+    selected_plan_ids: tuple[str, ...] = ()
+    coverage_at_selection: int = 0
+    execution_status: str = "started"
+    verifier_status: Optional[str] = None
+    evidence_id: Optional[str] = None
+    pruning_applied: bool = False
+    pruned_plan_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        self.selected_plan_ids = tuple(self.selected_plan_ids or ())
+        self.pruned_plan_ids = tuple(self.pruned_plan_ids or ())
+        self.coverage_at_selection = int(self.coverage_at_selection)
+
+
+@dataclass
+class CausalEdge:
+    source_id: str
+    target_id: str
+    relation_type: str
+    evidence_id: str = ""
+    scope: Optional[Scope] = None
+    direct: bool = False
+
+    def __post_init__(self) -> None:
+        if isinstance(self.relation_type, CausalRelation):
+            self.relation_type = self.relation_type.value
+        if isinstance(self.scope, Mapping):
+            self.scope = Scope(**dict(self.scope))
 
 
 @dataclass
@@ -564,6 +627,10 @@ def plan_step_from_dict(data: Mapping[str, Any]) -> PlanStep:
         parameter=str(raw.get("parameter") or ""),
         argument=str(raw.get("argument") or ""),
         schema_signature=str(raw.get("schema_signature") or ""),
+        task_id=str(raw.get("task_id") or ""),
+        consumes=tuple(raw.get("consumes") or ()),
+        produces=tuple(raw.get("produces") or ()),
+        instance_key=str(raw.get("instance_key") or ""),
     )
 
 

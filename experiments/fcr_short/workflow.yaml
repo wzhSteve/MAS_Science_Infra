@@ -64,7 +64,7 @@ edges:
   kind: feedback
 sampling:
   mode: grpo_n
-  group_n: 4
+  group_n: 8
   beam_size: 2
   initial_rollouts: 2
   max_branch_depth: 2

@@ -107,6 +107,9 @@ def evaluate_step(
         return "STOP", reasons + ["coverage_miss_streak=2"], next_coverage_misses, 0
 
     warn: List[str] = list(reasons)
+    starvation = _num(row, "fcr/branch_starvation")
+    if starvation is not None and starvation >= 1:
+        warn.append("branch_starvation")
     if fail_rate is not None and fail_rate <= 0:
         warn.append("failure_confirmed_rate=0")
     if pair_rate is not None and pair_rate <= 0:
@@ -136,6 +139,19 @@ def format_line(row: Dict[str, Any], gate: str, reasons: Iterable[str]) -> str:
         "fcr/brier",
         "fcr/nonzero_token_reward_frac",
         "fcr/n_corr_hits",
+        "fcr/strict_event_count",
+        "fcr/weak_event_count",
+        "fcr/R_answer_mean",
+        "fcr/R_correct_mean",
+        "fcr/R_total_mean",
+        "fcr/mean_p",
+        "fcr/bss",
+        "fcr/quad_unexpected",
+        "fcr/budget_violation_count",
+        "fcr/branch_uplift",
+        "fcr/branch_starvation",
+        "fcr/corr_correct_answer",
+        "training/reward",
         "val/reward",
         "fcr/infra_drop_rate",
         "actor/fcr_brier_loss",

@@ -43,6 +43,12 @@ DEFAULT_TIR: Dict[str, Any] = {
     "fcr_threshold": 0.5,
     "fcr_lambda": 0.1,
     "fcr_brier_beta": 0.1,
+    "fcr_pattern_enabled": True,
+    "fcr_pattern_require_prev_fail": False,
+    "fcr_repair_enabled": False,
+    "fcr_hard_beam_cap": False,
+    "fcr_brier_mode": "magnitude",
+    "fcr_brier_enabled": False,
     "fcr_max_branches_per_episode": 1,
 }
 

@@ -17,6 +17,8 @@ from typing import Any, Mapping, Optional
 
 from cghe_types import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    CausalEdge,
+    CausalRelation,
     Constraint,
     EvidenceOrigin,
     EvidenceStatus,
@@ -152,6 +154,7 @@ class EvidenceMemory:
         self.db_path = str(path)
         self.confidence_threshold = float(confidence_threshold)
         self._conn: Optional[sqlite3.Connection] = None
+        self._causal_edges: list[Any] = []
         path.parent.mkdir(parents=True, exist_ok=True)
         self._connect()
 
@@ -164,6 +167,38 @@ class EvidenceMemory:
         self.__dict__.update(state)
         self._conn = None
 
+    def add_causal_edge(
+        self,
+        source_id: str,
+        target_id: str,
+        relation: str | CausalRelation,
+        *,
+        evidence_id: str = "",
+        scope: Optional[Scope] = None,
+        direct: bool = False,
+    ) -> Optional[CausalEdge]:
+        """Record one causal edge. OBSERVED_TO_CAUSE requires direct execution evidence."""
+        name = relation.value if isinstance(relation, CausalRelation) else str(relation)
+        if name == CausalRelation.OBSERVED_TO_CAUSE.value and not direct:
+            return None
+        edge = CausalEdge(
+            source_id=str(source_id or ""),
+            target_id=str(target_id or ""),
+            relation_type=name,
+            evidence_id=str(evidence_id or ""),
+            scope=scope,
+            direct=bool(direct),
+        )
+        edges = getattr(self, "_causal_edges", None)
+        if edges is None:
+            edges = []
+            self._causal_edges = edges
+        edges.append(edge)
+        return edge
+
+    def causal_edges(self) -> tuple[CausalEdge, ...]:
+        return tuple(getattr(self, "_causal_edges", ()) or ())
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
@@ -175,6 +210,7 @@ class EvidenceMemory:
             "db_path": self.db_path,
             "confidence_threshold": self.confidence_threshold,
             "records": self.export_records(),
+            "causal_edges": [to_plain(edge) for edge in self.causal_edges()],
         }
 
     def export_records(self) -> list[dict[str, Any]]:

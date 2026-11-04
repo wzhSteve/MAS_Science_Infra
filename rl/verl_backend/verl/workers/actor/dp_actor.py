@@ -37,7 +37,7 @@ from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import logprobs_from_logits
 from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad, ulysses_pad_and_slice_inputs
 from verl.workers.actor import BasePPOActor
-from rl.fcr import binary_brier_from_scores
+from rl.fcr import binary_bce_from_scores, binary_brier_from_scores, combine_pred_losses
 
 if is_cuda_available:
     from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
@@ -471,37 +471,42 @@ class DataParallelPPOActor(BasePPOActor):
                         metrics["actor/kl_coef"] = self.config.kl_loss_coef
 
                     if has_fcr_labels:
-                        brier = self._fcr_brier_loss(data, temperature=temperature)
-                        if brier is not None:
+                        pred_loss, brier_meta = self._fcr_brier_loss(data, temperature=temperature)
+                        if pred_loss is not None:
                             diagnostics_on = os.environ.get("FCR_GRAD_DIAGNOSTICS", "0").lower() not in (
                                 "0", "false", "off",
                             )
                             if not fcr_gradient_diagnostic_done and diagnostics_on:
-                                diagnostics = self._fcr_gradient_diagnostics(policy_loss, brier)
+                                diagnostics = self._fcr_gradient_diagnostics(policy_loss, pred_loss)
                                 append_to_dict(metrics, diagnostics)
                                 fcr_gradient_diagnostic_done = True
-                            elif "actor/fcr_grad_norm_ratio" not in metrics:
+                            elif "actor/fcr_loss_abs_ratio" not in metrics:
                                 pg_abs = pg_loss.detach().abs().clamp_min(1e-12)
-                                metrics["actor/fcr_grad_norm_ratio"] = (
-                                    brier.detach().abs() / pg_abs
+                                # Cheap proxy only — not a gradient norm ratio.
+                                metrics["actor/fcr_loss_abs_ratio"] = (
+                                    pred_loss.detach().abs() / pg_abs
                                 ).item()
-                            brier_abs = brier.detach().abs()
+                            pred_abs = pred_loss.detach().abs()
                             pg_abs = pg_loss.detach().abs()
                             if fcr_mode == "fixed":
                                 scale = torch.tensor(
                                     fcr_fixed_beta,
-                                    device=brier.device,
-                                    dtype=brier.dtype,
+                                    device=pred_loss.device,
+                                    dtype=pred_loss.dtype,
                                 )
                             else:
-                                scale = pg_abs / (pg_abs + brier_abs).clamp_min(1e-12)
-                            policy_loss = policy_loss + scale * brier
-                            metrics["actor/fcr_brier_loss"] = brier.detach().item()
+                                scale = pg_abs / (pg_abs + pred_abs).clamp_min(1e-12)
+                            policy_loss = policy_loss + scale * pred_loss
+                            metrics["actor/fcr_brier_loss"] = float(
+                                brier_meta.get("actor/fcr_brier_component", pred_loss.detach().item())
+                            )
+                            metrics["actor/fcr_pred_loss"] = pred_loss.detach().item()
                             metrics["actor/fcr_brier_beta"] = float(scale.detach().item())
                             metrics["actor/fcr_brier_scale"] = float(scale.detach().item())
                             metrics["actor/fcr_loss_ratio"] = float(
-                                (brier_abs / pg_abs.clamp_min(1e-12)).item()
+                                (pred_abs / pg_abs.clamp_min(1e-12)).item()
                             )
+                            append_to_dict(metrics, brier_meta)
 
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
@@ -550,11 +555,25 @@ class DataParallelPPOActor(BasePPOActor):
         }
 
     def _fcr_brier_loss(self, data, *, temperature: float):
-        """Teacher-force YES and NO from the emitted prediction prefix."""
+        """Teacher-force YES/NO with class-balanced row selection.
+
+        Returns ``(loss, meta)`` where ``meta`` carries sampling diagnostics for
+        metrics.jsonl. Failure-dominated batches previously collapsed to always-NO
+        when only the first valid row (usually Y=0) was supervised.
+        """
+        empty = {
+            "actor/fcr_brier_n_pos": 0.0,
+            "actor/fcr_brier_n_neg": 0.0,
+            "actor/fcr_brier_pos_weight": 1.0,
+            "actor/fcr_brier_mean_p": 0.0,
+            "actor/fcr_brier_skipped_unbalanced": 0.0,
+        }
         if self.use_ulysses_sp:
-            return None
-        losses = []
+            return None, empty
         max_rows = max(0, int(os.environ.get("FCR_BRIER_MAX_ROWS", "1")))
+        if max_rows == 0:
+            return None, empty
+
         responses = data["responses"]
         input_ids = data["input_ids"]
         attention_mask = data["attention_mask"]
@@ -563,9 +582,9 @@ class DataParallelPPOActor(BasePPOActor):
         labels = data["actual_satisfied_list"]
         written_labels = data["predicted_label_list"]
         prediction_starts = data["prediction_token_start_list"]
-        for row in range(responses.size(0)):
-            if max_rows == 0:
-                break
+
+        candidates = []
+        for row in range(int(responses.size(0))):
             positive = list(satisfy_ids[row] or [])
             negative = list(unsatisfy_ids[row] or [])
             label = labels[row]
@@ -593,11 +612,61 @@ class DataParallelPPOActor(BasePPOActor):
             label_start = response_start + response_offset
             positions = torch.arange(input_ids.size(1), device=input_ids.device)
             prefix = input_ids[row][attention_mask[row].bool() & (positions < label_start)]
-            prefix_len = int(prefix.numel())
-            if prefix_len <= 0:
+            if int(prefix.numel()) <= 0:
                 continue
+            candidates.append(
+                {
+                    "row": row,
+                    "label": bool(label),
+                    "positive": positive,
+                    "negative": negative,
+                    "prefix": prefix,
+                }
+            )
+
+        n_pos = sum(1 for item in candidates if item["label"])
+        n_neg = sum(1 for item in candidates if not item["label"])
+        pos_weight = float(min(8.0, max(1.0, n_neg / max(n_pos, 1))))
+        skipped_unbalanced = 0.0
+        if n_pos == 0 or n_neg == 0:
+            skipped_unbalanced = 1.0
+
+        selected = []
+        if not candidates:
+            return None, {
+                **empty,
+                "actor/fcr_brier_skipped_unbalanced": skipped_unbalanced,
+            }
+        if max_rows == 1:
+            minority = n_pos <= n_neg
+            preferred = [item for item in candidates if item["label"] == minority]
+            pool = preferred or candidates
+            selected = [pool[0]]
+        else:
+            pos_pool = [item for item in candidates if item["label"]]
+            neg_pool = [item for item in candidates if not item["label"]]
+            if pos_pool:
+                selected.append(pos_pool[0])
+            if neg_pool and len(selected) < max_rows:
+                selected.append(neg_pool[0])
+            used = {id(item) for item in selected}
+            for item in candidates:
+                if len(selected) >= max_rows:
+                    break
+                if id(item) in used:
+                    continue
+                selected.append(item)
+                used.add(id(item))
+
+        losses = []
+        probabilities = []
+        brier_components = []
+        bce_components = []
+        for item in selected:
+            prefix = item["prefix"]
+            prefix_len = int(prefix.numel())
             scores = []
-            for candidate in (positive, negative):
+            for candidate in (item["positive"], item["negative"]):
                 candidate_tensor = torch.tensor(
                     candidate, dtype=prefix.dtype, device=prefix.device
                 )
@@ -626,9 +695,57 @@ class DataParallelPPOActor(BasePPOActor):
                         .gather(-1, token_targets.unsqueeze(-1))
                         .sum()
                     )
-            if len(scores) == 2:
-                loss, _probability = binary_brier_from_scores(scores[0], scores[1], bool(label))
-                losses.append(loss)
-            if len(losses) >= max_rows:
-                break
-        return torch.stack(losses).mean() if losses else None
+            if len(scores) != 2:
+                continue
+            use_bce = os.environ.get("FCR_PRED_BCE", "0").lower() not in ("0", "false", "off")
+            bce_w = float(os.environ.get("FCR_BCE_WEIGHT", "1.0"))
+            brier_w = float(os.environ.get("FCR_BRIER_WEIGHT", "1.0" if not use_bce else "0.1"))
+            brier_loss, probability = binary_brier_from_scores(
+                scores[0],
+                scores[1],
+                bool(item["label"]),
+                pos_weight=pos_weight,
+            )
+            bce_loss = None
+            if use_bce:
+                bce_loss, probability = binary_bce_from_scores(
+                    scores[0],
+                    scores[1],
+                    bool(item["label"]),
+                    pos_weight=pos_weight,
+                )
+            loss = combine_pred_losses(
+                bce_loss, brier_loss, bce_weight=bce_w if use_bce else 0.0, brier_weight=brier_w,
+            )
+            if loss is None:
+                continue
+            losses.append(loss)
+            probabilities.append(probability.detach())
+            brier_components.append(brier_loss.detach())
+            if bce_loss is not None:
+                bce_components.append(bce_loss.detach())
+
+        meta = {
+            "actor/fcr_brier_n_pos": float(n_pos),
+            "actor/fcr_brier_n_neg": float(n_neg),
+            "actor/fcr_brier_pos_weight": float(pos_weight),
+            "actor/fcr_brier_mean_p": float(
+                torch.stack(probabilities).mean().item()
+            )
+            if probabilities
+            else 0.0,
+            "actor/fcr_brier_skipped_unbalanced": skipped_unbalanced,
+            "actor/fcr_brier_component": float(
+                torch.stack(brier_components).mean().item()
+            )
+            if brier_components
+            else 0.0,
+            "actor/fcr_bce_component": float(
+                torch.stack(bce_components).mean().item()
+            )
+            if bce_components
+            else 0.0,
+        }
+        if not losses:
+            return None, meta
+        return torch.stack(losses).mean(), meta

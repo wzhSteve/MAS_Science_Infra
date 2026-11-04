@@ -89,7 +89,15 @@ def evaluate_gate(gate: BranchGate, ctx: GateContext) -> GateDecision:
         ok = bool(ctx.final_failed)
         return GateDecision(ok, 1.0 if ok else 0.0, "failure_trigger")
 
-    if gtype in ("failure_confirmed", "all_fail", "unexpected_fail"):
+    if gtype == "random":
+        # Candidate pool is execution failure (same as all_fail). Budget-matched
+        # subsampling happens at expansion cap, not as an independent coin flip.
+        label = signals.get("actual_satisfied")
+        tool_fault = bool(signals.get("tool_fault"))
+        ok = isinstance(label, (bool, int)) and not bool(label) and not tool_fault
+        return GateDecision(ok, 1.0 if ok else 0.0, "random_execution_failure")
+
+    if gtype in ("failure_confirmed", "all_fail", "unexpected_fail", "failure_or_uncertainty"):
         probability = signals.get("p_satisfy")
         label = signals.get("actual_satisfied")
         tool_fault = bool(signals.get("tool_fault"))
@@ -102,6 +110,13 @@ def evaluate_gate(gate: BranchGate, ctx: GateContext) -> GateDecision:
             ok = bool(signals.get("failure_confirmed"))
         elif gtype == "all_fail":
             ok = failed
+        elif gtype == "failure_or_uncertainty":
+            # Decouple explore trigger from pure p<0.5 collapse: fire on
+            # failure_confirmed OR high predictive uncertainty (Bernoulli entropy).
+            unc_lo = float(params.get("unc_lo", 0.2))
+            unc_hi = float(params.get("unc_hi", 0.8))
+            uncertain = p_value is not None and unc_lo <= p_value <= unc_hi
+            ok = bool(signals.get("failure_confirmed")) or bool(uncertain)
         else:
             ok = failed and p_value is not None and p_value >= 0.5
         return GateDecision(

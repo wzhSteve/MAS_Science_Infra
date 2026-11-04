@@ -29,3 +29,13 @@ cghe:
   lambda_cost: 0.0
   mu_risk: 0.0
   epv_threshold: 0.0
+  max_step1_attempts: 3
+  max_regenerations: 2
+  max_total_step1_attempts: 12
+  selection:
+    strategy: max_step1_path_coverage
+  pruning_gates:
+    require_verified_counterexample: true
+    require_direct_observation: true
+    require_complete_scope: true
+    prune_only_explicitly_dependent_plans: true

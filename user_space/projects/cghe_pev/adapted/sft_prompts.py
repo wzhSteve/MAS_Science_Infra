@@ -29,7 +29,7 @@ _PYTHON_RE = re.compile(r"<python>(.*?)</python>", re.I | re.S)
 _ARPO_SEARCH_RE = re.compile(
     r"<\|begin_search_query\|>(.*?)<\|end_search_query\|>", re.I | re.S
 )
-_URL_RE = re.compile(r"https?://[^\s\"'<>\]\)]+", re.I)
+_URL_RE = re.compile(r"https?://[^\s\"'<>\]]+", re.I)
 _SEARCH_TOOL_MARKERS = ("bing_search", "wikipedia", "wiki")
 _FETCH_TOOL_MARKERS = ("fetch",)
 _EMPTY_RESULT_MARKERS = (
@@ -65,12 +65,53 @@ def _field(text: Any, limit: int) -> str:
 def _extract_urls(text: Any, *, limit: int = 5) -> List[str]:
     seen: List[str] = []
     for match in _URL_RE.findall(str(text or "")):
-        url = match.rstrip(".,);]")
+        url = match.strip().rstrip(".,;]\\n\\r\t ")
+        url = url.split()[0] if url else ""
+        url = url.rstrip("\\")
+        # Drop trailing junk glued on by noisy search dumps (e.g. "\\n3").
+        url = re.sub(r"(?:\\+n|\\+r)+\d*$", "", url)
+        url = re.sub(r"[\r\n].*$", "", url)
+        # Trim unmatched trailing punctuation, keep balanced (...) in wiki paths.
+        while url and url[-1] in ".,;:!?":
+            url = url[:-1]
+        if url.endswith(")") and url.count("(") < url.count(")"):
+            url = url[:-1]
         if url and url not in seen:
             seen.append(url)
         if len(seen) >= limit:
             break
     return seen
+
+
+def _extract_search_results(text: Any, *, limit: int = 8) -> List[Dict[str, str]]:
+    """Best-effort title/url/snippet rows from a search tool dump."""
+    raw = str(text or "")
+    rows: List[Dict[str, str]] = []
+    # Common patterns: "Title\nURL\nSnippet" or "1. Title - URL"
+    blocks = re.split(r"\n\s*\n|(?=\n\s*\d+[\).]\s+)", raw)
+    for block in blocks:
+        urls = _extract_urls(block, limit=1)
+        if not urls:
+            continue
+        url = urls[0]
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        title = ""
+        snippet = ""
+        for line in lines:
+            if url in line:
+                title = title or re.sub(r"https?://\S+", "", line).strip(" -|\t")
+                continue
+            if not title and len(line) <= 160:
+                title = line
+            elif not snippet and url not in line:
+                snippet = line[:300]
+        rows.append({"title": title, "url": url, "snippet": snippet})
+        if len(rows) >= limit:
+            break
+    if not rows:
+        for url in _extract_urls(raw, limit=limit):
+            rows.append({"title": "", "url": url, "snippet": ""})
+    return rows
 
 
 def _tool_name_of(action: Dict[str, Any]) -> str:
@@ -310,13 +351,15 @@ def recent_steps(memory: Any, n: Optional[int] = None, limit: Optional[int] = No
 
 
 def ensure_memory_fields(memory: Any) -> None:
-    """Hang outline and obtained facts on the existing Memory instance."""
+    """Hang outline, obtained facts, and the planning DAG on Memory."""
     if memory is None:
         return
     if not isinstance(getattr(memory, "outline", None), list):
         memory.outline = []
     if not isinstance(getattr(memory, "obtained_information", None), list):
         memory.obtained_information = []
+    if not isinstance(getattr(memory, "planning_graph", None), dict):
+        memory.planning_graph = {}
 
 
 def normalize_outline(raw: Any) -> List[str]:
@@ -975,25 +1018,11 @@ def extract_conclusion(self, response: Any) -> tuple:
 
 
 def analyze_query(self, question: str, image: str) -> str:
+    """Keep the question. The planning DAG is a separate single LLM call."""
     del image
-    prompt = f"""Question: {question}
-
-Tools:
-{_tools_block()}
-
-Reply with exactly these parts and nothing else:
-- Goal: the comparison or fact the question asks for
-- Facts needed: the missing facts
-- Likely tools: one or two tool names from the list
-Outline:
-1. first step, one short sentence
-2. next step
-Use 2 to 4 numbered steps. Each step is work still required to answer the question.
-"""
-    raw = str(self.llm_engine_fixed(prompt) or "").strip()
-    notes, steps = split_query_analysis(raw)
-    self.query_analysis = notes
-    self._initial_outline = steps
+    text = re.sub(r"(?is)\s*when ready, output the final answer.*", "", str(question or "")).strip()
+    self.query_analysis = text[:500]
+    self._initial_outline = []
     return self.query_analysis
 
 
@@ -1126,6 +1155,11 @@ Rules:
 def generate_tool_command(self, question, image, context, sub_goal, tool_name, tool_metadata, step_count=0, json_data=None):
     del question, image, tool_metadata
     name = str(tool_name or "")
+    ready = " ".join(str(context or sub_goal or "").split()).strip()
+    if any(token in name.lower() for token in ("bing", "search")) and ready and "http" not in ready.lower():
+        return f"<search>{ready[:240]}</search>"
+    if "fetch" in name.lower() and ready.lower().startswith("http"):
+        return f"<search>\n{ready[:500]}\n</search>"
     if "python" in name.lower():
         from tools_local import PYTHON_CODE_SPEC
 
@@ -1661,6 +1695,584 @@ def _children_by_parent(text: str, parent_ids: Sequence[str], *, limit: int) -> 
     return grouped
 
 
+_OUTLINE_HEADER = re.compile(r"(?i)^\s*O(\d+)\s*:\s*(?:([A-Za-z0-9_ ]+)\s*\|\s*(.+))?\s*$")
+_OUTLINE_STEP = re.compile(r"(?i)^\s*O(\d+)\.(\d+)\s*:\s*([A-Za-z0-9_ ]+)\s*\|\s*(.+?)\s*$")
+
+
+def _annotate_outline_step(
+    *,
+    plan_id: str,
+    index: int,
+    tool: str,
+    action: str,
+) -> Dict[str, Any]:
+    name = str(tool or "").lower()
+    action = " ".join(str(action or "").split()).strip("<>\"'").strip()
+    if any(m in name for m in ("bing", "wiki", "search")):
+        return {
+            "subgoal": action,
+            "action": action,
+            "tool": tool,
+            "estimated_cost": 1,
+            "links_previous": index > 0,
+            "task_id": "search",
+            "produces": ["search_results"],
+            "consumes": [],
+            "instance_key": "",
+            "parameter": "query",
+            "argument": action,
+        }
+    if "fetch" in name:
+        return {
+            "subgoal": action,
+            "action": action,
+            "tool": "Web_Fetch_Tool",
+            "estimated_cost": 1,
+            "links_previous": index > 0,
+            "task_id": "open_page",
+            "produces": ["page_content"],
+            "consumes": ["search_url"],
+            "instance_key": f"{plan_id}:open:{index}",
+            "parameter": "url",
+            "argument": "",
+        }
+    if "generalist" in name or "generator" in name:
+        return {
+            "subgoal": action or _SINK_SUBGOAL,
+            "action": action or _SINK_SUBGOAL,
+            "tool": "Generalist_Solution_Generator_Tool",
+            "estimated_cost": 1,
+            "links_previous": index > 0,
+            "task_id": "extract_fact",
+            "produces": ["answer_candidate"],
+            "consumes": ["page_content"],
+            "instance_key": f"{plan_id}:extract:{index}",
+        }
+    return {
+        "subgoal": action,
+        "action": action,
+        "tool": tool,
+        "estimated_cost": 1,
+        "links_previous": index > 0,
+        "task_id": "",
+        "produces": [],
+        "consumes": [],
+        "instance_key": f"{plan_id}:s{index}",
+    }
+
+
+def parse_outline_forest(text: str, *, limit: int = 10, depth: int = 3) -> List[List[Dict[str, str]]]:
+    """Parse O1 / O1.1 line protocol into ordered outline step lists."""
+    buckets: Dict[int, Dict[int, Dict[str, str]]] = {}
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip().strip("`")
+        if not line or line.lower().startswith("<answer"):
+            continue
+        step = _OUTLINE_STEP.match(line)
+        if step:
+            oid = int(step.group(1))
+            sid = int(step.group(2))
+            tool = resolve_tool_name(step.group(3))
+            action = " ".join(step.group(4).split()).strip("<>\"'").strip()
+            if not tool or not action or "http://" in action.lower() or "https://" in action.lower():
+                continue
+            buckets.setdefault(oid, {})[sid] = {"tool": tool, "action": action, "subgoal": action}
+            continue
+        header = _OUTLINE_HEADER.match(line)
+        if not header:
+            continue
+        oid = int(header.group(1))
+        if header.group(2) and header.group(3):
+            tool = resolve_tool_name(header.group(2))
+            action = " ".join(header.group(3).split()).strip("<>\"'").strip()
+            if tool and action and "http://" not in action.lower() and "https://" not in action.lower():
+                buckets.setdefault(oid, {})[0] = {"tool": tool, "action": action, "subgoal": action}
+        else:
+            buckets.setdefault(oid, {})
+    outlines: List[List[Dict[str, str]]] = []
+    for oid in sorted(buckets):
+        steps_map = buckets[oid]
+        ordered = [steps_map[key] for key in sorted(steps_map)]
+        if not ordered:
+            continue
+        # Drop duplicate consecutive tools/actions and cap depth.
+        cleaned: List[Dict[str, str]] = []
+        seen_actions = set()
+        for item in ordered:
+            key = (item["tool"], item["action"].lower())
+            if key in seen_actions:
+                continue
+            seen_actions.add(key)
+            cleaned.append(item)
+            if len(cleaned) >= max(1, depth):
+                break
+        if cleaned:
+            outlines.append(cleaned)
+        if len(outlines) >= limit:
+            break
+    return outlines
+
+
+def _plans_from_outline_forest(
+    forest: List[List[Dict[str, str]]],
+    *,
+    depth: int = 3,
+) -> List[Any]:
+    from cghe_types import candidate_plan_from_dict
+
+    plans: List[Any] = []
+    for index, steps in enumerate(forest, 1):
+        plan_id = f"o{index}"
+        annotated = []
+        for step_index, step in enumerate(steps[: max(1, depth)]):
+            annotated.append(
+                _annotate_outline_step(
+                    plan_id=plan_id,
+                    index=step_index,
+                    tool=step["tool"],
+                    action=step.get("subgoal") or step["action"],
+                )
+            )
+        # Ensure extract can consume a page when depth allows and last step is fetch.
+        if depth >= 3 and annotated and "page_content" in annotated[-1].get("produces", ()):
+            annotated.append(
+                _annotate_outline_step(
+                    plan_id=plan_id,
+                    index=len(annotated),
+                    tool="Generalist_Solution_Generator_Tool",
+                    action=_SINK_SUBGOAL,
+                )
+            )
+            annotated = annotated[:depth]
+        if not annotated:
+            continue
+        plans.append(candidate_plan_from_dict({"plan_id": plan_id, "steps": annotated}))
+    return plans
+
+
+_EXTRACT_ACTION = "extract the asked fact from the retrieved evidence"
+
+
+def _layered_oneshot_prompt(question: str, *, guidance: str) -> str:
+    return f"""Do not answer the question. Output ONLY the plan lines below. No prose. No JSON. No URLs.
+You MUST finish Part A, Part B, and Part C in this same reply. Never stop after Bing_Search_Tool lines.
+
+Part A — write exactly 2 search lines (not 3):
+S1 | Bing_Search_Tool | <short query from the question> | SnippetsSufficient | primary
+S2 | Bing_Search_Tool | <different short query> | SnippetsSufficient |
+
+Part B — write fetch lines immediately after Part A. Keep every | separator.
+S1 needs exactly 3 Web_Fetch_Tool lines with different fetch: keys.
+S2 needs exactly 1 Web_Fetch_Tool line.
+S1 | Web_Fetch_Tool | open encyclopedia page for <EntityA> | CanAccess | fetch:<entitya>
+S1 | Web_Fetch_Tool | open encyclopedia page for <EntityB> | CanAccess | fetch:<entityb>
+S1 | Web_Fetch_Tool | open cast or details page for <EntityB> | CanAccess | fetch:<entityb details>
+S2 | Web_Fetch_Tool | open encyclopedia page for <EntityC> | CanAccess | fetch:<entityc>
+
+Part C — one extract line:
+S1 | Generalist_Solution_Generator_Tool | extract asked fact | PageContainsAnswer | extract:answer
+
+Copy this shape with entities from the question, then stop:
+S1 | Bing_Search_Tool | Oliver Reed Royal Flash | SnippetsSufficient | primary
+S2 | Bing_Search_Tool | Royal Flash 1975 film | SnippetsSufficient |
+S1 | Web_Fetch_Tool | open encyclopedia page for Oliver Reed | CanAccess | fetch:oliver reed
+S1 | Web_Fetch_Tool | open encyclopedia page for Royal Flash | CanAccess | fetch:royal flash
+S1 | Web_Fetch_Tool | open cast page for Royal Flash | CanAccess | fetch:royal flash cast
+S2 | Web_Fetch_Tool | open encyclopedia page for Royal Flash film | CanAccess | fetch:royal flash film
+S1 | Generalist_Solution_Generator_Tool | extract asked fact | PageContainsAnswer | extract:answer
+
+{guidance}
+
+Question: {question}
+"""
+
+
+def _join_sid_lines(text: str) -> List[str]:
+    joined: List[str] = []
+    buffer = ""
+    for line in str(text or "").splitlines():
+        if re.match(r"(?i)\s*s\d+\b", line) and buffer:
+            joined.append(buffer)
+            buffer = line.strip()
+        else:
+            buffer = (buffer + " " + line).strip()
+    if buffer:
+        joined.append(buffer)
+    return joined
+
+
+def parse_step1_lines(text: str) -> List[Dict[str, str]]:
+    roots: List[Dict[str, str]] = []
+    seen = set()
+    for line in _join_sid_lines(text):
+        match = re.match(r"(?i)\s*(s\d+)\b", line)
+        if not match:
+            continue
+        parts = [part.strip(" -\t") for part in line.split("|")]
+        parts = [part for part in parts if part]
+        if len(parts) < 3:
+            continue
+        tool_field = parts[1].lower()
+        if "bing" not in tool_field and "search" not in tool_field:
+            continue
+        if "fetch" in tool_field or "generalist" in tool_field:
+            continue
+        query = parts[2]
+        query = re.sub(r"(?i)\b(bing_search_tool|web_fetch_tool|snippetssufficient|primary)\b", " ", query)
+        query = " ".join(query.split())
+        if len(query) < 3 or "http" in query.lower():
+            continue
+        if query.casefold() in seen:
+            continue
+        seen.add(query.casefold())
+        roots.append({
+            "sid": match.group(1).upper(),
+            "query": query,
+            "primary": any(part.casefold() == "primary" for part in parts),
+        })
+        if len(roots) >= 3:
+            break
+    if not roots:
+        return []
+    primaries = [item for item in roots if item["primary"]]
+    if len(primaries) != 1:
+        for item in roots:
+            item["primary"] = False
+        roots[0]["primary"] = True
+    return roots
+
+
+def parse_step2_lines(text: str, root_ids: List[str]) -> Dict[str, List[Dict[str, str]]]:
+    children: Dict[str, List[Dict[str, str]]] = {sid: [] for sid in root_ids}
+    seen_keys: Dict[str, set] = {sid: set() for sid in root_ids}
+    for line in _join_sid_lines(text):
+        match = re.match(r"(?i)\s*(s\d+)\b", line)
+        if not match:
+            continue
+        sid = match.group(1).upper()
+        if sid not in children:
+            continue
+        # Tolerate missing pipes: "Web_Fetch Tool ... CanAccess fetch:key"
+        normalized = re.sub(r"(?i)\bweb[_\s-]*fetch[_\s-]*tool\b", "Web_Fetch_Tool", line)
+        normalized = re.sub(r"(?i)\bcanaccess\b", "| CanAccess |", normalized)
+        normalized = re.sub(r"(?i)\bfetch\s*:\s*", "| fetch:", normalized)
+        parts = [part.strip(" -\t") for part in normalized.split("|")]
+        parts = [part for part in parts if part]
+        if len(parts) < 2:
+            continue
+        blob = " ".join(parts[1:]).lower()
+        tool_field = parts[1].lower() if len(parts) > 1 else ""
+        if "generalist" in tool_field or ("pagecontainsanswer" in blob and "fetch" not in tool_field and "web_fetch" not in tool_field):
+            continue
+        if "bing" in tool_field:
+            continue
+        if "fetch" not in tool_field and "fetch:" not in blob and "open " not in blob:
+            continue
+        action = parts[2] if len(parts) >= 3 else " ".join(parts[1:])
+        action = re.sub(
+            r"(?i)\b(web_fetch_tool|bing_search_tool|generalist_solution_generator_tool|canaccess)\b",
+            " ",
+            action,
+        )
+        action = re.sub(r"(?i)\bfetch:[^\s|]+", " ", action)
+        action = " ".join(action.split())
+        if len(action) < 3 or "http" in action.lower():
+            continue
+        share = ""
+        assumption = "CanAccess"
+        for part in parts[1:]:
+            low = part.casefold().strip()
+            fetch_match = re.search(r"fetch:\s*([^\s|]+(?:\s+[^\s|]+)*)", low)
+            if fetch_match and not share:
+                share = "fetch:" + " ".join(fetch_match.group(1).split())
+            elif low in {"canaccess", "pagecontainsanswer", "snippetssufficient"}:
+                assumption = part.strip()
+        if not share:
+            share = "fetch:" + action.casefold()
+        if share in seen_keys[sid]:
+            continue
+        seen_keys[sid].add(share)
+        children[sid].append({"action": action, "share_key": share, "assumption": assumption, "argument": action})
+    return children
+
+
+def plans_from_layered_steps(roots: List[Dict[str, str]], children: Dict[str, List[Dict[str, str]]]) -> List[Any]:
+    payload = {"plans": []}
+    number = 1
+    for root in roots:
+        pages = children.get(root["sid"]) or []
+        for page in pages:
+            payload["plans"].append({
+                "plan_id": f"p{number}",
+                "steps": [
+                    {
+                        "tool": "Bing_Search_Tool",
+                        "action": root["query"],
+                        "argument": root["query"],
+                        "assumption": "SnippetsSufficient",
+                        "share_key": "",
+                    },
+                    {
+                        "tool": "Web_Fetch_Tool",
+                        "action": page["action"],
+                        "argument": page["argument"],
+                        "assumption": page["assumption"],
+                        "share_key": page["share_key"],
+                    },
+                    {
+                        "tool": "Generalist_Solution_Generator_Tool",
+                        "action": "extract asked fact",
+                        "argument": "",
+                        "assumption": "PageContainsAnswer",
+                        "share_key": "extract:answer",
+                    },
+                ],
+            })
+            number += 1
+    return plans_from_planner_json(json.dumps(payload), n=max(number, 1), depth=3)
+
+
+def _assumption_premise(name: str, tool: str, argument: str) -> Dict[str, str]:
+    key = str(name or "").strip()
+    if key == "CanAccess":
+        return {"predicate": "CanAccess", "tool": tool, "resource": argument}
+    if key == "PageContainsAnswer":
+        return {"predicate": "SnippetsSufficient", "tool": tool, "parameter": "page", "argument": argument or "retrieved page"}
+    return {"predicate": "SnippetsSufficient", "tool": tool or "Bing_Search_Tool", "parameter": "query", "argument": argument}
+
+
+def _json_objects(text: str) -> List[Any]:
+    found: List[Any] = []
+    index = 0
+    raw = str(text or "")
+    while index < len(raw):
+        start = raw.find("{", index)
+        if start < 0:
+            break
+        depth = 0
+        closed = False
+        for end in range(start, len(raw)):
+            char = raw[end]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        found.append(json.loads(raw[start:end + 1]))
+                    except json.JSONDecodeError:
+                        pass
+                    index = end + 1
+                    closed = True
+                    break
+        if not closed:
+            break
+    return found
+
+
+def plans_from_planner_json(text: str, *, n: int = 4, depth: int = 3) -> List[Any]:
+    from cghe_types import candidate_plan_from_dict
+
+    rows: List[Any] = []
+    for obj in _json_objects(text):
+        if isinstance(obj, dict) and isinstance(obj.get("plans"), list):
+            rows.extend(obj["plans"])
+        elif isinstance(obj, dict) and isinstance(obj.get("steps"), list) and obj.get("plan_id"):
+            rows.append(obj)
+    unique: List[Any] = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        pid = str(row.get("plan_id") or "")
+        if pid in seen:
+            continue
+        seen.add(pid)
+        unique.append(row)
+    rows = unique
+    plans: List[Any] = []
+    for index, row in enumerate(rows[:n], 1):
+        if not isinstance(row, dict):
+            continue
+        steps = []
+        for step_index, step in enumerate(list(row.get("steps") or [])[:depth]):
+            if not isinstance(step, dict):
+                continue
+            tool = resolve_tool_name(str(step.get("tool") or ""))
+            action = " ".join(str(step.get("action") or "").split())
+            argument = " ".join(str(step.get("argument") or action).split())
+            if not tool or not action or "http://" in action.lower() or "https://" in action.lower():
+                continue
+            if "generalist" in tool.lower():
+                action = _EXTRACT_ACTION
+                argument = ""
+            share = str(step.get("share_key") or "").strip().lower()
+            if "fetch" in tool.lower() and not share:
+                share = "fetch:" + argument.casefold()
+            if "generalist" in tool.lower():
+                share = "extract:answer"
+            assumption = _assumption_premise(str(step.get("assumption") or ""), tool, argument or action)
+            steps.append({
+                "subgoal": action,
+                "action": action,
+                "tool": tool,
+                "estimated_cost": 1,
+                "links_previous": step_index > 0,
+                "task_id": "search" if "bing" in tool.lower() or "search" in tool.lower() else (
+                    "open_page" if "fetch" in tool.lower() else "extract_fact"
+                ),
+                "produces": ["search_results"] if step_index == 0 else (
+                    ["page_content"] if "fetch" in tool.lower() else ["answer_candidate"]
+                ),
+                "consumes": [] if step_index == 0 else (
+                    ["search_url"] if "fetch" in tool.lower() else ["page_content"]
+                ),
+                "instance_key": share,
+                "parameter": "query" if step_index == 0 else ("resource" if "fetch" in tool.lower() else ""),
+                "argument": argument if step_index == 0 or "fetch" in tool.lower() else "",
+                "preconditions": [assumption],
+            })
+        if len(steps) < 2 or "bing" not in str(steps[0]["tool"]).lower():
+            continue
+        first_tool = str(steps[0]["tool"] or "")
+        first_arg = str(steps[0].get("argument") or steps[0].get("action") or "")
+        plans.append(candidate_plan_from_dict({
+            "plan_id": str(row.get("plan_id") or f"p{index}"),
+            "steps": steps,
+            # Match FailureAnalyzer / CGHE_ENVIRONMENT so query-scoped counterexamples can prune.
+            "context": {
+                "environment": "cghe_pev",
+                "tool": first_tool,
+                "parameter": "query",
+                "argument": first_arg,
+            },
+        }))
+    return plans
+
+
+def _plans_meet_module1(plans: List[Any]) -> bool:
+    if len(plans) < 4:
+        return False
+    queries = []
+    assumptions = 0
+    for plan in plans:
+        first = plan.steps[0]
+        queries.append(str(first.argument or first.action).casefold())
+        if first.preconditions:
+            assumptions += 1
+    if assumptions < len(plans):
+        return False
+    if len(set(queries)) < 2:
+        return False
+    from planning_graph import PlanningGraph
+
+    graph = PlanningGraph(list(plans))
+    shared = any(len(node.candidate_plan_ids) >= 2 for node in graph.nodes() if "generalist" in node.tool.lower() or "fetch" in node.tool.lower())
+    return shared
+
+
+def deterministic_hotpot_plans(question: str, *, n: int = 4, depth: int = 3) -> List[Any]:
+    """No model call. Distinct searches, one shared fetch, one shared extract."""
+    names = re.findall(r"\b[A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){0,2}", question)
+    stop = {"What", "Who", "When", "Where", "Which", "The", "How"}
+    entities = []
+    for name in names:
+        if name.split()[0] in stop:
+            continue
+        if name not in entities:
+            entities.append(name)
+    if not entities:
+        entities = ["the main subject"]
+    first, second = entities[0], entities[1] if len(entities) > 1 else entities[0]
+    queries = [
+        f"{first} {second}".strip(),
+        first,
+        second if second != first else f"{first} biography",
+        f"relation between {first} and {second}",
+    ]
+    payload = {"plans": []}
+    for index, query in enumerate(queries[:n], 1):
+        entity = first if index % 2 else second
+        payload["plans"].append({
+            "plan_id": f"p{index}",
+            "steps": [
+                {"tool": "Bing_Search_Tool", "action": query, "argument": query, "assumption": "SnippetsSufficient", "share_key": ""},
+                {"tool": "Web_Fetch_Tool", "action": f"open encyclopedia page for {entity}", "argument": entity, "assumption": "CanAccess", "share_key": f"fetch:{entity.casefold()}"},
+                {"tool": "Generalist_Solution_Generator_Tool", "action": _EXTRACT_ACTION, "argument": "", "assumption": "PageContainsAnswer", "share_key": "extract:answer"},
+            ][:depth],
+        })
+    return plans_from_planner_json(json.dumps(payload), n=n, depth=depth)
+
+
+def build_outlines_oneshot(
+    engine: Any,
+    question: str,
+    *,
+    n: int = 8,
+    depth: int = 3,
+    guidance: str = "",
+) -> List[Any]:
+    """One planner call emits shared step-1 searches and their downstream pages."""
+    del n, depth
+    question = re.sub(r"(?is)\s*when ready, output the final answer.*", "", str(question or "")).strip()
+    raw = _planner_completion(engine, _layered_oneshot_prompt(question, guidance=guidance), max_tokens=1400)
+    roots = parse_step1_lines(raw)
+    if not roots:
+        return []
+    children = parse_step2_lines(raw, [item["sid"] for item in roots])
+    return plans_from_layered_steps(roots, children)
+
+
+def _normalize_outline_forest(
+    forest: List[List[Dict[str, str]]],
+    *,
+    depth: int,
+) -> List[List[Dict[str, str]]]:
+    fixed: List[List[Dict[str, str]]] = []
+    for steps in forest:
+        if not steps:
+            continue
+        row = list(steps[: max(1, depth)])
+        if "search" not in row[0]["tool"].lower() and "bing" not in row[0]["tool"].lower():
+            continue
+        if len(row) == 1 and depth >= 2:
+            row.append({
+                "tool": "Web_Fetch_Tool",
+                "action": "role=wiki_entity open encyclopedia page",
+                "subgoal": "role=wiki_entity open encyclopedia page",
+            })
+        if len(row) >= 2 and "fetch" not in row[1]["tool"].lower():
+            row[1] = {
+                "tool": "Web_Fetch_Tool",
+                "action": "role=wiki_entity open encyclopedia page",
+                "subgoal": "role=wiki_entity open encyclopedia page",
+            }
+        if len(row) >= 2 and "role=" not in row[1].get("action", "").lower():
+            row[1]["action"] = "role=wiki_entity " + row[1]["action"]
+            row[1]["subgoal"] = row[1]["action"]
+        if depth >= 3 and (len(row) < 3 or "generalist" not in row[-1]["tool"].lower()):
+            row = row[:2] + [{
+                "tool": "Generalist_Solution_Generator_Tool",
+                "action": _SINK_SUBGOAL,
+                "subgoal": _SINK_SUBGOAL,
+            }]
+        fixed.append(row[:depth])
+    return fixed
+
+
+def _plan_is_valid(plan: Any) -> bool:
+    steps = list(getattr(plan, "steps", ()) or ())
+    if len(steps) < 2:
+        return False
+    blob = " ".join(f"{step.tool} {step.action} {step.subgoal}" for step in steps).lower()
+    if "http://" in blob or "https://" in blob:
+        return False
+    tools = [str(step.tool or "").lower() for step in steps]
+    if not any("bing" in t or "search" in t for t in tools[:1]):
+        return False
+    return True
+
+
 def build_layered_outlines(
     engine: Any,
     question: str,
@@ -1671,9 +2283,10 @@ def build_layered_outlines(
 ) -> List[Any]:
     """Grow a DAG one layer at a time.
 
-    Layer 0 is a few different first decisions. Each later layer adds the
-    next step of those decisions and draws the edge back to its parent.
-    The last layer uses one shared extract step so the paths meet again.
+    Layer 0 searches and produces URLs. Layer 1 opens a concrete URL from
+    those results (bound at runtime). Layer 2 extracts from that page body.
+    Extract steps share a task_id but keep distinct instance keys so one
+    path's completion does not finish another path.
     """
     from cghe_types import candidate_plan_from_dict
 
@@ -1692,10 +2305,10 @@ Question: {question}
         f"{root_id}: {step['tool']} | {step['action']}"
         for root_id, step in zip(root_ids, root_steps)
     )
-    child_raw = _planner_completion(engine, f"""Do not answer the question. Do not copy a search query into the next step.
-For every first decision write two next steps. L1 belongs to L0-1, L2 to L0-2, and so on.
-Each next step names a different page: an encyclopedia article, a cast page, a plot page, or a biography.
-Shape: L1-1 || Web_Fetch_Tool | encyclopedia article for the film
+    child_raw = _planner_completion(engine, f"""Do not answer the question. Do not invent URLs. Do not copy a search query into the next step.
+For every first search write two next steps that open different kinds of result pages from that search.
+The executor will fill a real URL from the search results. Only name the page role.
+Shape: L1-1 || Web_Fetch_Tool | open encyclopedia result for the film
 
 First decisions:
 {listed}
@@ -1706,35 +2319,155 @@ First decisions:
         children[parent_id] = [
             item for item in items if item["action"].lower() not in root_actions
         ]
-    sink = {
-        "tool": "Generalist_Solution_Generator_Tool",
-        "action": _SINK_SUBGOAL,
-        "subgoal": _SINK_SUBGOAL,
-    }
     plans: List[Any] = []
     for root_id, root in zip(root_ids, root_steps):
-        next_steps = children.get(root_id) or [sink]
-        for branch_index, child in enumerate(next_steps, 1):
-            steps = [root]
-            if child["tool"] != sink["tool"] or child["subgoal"] != sink["subgoal"]:
-                steps.append(child)
+        open_steps = children.get(root_id) or [{
+            "tool": "Web_Fetch_Tool",
+            "action": "open top search result page",
+            "subgoal": "open top search result page",
+        }]
+        for branch_index, child in enumerate(open_steps, 1):
+            plan_id = f"{root_id.lower()}-b{branch_index}"
+            search_step = {
+                "subgoal": root["subgoal"],
+                "action": root["action"],
+                "tool": root["tool"],
+                "estimated_cost": 1,
+                "links_previous": False,
+                "task_id": "search",
+                "produces": ["search_results"],
+                "consumes": [],
+                "instance_key": "",
+                "parameter": "query",
+                "argument": root["action"],
+            }
+            open_step = {
+                "subgoal": child.get("subgoal") or child["action"],
+                "action": child["action"],
+                "tool": child["tool"] if "fetch" in str(child.get("tool") or "").lower() else "Web_Fetch_Tool",
+                "estimated_cost": 1,
+                "links_previous": True,
+                "task_id": "open_page",
+                "produces": ["page_content"],
+                "consumes": ["search_url"],
+                "instance_key": f"{plan_id}:open",
+                "parameter": "url",
+                "argument": "",
+            }
+            extract_step = {
+                "subgoal": _SINK_SUBGOAL,
+                "action": _SINK_SUBGOAL,
+                "tool": "Generalist_Solution_Generator_Tool",
+                "estimated_cost": 1,
+                "links_previous": True,
+                "task_id": "extract_fact",
+                "produces": ["answer_candidate"],
+                "consumes": ["page_content"],
+                "instance_key": f"{plan_id}:extract",
+            }
+            steps = [search_step]
+            if depth >= 2:
+                steps.append(open_step)
             if depth >= 3:
-                steps.append(sink)
+                steps.append(extract_step)
             steps = steps[:depth]
             plans.append(candidate_plan_from_dict({
-                "plan_id": f"{root_id.lower()}-b{branch_index}",
-                "steps": [
-                    {
-                        "subgoal": step["subgoal"],
-                        "action": step["action"],
-                        "tool": step["tool"],
-                        "estimated_cost": 1,
-                        "links_previous": index > 0,
-                    }
-                    for index, step in enumerate(steps)
-                ],
+                "plan_id": plan_id,
+                "steps": steps,
             }))
     return plans
+
+
+def assess_step_evidence(tool_name: Any, result: Any, *, ok: bool) -> str:
+    """Map one tool return to evidence strength. Execution success is separate."""
+    if not ok:
+        return "none"
+    name = str(tool_name or "").lower()
+    text = str(result or "")
+    if any(m in name for m in _SEARCH_TOOL_MARKERS):
+        return "weak" if _extract_urls(text) else "none"
+    if any(m in name for m in _FETCH_TOOL_MARKERS):
+        body = text.strip()
+        if len(body) < 80 or any(m in body.lower() for m in _EMPTY_RESULT_MARKERS):
+            return "none"
+        # Long pages alone are not sufficient; entity/number clues are checked
+        # later with the question. Here mark as insufficient unless clearly rich.
+        if len(body) >= 400 and re.search(r"\b\d{2,4}\b", body) and re.search(
+            r"(?i)\b(born|county|nationality|population|citizen|film|actor)\b", body
+        ):
+            return "sufficient"
+        return "insufficient" if len(body) >= 120 else "none"
+    if "generalist" in name or "generator" in name:
+        compact = re.sub(r"\s+", " ", text).strip()
+        if len(compact) < 2:
+            return "none"
+        boxed = re.search(r"\\boxed\{([^{}]{1,120})\}", text) or re.search(
+            r"<answer>\s*(.*?)\s*</answer>", text, re.I | re.S
+        )
+        if boxed:
+            return "sufficient"
+        if len(compact) <= 80:
+            return "sufficient"
+        return "insufficient"
+    return "weak"
+
+
+def page_has_answer_clues(question: str, page: str) -> bool:
+    """True when the page likely contains entity/number clues for the question."""
+    body = str(page or "")
+    if len(body.strip()) < 80:
+        return False
+    q = str(question or "")
+    q_tokens = [tok.lower() for tok in re.findall(r"[A-Za-z0-9]{3,}", q) if tok.lower() not in {
+        "the", "and", "for", "who", "what", "when", "where", "which", "was", "were",
+        "did", "does", "with", "from", "that", "this", "are", "his", "her", "how",
+    }]
+    low = body.lower()
+    hit = sum(1 for tok in q_tokens[:12] if tok in low)
+    has_number = bool(re.search(r"\b\d{2,4}\b", body))
+    asks_number = bool(re.search(r"(?i)\b(how many|year|when|population|age|count|number)\b", q))
+    if asks_number and has_number and hit >= 1:
+        return True
+    if hit >= 2:
+        return True
+    if hit >= 1 and (has_number or "county" in low or "born" in low or "nationality" in low):
+        return True
+    return False
+
+
+def structured_answer_from_pages(engine: Any, question: str, pages: List[str]) -> str:
+    """Final answer only from retrieved page bodies. Empty when evidence is thin."""
+    bodies = [str(page or "").strip() for page in pages if str(page or "").strip()]
+    if not bodies:
+        return ""
+    useful = [body for body in bodies if page_has_answer_clues(question, body)] or bodies
+    joined = "\n\n---\n\n".join(body[:3500] for body in useful[:4])
+    if len(joined) < 80:
+        return ""
+    prompt = f"""Question: {question}
+
+Page evidence:
+{joined}
+
+Extract only the short final answer supported by the pages above.
+Disambiguate carefully:
+- If asked for a county, answer the county name, not the city or state alone.
+- If asked for nationality/citizenship, answer the country/nationality, not birthplace alone.
+- If asked for a person, return the person name as written in the pages.
+- Prefer exact entity spans from the pages over paraphrases.
+If the pages do not contain enough evidence, output UNKNOWN. Do not guess.
+Output exactly:
+<answer>
+\\boxed{{short answer or UNKNOWN}}
+</answer>
+"""
+    try:
+        raw = str(engine(prompt) or "")
+    except TypeError:
+        raw = str(engine(prompt, max_tokens=200) or "")
+    except Exception:
+        return ""
+    return raw.strip()
 
 
 def bind_episode(planner, executor, verifier) -> None:

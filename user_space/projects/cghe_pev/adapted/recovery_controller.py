@@ -925,34 +925,17 @@ class RecoveryController:
         )
 
     def _select_node(self) -> Optional[GraphNode]:
+        """Live selection is max Step-1 path coverage. EPV does not choose the node."""
         if self.graph is None:
             return None
-        if self.algorithm == "v2":
-            from v2.action_selector import choose_node
-
-            chosen, trace = choose_node(
-                self.graph,
-                mode=self.v2_mode,
-                lambda_cost=self.lambda_cost,
-                mu_risk=self.mu_risk,
-            )
-            self.v2_trace.append(trace)
-            log = self._v2_log()
-            if log is not None:
-                for row in trace.get("scores") or []:
-                    log.record_feedback(
-                        task_id=self.task_id,
-                        round_id=self.graph.round_id,
-                        action_id=row.get("action_id", ""),
-                        epv=row.get("epv"),
-                        cost=row.get("cost"),
-                        risk=row.get("risk"),
-                        score=row.get("score"),
-                    )
-            if chosen is not None:
-                return chosen
-        policy = "frontier" if self.shared_priority else "first_plan"
-        return self.graph.select_node(policy=policy)
+        selection = self.graph.select_step1()
+        if selection is None:
+            return None
+        node_id, coverage, eligible = selection
+        session = getattr(self, "cghe_session", None)
+        if session is not None:
+            session.log_selection(self.graph, node_id, coverage, eligible)
+        return self.graph.node(node_id)
 
     def _advance_without_pruning(
         self,

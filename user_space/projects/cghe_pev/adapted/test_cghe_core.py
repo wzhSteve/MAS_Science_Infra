@@ -137,11 +137,13 @@ class PlanningGraphTests(unittest.TestCase):
         short_a = _plan("s1", (_step("ping", premises=(_exists("ping"),), cost=9),))
         short_b = _plan("s2", (_step("ping", premises=(_exists("ping"),), cost=9),))
         graph = PlanningGraph([long_plan, short_a, short_b])
-        chosen = graph.select_node()
-        self.assertIsNotNone(chosen)
-        assert chosen is not None
+        selected = graph.select_step1()
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        chosen = graph.node(selected[0])
         self.assertEqual(chosen.tool, "ping")
-        self.assertEqual(graph.sharing_score(chosen.node_id), 2)
+        self.assertEqual(selected[1], 2)
+        self.assertEqual(graph.compute_step1_coverage()[chosen.node_id], 2)
         read_id = next(node.node_id for node in graph.nodes() if node.tool == "read")
         self.assertEqual(graph.sharing_score(read_id), 1)
         self.assertGreater(len(graph.node(read_id).dependencies) + 2, graph.sharing_score(read_id))
@@ -149,7 +151,12 @@ class PlanningGraphTests(unittest.TestCase):
         cheap = _plan("cheap", (_step("cheap", cost=1),))
         costly = _plan("costly", (_step("costly", cost=5),))
         tied = PlanningGraph([cheap, costly])
-        self.assertEqual(tied.select_node().tool, "cheap")
+        # Legacy shared policy still prefers lower cost. Step-1 coverage does not.
+        self.assertEqual(tied.select_node(policy="shared").tool, "cheap")
+        step1 = tied.select_step1()
+        assert step1 is not None
+        self.assertEqual(step1[1], 1)
+        self.assertEqual(tied.node(step1[0]).node_id, min(tied.compute_step1_coverage()))
 
         low = _plan("low", (_step("tool", state=("a",), cost=3),))
         high = _plan("high", (_step("tool", state=("b",), cost=3),))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -90,6 +91,45 @@ def _dump_step_snapshots(
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def dump_prediction_chains(
+    *,
+    path: str,
+    global_step: int,
+    rollout_ids: List[Any],
+    data_ids: List[Any],
+    outcomes: Dict[str, float],
+    answers: Dict[str, float],
+    event_lists: List[Any],
+) -> None:
+    """Append one JSON object per rollout with its prediction chain."""
+    from pathlib import Path
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    keep = (
+        "prediction_event_id", "recovery_chain_id", "planner_step", "p_satisfy",
+        "actual_satisfied", "tool_fault", "command", "tool_name", "failure_confirmed",
+    )
+    with target.open("a", encoding="utf-8") as handle:
+        for i, rid in enumerate(rollout_ids):
+            rid_s = str(rid)
+            raw = event_lists[i] if i < len(event_lists) and isinstance(event_lists[i], list) else []
+            events = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                events.append({key: item.get(key) for key in keep})
+            row = {
+                "global_step": int(global_step),
+                "data_id": str(data_ids[i] if i < len(data_ids) else ""),
+                "rollout_id": rid_s,
+                "outcome": outcomes.get(rid_s),
+                "answer": answers.get(rid_s),
+                "events": events,
+            }
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def _hard_beam_cap(tir_config: Dict[str, Any]) -> Optional[int]:
     if not bool(tir_config.get("fcr_hard_beam_cap", False)):
         return None
@@ -136,14 +176,41 @@ def prediction_quadrants(rows: List[Dict[str, Any]], *, threshold: float = 0.5) 
 
 
 def cap_expansion_plans(
-    plans: List[Any], *, tir_algo: str, fcr_k: int = 2, hard_cap: Optional[int] = None,
+    plans: List[Any],
+    *,
+    tir_algo: str,
+    fcr_k: int = 2,
+    hard_cap: Optional[int] = None,
+    sample: str = "prefix",
+    seed: int = 0,
 ) -> List[Any]:
-    """ARPO-style fill by default. ``hard_cap`` truncates before enqueue."""
+    """Truncate to ``hard_cap``. ``sample=random`` draws among candidates first."""
     del tir_algo, fcr_k
     items = list(plans or [])
+    if str(sample) == "random" and len(items) > 1:
+        import random
+        rng = random.Random(int(seed) + len(items))
+        rng.shuffle(items)
     if hard_cap is None:
         return items
     return items[: max(0, int(hard_cap))]
+
+
+def _recovery_rates(event_lists: List[Any], *, prefix: str) -> Dict[str, float]:
+    from scripts.audit_fcr_events import audit_records, flat_rates
+
+    records = [{"events": events if isinstance(events, list) else []} for events in event_lists]
+    return flat_rates(audit_records(records), prefix=prefix)
+
+
+def _branch_sample_mode(tir_config: Dict[str, Any]) -> str:
+    if str(tir_config.get("fcr_branch_sample") or "").lower() == "random":
+        return "random"
+    for site in tir_config.get("sites") or []:
+        gate = site.get("gate") if isinstance(site, dict) else None
+        if isinstance(gate, dict) and str(gate.get("type") or "").lower() == "random":
+            return "random"
+    return "prefix"
 
 
 def _span_attrs(span: Any) -> Dict[str, Any]:
@@ -213,8 +280,15 @@ def binary_prediction_metrics(rows: List[Dict[str, Any]]) -> Dict[str, float]:
         out["failure_auprc"] = float(
             np.sum(precision_at_k * ordered_failures) / np.sum(ordered_failures)
         )
+    base_rate = float(np.mean(labels.astype(np.float64)))
+    bs_constant = float(np.mean((base_rate - labels.astype(np.float64)) ** 2))
+    bs_model = float(np.mean(errors))
+    bss = float(1.0 - bs_model / bs_constant) if bs_constant > 1e-12 else 0.0
+    tn = int(np.sum(~guesses & ~labels))
+    tpr = float(tp / positive_count) if positive_count else 0.0
+    tnr = float(tn / negative_count) if negative_count else 0.0
     out.update({
-        "brier": float(np.mean(errors)),
+        "brier": bs_model,
         "accuracy": float(np.mean(guesses == labels)),
         "precision": float(tp / (tp + fp)) if tp + fp else 0.0,
         "recall": float(tp / (tp + fn)) if tp + fn else 0.0,
@@ -226,6 +300,17 @@ def binary_prediction_metrics(rows: List[Dict[str, Any]]) -> Dict[str, float]:
         "prediction_mismatch_rate": float(np.mean([
             bool(row.get("prediction_mismatch")) for row in labeled
         ])),
+        "mean_p": float(np.mean(probs)),
+        "mean_p_given_pos": float(np.mean(probs[labels])) if np.any(labels) else 0.0,
+        "mean_p_given_neg": float(np.mean(probs[~labels])) if np.any(~labels) else 0.0,
+        "y_pos_rate": base_rate,
+        "bs_constant": bs_constant,
+        "bss": bss,
+        "balanced_accuracy": 0.5 * (tpr + tnr),
+        "positive_recall": tpr,
+        "p_lt_0_1_rate": float(np.mean(probs < 0.1)),
+        "p_mid_rate": float(np.mean((probs >= 0.1) & (probs <= 0.9))),
+        "p_gt_0_9_rate": float(np.mean(probs > 0.9)),
     })
     return out
 
@@ -520,6 +605,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
             tir_algo=self.tir_algo,
             fcr_k=int(self.tir_config.get("fcr_k", 2)),
             hard_cap=_hard_beam_cap(self.tir_config),
+            sample=_branch_sample_mode(self.tir_config),
+            seed=hash(str(parent_rid)) % (2**31),
         )
         if not plans:
             return 0
@@ -530,6 +617,22 @@ class TirAgentModeDaemon(AgentModeDaemon):
         n_target = int(getattr(self, "_full_group_n", None) or self.train_rollout_n)
         existing = [rid for rid, s in self._task_id_to_original_sample.items() if str(s.get("data_id")) == data_id]
         remaining = max(0, n_target - len(existing))
+        # Hard per-parent child-rollout cap (beam_size-1), always on for fcr_* algos
+        # when fcr_hard_beam_cap is set; also count already-enqueued children of this parent.
+        per_parent_cap = _hard_beam_cap(self.tir_config)
+        if per_parent_cap is not None:
+            already = sum(
+                1
+                for rid, sample in self._task_id_to_original_sample.items()
+                if str(sample.get("resume_parent_id") or "") == str(parent_rid)
+                and str(sample.get("rollout_role") or "").lower() in ("child", "probe", "branch")
+            )
+            room = max(0, int(per_parent_cap) - already)
+            if room <= 0:
+                self._enqueued_expansion_parents.add(parent_rid)
+                return 0
+            plans = plans[:room]
+            remaining = min(remaining, room)
         if self._tree_recorder:
             self._tree_recorder.plans(sample_parent, parent_rid, plans, remaining)
         if remaining <= 0:
@@ -701,6 +804,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
                     tir_algo=self.tir_algo,
                     fcr_k=int(self.tir_config.get("fcr_k", 2)),
                     hard_cap=_hard_beam_cap(self.tir_config),
+                    sample=_branch_sample_mode(self.tir_config),
+                    seed=hash(str(rid)) % (2**31),
                 )
                 if self._tree_recorder and plans:
                     self._tree_recorder.plans(self._task_id_to_original_sample[rid], rid, plans, remaining)
@@ -991,6 +1096,44 @@ class TirAgentModeDaemon(AgentModeDaemon):
             return data_proto.select_idxs(keep)
         return data_proto
 
+    def get_test_metrics(self):
+        metrics = super().get_test_metrics()
+        rollout_ids: List[str] = []
+        data_ids: List[str] = []
+        event_lists: List[Any] = []
+        answers: Dict[str, float] = {}
+        for rid, rollout in self._completed_rollouts_v0.items():
+            meta = self._rollout_meta.get(rid) or self._rollout_meta.get(str(rid)) or {}
+            try:
+                events = json.loads(str(meta.get("prediction_events") or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                events = []
+            if not isinstance(events, list):
+                events = []
+            sample = self._task_id_to_original_sample.get(rid) or self._task_id_to_original_sample.get(str(rid)) or {}
+            rid_s = str(rid)
+            rollout_ids.append(rid_s)
+            data_ids.append(str(sample.get("data_id") or ""))
+            event_lists.append(events)
+            reward = getattr(rollout, "final_reward", None)
+            answers[rid_s] = 1.0 if isinstance(reward, (int, float)) and float(reward) > 0 else 0.0
+        metrics.update(_recovery_rates(event_lists, prefix="val/fcr"))
+        event_log = str(os.environ.get("FCR_EVENT_LOG") or "").strip()
+        if event_log:
+            step = int(getattr(self, "_val_dump_step", 0)) + 1
+            self._val_dump_step = step
+            val_path = event_log[:-6] + "_val.jsonl" if event_log.endswith(".jsonl") else event_log + "_val"
+            dump_prediction_chains(
+                path=val_path,
+                global_step=step,
+                rollout_ids=rollout_ids,
+                data_ids=data_ids,
+                outcomes=answers,
+                answers=answers,
+                event_lists=event_lists,
+            )
+        return metrics
+
     def get_train_data_batch(self, max_prompt_length: int, max_response_length: int, device, global_steps: int):
         require_training_samples(self._completed_rollouts_v0, getattr(self.adapter, "agent_match", None))
         data_proto, data_metrics = super().get_train_data_batch(
@@ -1199,6 +1342,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
             # the already-built parent_ids list switches credit to exact
             # parent-child grouping.
             data_proto.non_tensor_batch["resume_parent_id"] = np.array(parent_ids, dtype=object)
+            if "data_id_list" not in data_proto.non_tensor_batch:
+                data_proto.non_tensor_batch["data_id_list"] = np.array(data_ids_nt, dtype=object)
             if self._tree_recorder:
                 self._tree_recorder.batch_judgments(
                     rollout_ids, self._task_id_to_original_sample, [
@@ -1304,14 +1449,15 @@ class TirAgentModeDaemon(AgentModeDaemon):
             data_metrics["fcr/multiple_trigger_count"] = float(
                 sum(max(0, count - 1) for count in failure_by_rollout.values())
             )
-            children_by_parent: Dict[str, int] = {}
-            for role, parent in zip(roles, parent_ids):
-                if str(role).lower() in ("child", "probe", "branch"):
-                    children_by_parent[parent] = children_by_parent.get(parent, 0) + 1
+            # Count unique child *rollouts* per parent (not turn/triplet rows).
+            children_by_parent: Dict[str, set] = {}
+            for role, parent, rid in zip(roles, parent_ids, rollout_ids):
+                if str(role).lower() in ("child", "probe", "branch") and parent:
+                    children_by_parent.setdefault(str(parent), set()).add(str(rid))
             beam = int(self.tir_config.get("beam_size", 2))
             per_parent_cap = max(1, beam - 1)
             data_metrics["fcr/budget_violation_count"] = float(
-                sum(max(0, count - per_parent_cap) for count in children_by_parent.values())
+                sum(max(0, len(child_ids) - per_parent_cap) for child_ids in children_by_parent.values())
             )
             from rl.hooks.advantage import false_correction_stats
 
@@ -1352,6 +1498,31 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 for i, rid in enumerate(rollout_ids)
                 if i < len(outcomes)
             }
+            answer_by_rollout: Dict[str, float] = {}
+            for rid, ok in zip(rollout_ids, successes):
+                answer_by_rollout[str(rid)] = max(
+                    answer_by_rollout.get(str(rid), 0.0),
+                    1.0 if ok else 0.0,
+                )
+            from rl.hooks.advantage import correction_diagnostics
+
+            data_metrics.update(correction_diagnostics(
+                rollout_ids=rollout_ids,
+                group_ids=data_ids_nt,
+                planner_steps=[row.get("planner_step") for row in prediction_rows],
+                p_satisfy=[row.get("p_satisfy") for row in prediction_rows],
+                actual_satisfied=[row.get("actual_satisfied") for row in prediction_rows],
+                prediction_events=prediction_event_lists,
+                answer_by_rollout=answer_by_rollout,
+                threshold=float(self.tir_config.get("fcr_threshold", 0.5)),
+                require_prev_fail=bool(self.tir_config.get("fcr_pattern_require_prev_fail", False)),
+                labeled_steps=int(n),
+                mean_p=data_metrics.get("fcr/mean_p"),
+                failure_confirmed_rate=data_metrics.get("fcr/failure_confirmed_rate"),
+            ))
+            data_metrics["fcr/branch_count"] = float(sum(
+                len(child_ids) for child_ids in children_by_parent.values()
+            ))
             uplifts: List[float] = []
             child_y: List[float] = []
             child_answer: List[float] = []
@@ -1376,6 +1547,18 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 outcomes=by_rid,
                 samples=self._task_id_to_original_sample,
             )
+            event_log = str(os.environ.get("FCR_EVENT_LOG") or "").strip()
+            if event_log:
+                dump_prediction_chains(
+                    path=event_log,
+                    global_step=int(global_steps),
+                    rollout_ids=rollout_ids,
+                    data_ids=data_ids_nt,
+                    outcomes=by_rid,
+                    answers=answer_by_rollout,
+                    event_lists=prediction_event_lists,
+                )
+            data_metrics.update(_recovery_rates(prediction_event_lists, prefix="fcr"))
         algo_id = {
             "grpo": 0.0,
             "arpo": 1.0,

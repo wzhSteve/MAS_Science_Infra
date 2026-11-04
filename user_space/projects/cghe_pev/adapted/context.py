@@ -77,6 +77,16 @@ RUNTIME_DEFAULTS: Dict[str, Any] = {
         "lambda_cost": 0.0,
         "mu_risk": 0.0,
         "epv_threshold": 0.0,
+        "max_step1_attempts": 3,
+        "max_regenerations": 2,
+        "max_total_step1_attempts": 12,
+        "selection": {"strategy": "max_step1_path_coverage"},
+        "pruning_gates": {
+            "require_verified_counterexample": True,
+            "require_direct_observation": True,
+            "require_complete_scope": True,
+            "prune_only_explicitly_dependent_plans": True,
+        },
     },
 }
 # One environment for tool observations and RecoveryController scope checks.
@@ -105,6 +115,7 @@ _ACTION_EXTRA_KEYS = (
     "parent_prediction_event_id", "failure_confirmed",
     "raw_tool_result", "execution_log", "cghe_node_id", "cghe_plan_id",
     "cghe_authorized", "cghe_replay", "cghe_auth_reason",
+    "cghe_feedback", "cghe_input_url",
 )
 _EXECUTION_LOG_CHARS = 20000
 _MAX_EPISODES = 128
@@ -243,6 +254,18 @@ def cghe_settings() -> Dict[str, Any]:
         "lambda_cost": _float_setting(merged.get("lambda_cost"), 0.0),
         "mu_risk": _float_setting(merged.get("mu_risk"), 0.0),
         "epv_threshold": _float_setting(merged.get("epv_threshold"), 0.0),
+        "max_step1_attempts": positive("max_step1_attempts", 3),
+        "max_regenerations": positive("max_regenerations", 2),
+        "max_total_step1_attempts": positive("max_total_step1_attempts", 12),
+        "selection": merged.get("selection") if isinstance(merged.get("selection"), dict) else {
+            "strategy": "max_step1_path_coverage",
+        },
+        "pruning_gates": merged.get("pruning_gates") if isinstance(merged.get("pruning_gates"), dict) else {
+            "require_verified_counterexample": True,
+            "require_direct_observation": True,
+            "require_complete_scope": True,
+            "prune_only_explicitly_dependent_plans": True,
+        },
     }
 
 
@@ -376,11 +399,23 @@ class Episode:
         self.memory = Memory()
         self.memory.outline = []
         self.memory.obtained_information = []
+        self.memory.planning_graph = {}
         self._pending_plan: Dict[str, Any] = {}
         self.recovery_chain_id = uuid4().hex
         self._resume_parent_prediction_event_id = ""
         self._cghe = None
         self._cghe_directive = dict(_PEV_DIRECTIVE)
+        self._cghe_metrics: Dict[str, Any] = {
+            "steps": 0,
+            "deps_ready_selections": 0,
+            "premature_extract": 0,
+            "evidence_sufficient_steps": 0,
+            "answer_from_sufficient": 0,
+            "feedback": [],
+        }
+        self._cghe_snapshot: Dict[str, Any] = {}
+        self._cghe_graph_mode = ""
+        self._cghe_pages: List[str] = []
         # Planner keeps query_analysis on self; Executor keeps its cache dir.
         self.planner = copy.copy(comps.planner)
         self.executor = copy.copy(comps.executor)
@@ -437,6 +472,7 @@ class Episode:
             "actions": actions,
             "outline": normalize_outline(getattr(self.memory, "outline", None) or []),
             "obtained_information": [str(item) for item in (getattr(self.memory, "obtained_information", None) or [])],
+            "planning_graph": dict(getattr(self.memory, "planning_graph", None) or {}),
             "query": self.memory.get_query(),
             "files": list(self.memory.get_files()),
             "analyzed": bool(self.query_analysis),
@@ -479,6 +515,8 @@ class Episode:
         self.memory.obtained_information = [
             str(item) for item in (state.get("obtained_information") or []) if str(item or "").strip()
         ]
+        graph_state = state.get("planning_graph")
+        self.memory.planning_graph = dict(graph_state) if isinstance(graph_state, dict) else {}
         self._restore_cghe(state)
 
     def cghe_controller(self):
@@ -650,6 +688,7 @@ def _directive_continue(node: Any, reason: str, round_id: str) -> Dict[str, Any]
         "subgoal": str(getattr(node, "subgoal", "") or ""),
         "action": str(getattr(node, "action", "") or ""),
         "tool": _registered_tool(getattr(node, "tool", "") or getattr(node, "action", "")),
+        "task_id": str(getattr(node, "task_id", "") or ""),
         "round_id": str(round_id or ""),
     })
     return directive
@@ -696,6 +735,21 @@ def _lock_recovery_step(ep: "Episode", directive: Dict[str, Any]) -> bool:
     if not tool or not subgoal:
         return False
     context = action if action and action != tool else subgoal
+    node_id = str(directive.get("node_id") or "")
+    controller = getattr(ep, "_cghe", None)
+    graph = getattr(controller, "graph", None) if controller is not None else None
+    if graph is not None and node_id:
+        try:
+            bound = str(graph.tool_input_for(node_id) or "").strip()
+        except Exception:
+            bound = ""
+        if bound:
+            context = bound
+        elif "fetch" in tool.lower():
+            return False
+        elif "generalist" in tool.lower() or "generator" in tool.lower():
+            # Extract must wait for page body; snippets alone are not enough.
+            return False
     ep.context = context
     ep.sub_goal = subgoal
     ep.tool_name = tool
@@ -707,10 +761,131 @@ def _lock_recovery_step(ep: "Episode", directive: Dict[str, Any]) -> bool:
         "tool_input": context,
         "prediction": "",
         "prediction_reason": "",
+        "cghe_node_id": node_id,
+        "cghe_task_id": str(directive.get("task_id") or ""),
     }
     ep._pending_plan = plan
     ep.planner._last_plan = dict(plan)
     return True
+
+
+def _graph_for(ep: "Episode") -> Any:
+    controller = getattr(ep, "_cghe", None)
+    return getattr(controller, "graph", None) if controller is not None else None
+
+
+def _graph_select_policy() -> str:
+    """Default max_out_degree; set CGHE_SELECT_POLICY=frontier for ablation."""
+    raw = str(os.environ.get("CGHE_SELECT_POLICY") or "max_out_degree").strip().lower()
+    if raw in {"frontier", "shared", "first_plan", "max_out_degree"}:
+        return raw
+    return "max_out_degree"
+
+
+def _store_graph_in_memory(ep: "Episode", graph: Any, *, selected_id: str = "") -> None:
+    from sft_prompts import ensure_memory_fields
+
+    ensure_memory_fields(ep.memory)
+    snap = _graph_snapshot(graph, selected_id=selected_id)
+    ep.memory.planning_graph = dict(snap)
+    ep._cghe_snapshot = dict(snap)
+
+
+def _metrics(ep: "Episode") -> Dict[str, Any]:
+    data = getattr(ep, "_cghe_metrics", None)
+    if not isinstance(data, dict):
+        data = {
+            "steps": 0,
+            "deps_ready_selections": 0,
+            "premature_extract": 0,
+            "evidence_sufficient_steps": 0,
+            "answer_from_sufficient": 0,
+            "feedback": [],
+        }
+        ep._cghe_metrics = data
+    return data
+
+
+def _ingest_graph_result(
+    ep: "Episode",
+    *,
+    tool_name: Any,
+    raw_result: Any,
+    ok: bool,
+) -> Dict[str, Any]:
+    """Store artifacts and three-way feedback for the locked graph node."""
+    from sft_prompts import assess_step_evidence, _extract_search_results, _extract_urls, page_has_answer_clues
+
+    directive = getattr(ep, "_cghe_directive", None) or {}
+    node_id = str(directive.get("node_id") or "")
+    graph = _graph_for(ep)
+    metrics = _metrics(ep)
+    metrics["steps"] = int(metrics.get("steps") or 0) + 1
+    execution = "success" if ok else "error"
+    text = raw_result if isinstance(raw_result, str) else json.dumps(raw_result, ensure_ascii=False, default=str)
+    low = text.lower()
+    if ok and any(tok in low for tok in ("timeout", "timed out")):
+        execution = "timeout"
+    if any(tok in low for tok in ("fetch_blocked", "blocked:", "access denied", "403 forbidden")):
+        execution = "error"
+        ok = False
+    evidence = assess_step_evidence(tool_name, text, ok=ok and execution == "success")
+    name = str(tool_name or "").lower()
+    if (
+        execution == "success"
+        and "fetch" in name
+        and evidence == "insufficient"
+        and page_has_answer_clues(str(getattr(ep, "question", "") or ""), text)
+    ):
+        evidence = "sufficient"
+    goal = "unmet"
+    if execution != "success":
+        goal = "unmet"
+    elif "bing" in name or "wiki" in name:
+        goal = "partial" if evidence in ("weak", "insufficient", "sufficient") else "unmet"
+    elif "fetch" in name:
+        goal = "partial" if evidence in ("insufficient", "sufficient") else "unmet"
+    elif "generalist" in name or "generator" in name:
+        goal = "met" if evidence == "sufficient" else "partial"
+    feedback = {
+        "node_id": node_id,
+        "task_id": str(directive.get("task_id") or ""),
+        "execution": execution,
+        "evidence": evidence,
+        "goal": goal,
+    }
+    if graph is not None and node_id:
+        if execution == "success":
+            if "bing" in name or "wiki" in name:
+                results = _extract_search_results(text, limit=8)
+                urls = [row["url"] for row in results] or _extract_urls(text, limit=8)
+                graph.store_search_results(node_id, urls, results=results)
+            elif "fetch" in name:
+                graph.store_page_content(node_id, text)
+                body = str(text or "").strip()
+                if len(body) >= 80:
+                    pages = list(getattr(ep, "_cghe_pages", None) or [])
+                    pages.append(body)
+                    ep._cghe_pages = pages[-8:]
+        feedback = graph.record_feedback(
+            node_id, execution=execution, evidence=evidence, goal=goal,
+        )
+    if evidence == "sufficient":
+        metrics["evidence_sufficient_steps"] = int(metrics.get("evidence_sufficient_steps") or 0) + 1
+    if ("generalist" in name or "generator" in name) and evidence != "sufficient":
+        # Extract ran without sufficient page-backed evidence.
+        metrics["premature_extract"] = int(metrics.get("premature_extract") or 0) + 1
+    bucket = list(metrics.get("feedback") or [])
+    bucket.append(feedback)
+    metrics["feedback"] = bucket[-20:]
+    action = ep.memory.actions.get(f"Action Step {ep.step_count}")
+    if isinstance(action, dict):
+        action["cghe_feedback"] = dict(feedback)
+        if node_id:
+            action["cghe_node_id"] = node_id
+        if feedback.get("input_url"):
+            action["cghe_input_url"] = feedback.get("input_url")
+    return feedback
 
 
 def _json_tool_result(value: Any) -> Any:
@@ -789,6 +964,8 @@ def _execute_authorized(ep: "Episode", tool_name: str, command: str) -> Any:
         return _preserved_tool_result(ep, tool_name, command, auth.reason)
     result = ep.executor.execute_tool_command(tool_name, command)
     controller.commit_tool_call(auth)
+    if not bool(getattr(auth, "replay", False)):
+        _note_step1_execution(ep, controller)
     return result
 
 
@@ -851,16 +1028,103 @@ def _verifier_signal(verdict: Dict[str, Any]) -> tuple:
     return "uncertain", None
 
 
-def _advance_after_success(ep: "Episode", controller: Any, node_id: str) -> None:
-    """A verified step ends this graph. The next plan builds a new one."""
+def _note_step1_execution(ep: "Episode", controller: Any) -> None:
+    """Count one real Step-1 Executor call. Later nodes and replays are not Step-1 attempts."""
+    from cghe_loop import session_for
+
     graph = getattr(controller, "graph", None)
-    if node_id and graph is not None and any(node.node_id == node_id for node in graph.nodes()):
-        graph.mark_satisfied(node_id)
-    ep._cghe_snapshot = _graph_snapshot(graph, selected_id=node_id)
-    controller.graph = None
-    ep._cghe_directive = dict(_PEV_DIRECTIVE)
-    ep._cghe_directive["reason"] = "verified success rebuilds the planning graph"
-    ep._cghe_graph_mode = "rebuild"
+    directive = getattr(ep, "_cghe_directive", None) or {}
+    node_id = str(directive.get("node_id") or "")
+    if graph is None or not node_id or not graph.is_step1_node(node_id):
+        return
+    attempt_id = f"{graph.dag_id}:{node_id}:{ep.step_count}"
+    ep._cghe_open_attempt_id = attempt_id
+    session = session_for(controller, cghe_settings())
+    session.note_step1_execution(
+        graph,
+        node_id,
+        attempt_id=attempt_id,
+        selected_plan_ids=graph.plans_starting_with(node_id),
+        coverage=graph.compute_step1_coverage().get(node_id, 0),
+    )
+
+
+def _handoff_active(ep: "Episode") -> bool:
+    data = getattr(ep, "_cghe_handoff", None)
+    return isinstance(data, dict) and bool(data.get("active"))
+
+
+def _complete_cghe_plans(ep: "Episode") -> None:
+    """Mark the handed-off plans completed only when the task itself stops."""
+    graph = _graph_for(ep)
+    if graph is None:
+        return
+    handoff = getattr(ep, "_cghe_handoff", None) or {}
+    plan_ids = list(handoff.get("selected_plan_ids") or [])
+    if not plan_ids:
+        plan_ids = list(graph.active_plan_ids())
+    graph.complete_plans(plan_ids)
+
+
+def _advance_after_success(ep: "Episode", controller: Any, node_id: str) -> None:
+    """A successful step stays on this DAG. The next ready step 1 is selected by coverage."""
+    from cghe_loop import session_for
+
+    graph = getattr(controller, "graph", None)
+    session = session_for(controller, cghe_settings())
+    if not node_id or graph is None or not any(node.node_id == node_id for node in graph.nodes()):
+        ep._cghe_directive = dict(_PEV_DIRECTIVE)
+        ep._cghe_directive["reason"] = "verified step had no graph node"
+        return
+    successors: list[str] = []
+    for plan_id in graph.active_plan_ids():
+        sequence = list(graph.plan_node_ids(plan_id))
+        if node_id not in sequence:
+            continue
+        index = sequence.index(node_id)
+        if index + 1 >= len(sequence):
+            continue
+        nxt = sequence[index + 1]
+        if graph.node(nxt).status.value == "pending" and nxt not in successors:
+            successors.append(nxt)
+    graph.mark_satisfied(node_id)
+    attempt_id = str(getattr(ep, "_cghe_open_attempt_id", "") or "")
+    if attempt_id:
+        graph.finish_attempt(attempt_id, execution_status="success", verifier_status="SUCCESS")
+    session.events.append({
+        "event": "verification_completed",
+        "verifier_status": "SUCCESS",
+        "node_id": node_id,
+        "dag_id": graph.dag_id,
+        "task_completed": False,
+    })
+    if successors:
+        coverage = graph.compute_step1_coverage()
+        nxt = max(successors, key=lambda item: (coverage.get(item, 0), item))
+        session.log_selection(graph, nxt, coverage.get(nxt, 0), {item: coverage.get(item, 0) for item in successors})
+        ep._cghe_graph_mode = "switch"
+        _store_graph_in_memory(ep, graph, selected_id=nxt)
+        ep._cghe_directive = _directive_continue(
+            graph.node(nxt), f"advanced along path coverage {coverage.get(nxt, 0)}", graph.round_id,
+        )
+        ep._cghe_directive["coverage"] = int(coverage.get(nxt, 0))
+        graph.protect_children_of = node_id
+        return
+    selection = graph.select_step1()
+    if selection is None or graph.coverage_saturated():
+        ep._cghe_pending_reasons = list(graph.regeneration_reasons() or ["NO_EXECUTABLE_CANDIDATE"])
+        ep._cghe_directive = dict(_PEV_DIRECTIVE)
+        ep._cghe_directive["reason"] = "step succeeded; DAG needs another decision"
+        ep._cghe_graph_mode = "rebuild"
+        return
+    nxt, coverage, eligible = selection
+    session.log_selection(graph, nxt, coverage, eligible)
+    ep._cghe_graph_mode = "switch"
+    _store_graph_in_memory(ep, graph, selected_id=nxt)
+    ep._cghe_directive = _directive_continue(
+        graph.node(nxt), f"advanced to step1 coverage {coverage}", graph.round_id,
+    )
+    ep._cghe_directive["coverage"] = int(coverage)
 
 
 def _cghe_on_verdict(ep: "Episode", verdict: Dict[str, Any]) -> None:
@@ -876,6 +1140,16 @@ def _cghe_on_verdict(ep: "Episode", verdict: Dict[str, Any]) -> None:
     controller = ep.cghe_controller()
     if controller is None:
         return
+    tool_name = str(action.get("tool_name") or "").lower()
+    result_text = str(action.get("result") or action.get("raw_tool_result") or "")
+    if "bing" in tool_name and result_text.lower().count("http") >= 1:
+        # The search subgoal is to return candidate pages. A non-empty result list
+        # meets that subgoal even when the whole question is still unanswered.
+        flag = True
+        label = "满足"
+    if "fetch" in tool_name and len(result_text.strip()) >= 200:
+        flag = True
+        label = "满足"
     if flag is True:
         observation = _observation_from_action(action, verifier_label=label, hypothesis="")
         controller.record_verified_success(
@@ -921,7 +1195,17 @@ def _graph_snapshot(graph: Any, *, selected_id: str = "") -> Dict[str, Any]:
             continue
         outlines.append({
             "plan_id": plan.plan_id,
-            "steps": [{"subgoal": step.subgoal, "tool": step.tool} for step in plan.steps],
+            "steps": [
+                {
+                    "subgoal": step.subgoal,
+                    "tool": step.tool,
+                    "task_id": step.task_id,
+                    "consumes": list(step.consumes),
+                    "produces": list(step.produces),
+                    "instance_key": step.instance_key,
+                }
+                for step in plan.steps
+            ],
         })
     frontier = []
     seen = []
@@ -935,10 +1219,18 @@ def _graph_snapshot(graph: Any, *, selected_id: str = "") -> Dict[str, Any]:
             "node_id": node_id,
             "subgoal": node.subgoal,
             "tool": node.tool,
+            "task_id": node.task_id,
             "vote": graph.frontier_vote(node_id),
+            "out_degree": graph.out_degree(node_id),
             "selected": node_id == selected_id,
+            "input_url": graph.bound_url(node_id) if "search_url" in node.consumes else "",
         })
-    return {"cghe_outlines": outlines, "cghe_frontier": frontier}
+    return {
+        "cghe_outlines": outlines,
+        "cghe_frontier": frontier,
+        "cghe_round_id": str(getattr(graph, "round_id", "") or ""),
+        "cghe_select_policy": _graph_select_policy(),
+    }
 
 
 def _switch_after_graph_failure(
@@ -948,91 +1240,283 @@ def _switch_after_graph_failure(
     label: str,
     flag: Optional[bool],
 ) -> bool:
-    """Drop the failed node's suffix and choose another frontier. Timeouts stay."""
+    """Ordinary failures stay on the graph. Only a verified counterexample prunes plans."""
     from failure_analyzer import FailureAnalyzer
-    from cghe_types import FailureType
+    from cghe_loop import prune_by_counterexample, session_for
+    from cghe_types import CausalRelation, EvidenceStatus
 
     node_id = str(action.get("cghe_node_id") or "")
     graph = getattr(controller, "graph", None)
     if not node_id or graph is None or not any(node.node_id == node_id for node in graph.nodes()):
         return False
-    observation = _observation_from_action(
-        action,
-        verifier_label=label,
-        hypothesis="",
-    )
+    observation = _observation_from_action(action, verifier_label=label, hypothesis="")
     analysis = FailureAnalyzer().analyze(observation)
-    if analysis.evidence.failure_type == FailureType.TRANSIENT_ERROR:
-        node = graph.node(node_id)
-        ep._cghe_snapshot = _graph_snapshot(graph, selected_id=node_id)
-        ep._cghe_graph_mode = "switch"
-        ep._cghe_directive = _directive_continue(node, "timeout does not prune", graph.round_id)
-        return True
-    if flag is not False:
-        return False
-    raw_result = action.get("raw_tool_result", action.get("result"))
-    if not tool_result_failed(raw_result):
-        graph.mark_satisfied(node_id)
-        nxt = graph.select_node(policy="frontier")
-        ep._cghe_snapshot = _graph_snapshot(graph, selected_id=getattr(nxt, "node_id", ""))
-        if nxt is None:
-            controller.graph = None
-            ep._cghe_graph_mode = "rebuild"
-            ep._cghe_directive = dict(_PEV_DIRECTIVE)
-            ep._cghe_directive["reason"] = "graph step succeeded and no frontier remains"
-            return True
-        ep._cghe_graph_mode = "switch"
-        ep._cghe_directive = _directive_continue(
-            nxt, "continued to the next graph step", graph.round_id,
+    session = session_for(controller, cghe_settings())
+    attempt_id = str(getattr(ep, "_cghe_open_attempt_id", "") or "")
+    pruned: list[str] = []
+    evidence_id = ""
+    no_prune = str(os.environ.get("CGHE_NO_PRUNE") or "").strip().lower() in {"1", "true", "yes"}
+    if analysis.verified_counterexample and analysis.constraint is not None and not no_prune:
+        pruned = prune_by_counterexample(graph, analysis.constraint, evidence=analysis.evidence)
+        evidence_id = str(analysis.constraint.evidence_id or analysis.constraint.constraint_id or "")
+        try:
+            controller.memory.record_counterexample(
+                analysis.constraint,
+                observation=observation,
+                environment=str(getattr(observation, "environment", "") or ""),
+                action=str(action.get("sub_goal") or ""),
+                tool=str(action.get("tool_name") or ""),
+                round_id=graph.dag_id,
+                plan_id=str(action.get("cghe_plan_id") or ""),
+            )
+        except Exception:
+            pass
+        memory = controller.memory
+        if hasattr(memory, "add_causal_edge"):
+            memory.add_causal_edge(
+                node_id,
+                evidence_id or node_id,
+                CausalRelation.OBSERVED_TO_CAUSE,
+                evidence_id=evidence_id,
+                direct=True,
+            )
+            memory.add_causal_edge(
+                evidence_id or node_id,
+                analysis.constraint.condition.predicate,
+                CausalRelation.INVALIDATES,
+                evidence_id=evidence_id,
+                scope=analysis.constraint.scope,
+                direct=True,
+            )
+            for plan_id in pruned:
+                memory.add_causal_edge(
+                    evidence_id or node_id,
+                    plan_id,
+                    CausalRelation.ELIMINATES,
+                    evidence_id=evidence_id,
+                    direct=True,
+                )
+        session.events.append({
+            "event": "counterexample_validated",
+            "predicate": analysis.constraint.condition.predicate,
+            "scope": str(analysis.constraint.scope),
+            "source": analysis.constraint.source,
+            "validation_status": EvidenceStatus.VERIFIED_COUNTEREXAMPLE.value,
+            "evidence_id": evidence_id,
+        })
+        session.events.append({
+            "event": "plans_pruned",
+            "evidence_id": evidence_id,
+            "pruned_plan_ids": list(pruned),
+            "remaining_active_plan_ids": list(graph.active_plan_ids()),
+        })
+    else:
+        try:
+            controller._remember_failure(analysis, observation, action=str(action.get("sub_goal") or ""), promote=False)
+        except Exception:
+            try:
+                controller.memory.record_hypothesis(
+                    observation=observation,
+                    constraint=analysis.constraint,
+                    environment=str(getattr(observation, "environment", "") or ""),
+                    action=str(action.get("sub_goal") or ""),
+                    tool=str(action.get("tool_name") or ""),
+                    note="unverified failure is not a hard constraint",
+                    round_id=graph.dag_id,
+                )
+            except Exception:
+                pass
+        session.events.append({
+            "event": "counterexample_validated",
+            "predicate": "",
+            "validation_status": EvidenceStatus.UNVERIFIED_HYPOTHESIS.value,
+            "evidence_id": str(getattr(analysis.evidence, "evidence_id", "") or ""),
+            "hard_constraint": False,
+        })
+    if attempt_id:
+        graph.finish_attempt(
+            attempt_id,
+            execution_status="failure",
+            verifier_status=label,
+            evidence_id=evidence_id or None,
+            pruning_applied=bool(pruned),
+            pruned_plan_ids=pruned,
         )
-        return True
-    graph.drop_suffixes(node_id)
-    nxt = graph.select_node(policy="frontier")
-    ep._cghe_snapshot = _graph_snapshot(graph, selected_id=getattr(nxt, "node_id", ""))
-    if nxt is None:
-        controller.graph = None
+    session.events.append({
+        "event": "verification_completed",
+        "verifier_status": label or "FAILURE",
+        "node_id": node_id,
+        "dag_id": graph.dag_id,
+        "pruning_applied": bool(pruned),
+    })
+    decision, payload = session.next_decision()
+    if decision == "REGENERATE":
         ep._cghe_graph_mode = "rebuild"
+        ep._cghe_pending_reasons = list(payload or [])
         ep._cghe_directive = dict(_PEV_DIRECTIVE)
-        ep._cghe_directive["reason"] = "failed suffix removed and no frontier remains"
+        ep._cghe_directive["reason"] = "regeneration required after persisted step1 result"
         return True
+    if decision != "SELECT":
+        ep._cghe_directive = dict(_PEV_DIRECTIVE)
+        ep._cghe_directive["reason"] = str(decision)
+        return True
+    selected, coverage, eligible = payload
+    session.log_selection(graph, selected, coverage, eligible)
+    node = graph.node(selected)
+    _store_graph_in_memory(ep, graph, selected_id=selected)
     ep._cghe_graph_mode = "switch"
     ep._cghe_directive = _directive_continue(
-        nxt, "switched node after dropping the failed suffix", graph.round_id,
+        node,
+        f"step1 coverage {coverage} after unverified failure" if not pruned else f"step1 coverage {coverage} after verified prune",
+        graph.round_id,
     )
     return True
 
 
-def _open_layered_plan(ep: "Episode") -> bool:
-    """Build a fresh layered graph and lock its frontier. Empty output does not lock."""
-    from planning_graph import PlanningGraph
-    from sft_prompts import build_layered_outlines
+def _lock_step1(ep: "Episode", graph: Any, node_id: str, coverage: int, reason: str) -> bool:
+    node = graph.node(node_id)
+    ep._cghe_graph_mode = "switch"
+    _store_graph_in_memory(ep, graph, selected_id=node_id)
+    ep._cghe_directive = _directive_continue(node, reason, graph.round_id)
+    ep._cghe_directive["coverage"] = int(coverage)
+    if _lock_recovery_step(ep, ep._cghe_directive):
+        _metrics(ep)["deps_ready_selections"] = int(_metrics(ep).get("deps_ready_selections") or 0) + 1
+        return True
+    return False
 
+
+def _continue_existing_graph(ep: "Episode") -> bool:
+    """Lock the highest-coverage eligible Step 1. Do not walk downstream nodes."""
+    from cghe_loop import session_for
+
+    if _handoff_active(ep):
+        return False
     controller = ep.cghe_controller()
+    graph = getattr(controller, "graph", None) if controller is not None else None
+    if graph is None:
+        return False
+    session = session_for(controller, cghe_settings())
+    decision, payload = session.next_decision()
+    if decision == "REGENERATE":
+        ep._cghe_pending_reasons = list(payload or [])
+        return False
+    if decision != "SELECT":
+        ep._cghe_directive = dict(_PEV_DIRECTIVE)
+        ep._cghe_directive["reason"] = str(decision)
+        return False
+    node_id, coverage, eligible = payload
+    session.log_selection(graph, node_id, coverage, eligible)
+    return _lock_step1(ep, graph, node_id, coverage, f"step1 coverage {coverage}")
+
+
+def _regenerate_layered_plan(ep: "Episode", controller: Any, reasons: list) -> bool:
+    """One regeneration. A planner or schema failure does not spend a Step-1 attempt."""
+    from cghe_loop import context_guidance, make_regeneration_context, session_for
+    from sft_prompts import build_outlines_oneshot
+
+    session = session_for(controller, cghe_settings())
+    graph = getattr(controller, "graph", None)
+    records = controller.planning_records()
+    remaining = max(0, session.max_total - session.global_attempts)
+    ctx = make_regeneration_context(
+        query=str(ep.question or ""),
+        mas_state=getattr(ep, "json_data", None),
+        active_plans=list(graph.active_plans()) if graph is not None else [],
+        verified_counterexamples=list(records.verified_counterexamples),
+        verified_successes=list(records.verified_successes),
+        unverified_failures=list(records.diagnostic_hypotheses),
+        observations=[],
+        previous_attempts=list(getattr(graph, "attempt_history", []) or []) + list(session.archived_attempts),
+        trigger_reasons=reasons,
+        global_attempts_remaining=remaining,
+    )
     engine = getattr(getattr(ep, "planner", None), "llm_engine", None)
-    if controller is None or not callable(engine):
+    if not callable(engine):
         return False
     runtime = load_runtime()
     depth = min(3, max(1, int(runtime["max_steps"]) - int(ep.step_count) + 1))
+    n = int(cghe_settings().get("n") or 8)
     try:
-        plans = build_layered_outlines(
-            engine, ep.question, roots=4, branches=2, depth=depth,
+        guidance = "" if str(os.environ.get("CGHE_NO_MEMORY") or "").strip().lower() in {"1", "true", "yes"} else context_guidance(ctx)
+        plans = build_outlines_oneshot(
+            engine, ep.question, n=n, depth=depth, guidance=guidance,
         )
     except Exception:
+        plans = []
+    from cghe_loop import drop_contradicted_plans
+
+    if str(os.environ.get("CGHE_NO_MEMORY") or "").strip().lower() not in {"1", "true", "yes"}:
+        plans = drop_contradicted_plans(plans, records.verified_counterexamples)
+    installed = session.regenerate(plans, ctx)
+    if installed is None:
         return False
+    from cghe_loop import record_plan_dependencies
+
+    record_plan_dependencies(controller.memory, installed)
+    controller._round_exhausted = False
+    ep._cghe_pending_reasons = []
+    selection = installed.select_step1()
+    if selection is None:
+        return False
+    node_id, coverage, eligible = selection
+    session.log_selection(installed, node_id, coverage, eligible)
+    ep._cghe_graph_mode = "rebuild"
+    return _lock_step1(ep, installed, node_id, coverage, "regenerated step1 coverage " + str(coverage))
+
+
+def _open_layered_plan(ep: "Episode") -> bool:
+    """Build or continue a DAG and lock the Step-1 with the most ACTIVE paths."""
+    from planning_graph import PlanningGraph
+    from cghe_loop import record_plan_dependencies, session_for, validate_dag
+    from sft_prompts import build_outlines_oneshot
+
+    if _handoff_active(ep):
+        return False
+    if _continue_existing_graph(ep):
+        return True
+    controller = ep.cghe_controller()
+    if controller is None:
+        return False
+    reasons = list(getattr(ep, "_cghe_pending_reasons", None) or [])
+    graph = getattr(controller, "graph", None)
+    if graph is not None and not reasons:
+        reasons = list(graph.regeneration_reasons())
+    if reasons:
+        return _regenerate_layered_plan(ep, controller, reasons)
+    engine = getattr(getattr(ep, "planner", None), "llm_engine", None)
+    if not callable(engine):
+        return False
+    runtime = load_runtime()
+    depth = min(3, max(1, int(runtime["max_steps"]) - int(ep.step_count) + 1))
+    n = int(cghe_settings().get("n") or 8)
+    try:
+        plans = build_outlines_oneshot(engine, ep.question, n=n, depth=depth)
+    except Exception:
+        return False
+    from cghe_loop import drop_contradicted_plans
+
+    plans = drop_contradicted_plans(plans, controller.planning_records().verified_counterexamples)
     if not plans:
         return False
-    graph = PlanningGraph(list(plans))
-    node = graph.select_node(policy="frontier")
-    if node is None:
+    try:
+        graph = PlanningGraph(list(plans))
+    except (TypeError, ValueError):
         return False
-    controller.graph = graph
+    if validate_dag(graph):
+        return False
+    session = session_for(controller, cghe_settings())
+    session.bind_graph(graph)
+    record_plan_dependencies(controller.memory, graph)
     controller._round_exhausted = False
+    selection = graph.select_step1()
+    if selection is None:
+        return False
+    node_id, coverage, eligible = selection
+    session.log_selection(graph, node_id, coverage, eligible)
     ep._cghe_graph_mode = "rebuild"
-    ep._cghe_snapshot = _graph_snapshot(graph, selected_id=node.node_id)
-    ep._cghe_directive = _directive_continue(node, "rebuilt planning graph", graph.round_id)
-    if _lock_recovery_step(ep, ep._cghe_directive):
+    locked = _lock_step1(ep, graph, node_id, coverage, f"step1 coverage {coverage}")
+    if locked:
         return True
-    controller.graph = None
     ep._cghe_directive = dict(_PEV_DIRECTIVE)
     ep._cghe_directive["reason"] = "selected node has no executable subgoal or tool"
     return False
@@ -1046,13 +1530,39 @@ def _cghe_trace(ep: "Episode") -> Dict[str, Any]:
     graph = getattr(getattr(ep, "_cghe", None), "graph", None)
     if graph is not None:
         snapshot = _graph_snapshot(graph, selected_id=str(directive.get("node_id") or ""))
+    metrics = _metrics(ep)
+    steps = max(1, int(metrics.get("steps") or 0))
     return {
         "cghe_decision": str(directive.get("decision") or "continue_pev"),
         "cghe_reason": str(directive.get("reason") or "")[:300],
         "cghe_mode": str(getattr(ep, "_cghe_graph_mode", "") or ""),
         "cghe_node_id": str(directive.get("node_id") or ""),
+        "cghe_task_id": str(directive.get("task_id") or ""),
         "cghe_outlines": snapshot.get("cghe_outlines") or [],
         "cghe_frontier": snapshot.get("cghe_frontier") or [],
+        "cghe_select_policy": "max_step1_path_coverage",
+        "cghe_events": list(getattr(getattr(ep, "_cghe", None), "cghe_session", None).events)[-8:]
+        if getattr(getattr(ep, "_cghe", None), "cghe_session", None) is not None else [],
+        "cghe_round_id": snapshot.get("cghe_round_id") or "",
+        "cghe_feedback": list(metrics.get("feedback") or [])[-5:],
+        "cghe_metrics": {
+            "dependency_ready_rate": round(
+                float(metrics.get("deps_ready_selections") or 0) / steps, 4
+            ),
+            "premature_extract_rate": round(
+                float(metrics.get("premature_extract") or 0) / steps, 4
+            ),
+            "evidence_sufficient_rate": round(
+                float(metrics.get("evidence_sufficient_steps") or 0) / steps, 4
+            ),
+            "answer_correct_given_sufficient": int(
+                metrics.get("answer_from_sufficient") or 0
+            ),
+            "steps": steps,
+            "deps_ready_selections": int(metrics.get("deps_ready_selections") or 0),
+            "premature_extract": int(metrics.get("premature_extract") or 0),
+            "evidence_sufficient_steps": int(metrics.get("evidence_sufficient_steps") or 0),
+        },
     }
 
 
@@ -1166,11 +1676,26 @@ class EpisodeContext:
             ep.json_data["query_analysis"] = ep.query_analysis
             apply_outline(ep.memory, getattr(ep.planner, "_initial_outline", None))
         locked = False
-        if cghe_enabled():
+        if cghe_enabled() and _handoff_active(ep):
+            handoff = ep._cghe_handoff
+            if not handoff.get("seeded"):
+                remaining = [
+                    str(step.get("subgoal") or "")
+                    for step in (handoff.get("remaining") or [])
+                    if step.get("subgoal")
+                ]
+                if remaining:
+                    apply_outline(ep.memory, remaining)
+                handoff["seeded"] = True
+        elif cghe_enabled():
             directive = dict(getattr(ep, "_cghe_directive", None) or _PEV_DIRECTIVE)
             if str(directive.get("decision") or "") == "continue_execution":
                 ep._cghe_graph_mode = "switch"
                 locked = _lock_recovery_step(ep, directive)
+                if locked:
+                    _metrics(ep)["deps_ready_selections"] = int(
+                        _metrics(ep).get("deps_ready_selections") or 0
+                    ) + 1
                 if not locked:
                     ep._cghe_directive = dict(_PEV_DIRECTIVE)
                     ep._cghe_directive["reason"] = "selected node has no executable subgoal or tool"
@@ -1309,6 +1834,19 @@ class EpisodeContext:
             from sft_prompts import listed_fetch_command
 
             direct = listed_fetch_command(tool_name, ep.context, ep.memory)
+            if not direct and "fetch" in str(tool_name or "").lower():
+                graph = _graph_for(ep)
+                node_id = str((getattr(ep, "_cghe_directive", None) or {}).get("node_id") or "")
+                bound = ""
+                if graph is not None and node_id:
+                    try:
+                        bound = str(graph.bound_url(node_id) or "").strip()
+                    except Exception:
+                        bound = ""
+                if not bound:
+                    bound = str(ep.context or "").strip()
+                if bound.startswith("http://") or bound.startswith("https://"):
+                    direct = f"execution = tool.execute(url={repr(bound)})"
             if direct:
                 tool_command = direct
                 command = direct
@@ -1360,6 +1898,8 @@ class EpisodeContext:
             action["actual"] = actual_label(result)
             action["executed_at"] = executed_at
             _stamp_execution_observation(ep, action, tool_name, command, raw_result)
+            if cghe_enabled():
+                _ingest_graph_result(ep, tool_name=tool_name, raw_result=raw_result, ok=bool(ok))
         output = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
         short = _short_tool_name(tool_name)
         return {
@@ -1397,8 +1937,17 @@ class EpisodeContext:
         verdict = parse_verifier_text(stop_verification)
         if recent_has_search_urls(ep.memory) and not recent_has_fetch_body(ep.memory):
             verdict["conclusion"] = "CONTINUE"
-        add_obtained_information(ep.memory, verdict.get("obtained"))
+        feedback = {}
         action = ep.memory.actions.get(f"Action Step {ep.step_count}")
+        if isinstance(action, dict) and isinstance(action.get("cghe_feedback"), dict):
+            feedback = dict(action.get("cghe_feedback") or {})
+        # Tool text alone is not enough to stop; need sufficient evidence.
+        if str(feedback.get("evidence") or "") not in ("sufficient",) and verdict.get("conclusion") == "STOP":
+            if not recent_has_fetch_body(ep.memory):
+                verdict["conclusion"] = "CONTINUE"
+            elif str(feedback.get("evidence") or "") in ("none", "weak", "insufficient", ""):
+                verdict["conclusion"] = "CONTINUE"
+        add_obtained_information(ep.memory, verdict.get("obtained"))
         if isinstance(action, dict):
             action["conclusion"] = verdict["conclusion"]
             satisfied = str(verdict.get("satisfied") or "").upper()
@@ -1427,9 +1976,38 @@ class EpisodeContext:
             and recent_steps_look_empty(ep.memory)
             and not recent_has_fetch_body(ep.memory)
         )
+        graph = _graph_for(ep)
+        pages = list(getattr(ep, "_cghe_pages", None) or [])
+        if graph is not None:
+            for page in graph.collected_page_texts():
+                if page and page not in pages:
+                    pages.append(page)
+        from sft_prompts import page_has_answer_clues
+
+        evidence_ok = str(feedback.get("evidence") or "") == "sufficient"
+        if graph is not None and graph.evidence_sufficient(str(ep.question or "")):
+            evidence_ok = True
+        if pages and any(page_has_answer_clues(str(ep.question or ""), page) for page in pages):
+            evidence_ok = True
+        # Early stop: extract already produced a short boxed answer with evidence.
+        boxed_early = ""
+        if isinstance(action, dict):
+            tool_name = str(action.get("tool_name") or action.get("tool") or "").lower()
+            result_text = str(action.get("result") or action.get("raw_tool_result") or "")
+            if ("generalist" in tool_name or "generator" in tool_name) and evidence_ok:
+                m = re.search(r"\\boxed\{([^{}]{1,120})\}", result_text)
+                if m:
+                    cand = m.group(1).strip()
+                    if cand and "unknown" not in cand.lower():
+                        boxed_early = cand
         # Budget stop without grounded evidence: end the episode without inventing an answer.
         force_empty = bool(out_of_budget and no_evidence and conclusion != "STOP")
-        stop = conclusion == "STOP" or out_of_budget
+        stop = conclusion == "STOP" or out_of_budget or bool(boxed_early)
+        if stop and conclusion == "STOP" and not evidence_ok and not out_of_budget and not boxed_early:
+            # Keep searching/opening until evidence is sufficient.
+            stop = False
+            conclusion = "CONTINUE"
+            analysis = (str(analysis or "") + " | blocked_stop_without_sufficient_evidence").strip(" |")
         answer = ""
         if stop and force_empty:
             ep.final_output = ""
@@ -1438,17 +2016,38 @@ class EpisodeContext:
             ep.json_data["direct_output"] = ""
             ep.json_data["budget_empty_stop"] = True
             ep.done = True
+            _complete_cghe_plans(ep)
             answer = ""
             analysis = (str(analysis or "") + " | budget_stop_without_evidence").strip(" |")
         elif stop:
-            # Official default output_types=final,direct. final is the write-up;
-            # direct is the answer the scorer wraps.
+            from sft_prompts import structured_answer_from_pages
+
             ep.planner.query_analysis = ep.query_analysis
-            ep.final_output = str(ep.planner.generate_final_output(ep.question, None, ep.memory) or "")
-            ep.direct_output = str(ep.planner.generate_direct_output(ep.question, None, ep.memory) or "")
+            structured = ""
+            if boxed_early:
+                structured = f"<answer>\n\\boxed{{{boxed_early}}}\n</answer>"
+                analysis = (str(analysis or "") + " | early_stop_boxed_extract").strip(" |")
+            elif evidence_ok and pages and not cghe_enabled():
+                engine = getattr(ep.planner, "llm_engine_fixed", None) or getattr(ep.planner, "llm_engine", None)
+                if callable(engine):
+                    structured = structured_answer_from_pages(engine, ep.question, pages)
+            use_structured = bool(structured) and "unknown" not in structured.lower()
+            if use_structured:
+                ep.direct_output = structured
+                ep.final_output = structured
+                _metrics(ep)["answer_from_sufficient"] = 1
+            elif evidence_ok:
+                ep.final_output = str(ep.planner.generate_final_output(ep.question, None, ep.memory) or "")
+                ep.direct_output = str(ep.planner.generate_direct_output(ep.question, None, ep.memory) or "")
+                _metrics(ep)["answer_from_sufficient"] = 1
+            else:
+                ep.final_output = str(ep.planner.generate_final_output(ep.question, None, ep.memory) or "")
+                ep.direct_output = str(ep.planner.generate_direct_output(ep.question, None, ep.memory) or "")
             ep.json_data["final_output"] = ep.final_output
             ep.json_data["direct_output"] = ep.direct_output
+            ep.json_data["cghe_evidence_sufficient"] = bool(evidence_ok)
             ep.done = True
+            _complete_cghe_plans(ep)
             answer = wrap_answer(ep.direct_output, source=ep.source)
             if not answer and printed:
                 ep.direct_output = printed

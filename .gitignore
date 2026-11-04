@@ -38,6 +38,14 @@ artifacts/
 /experiments/cghe_v2/paired_pure.json
 /experiments/cghe_v2/paired_search_cache.json
 /experiments/cghe_v2/planner_rounds/
+/experiments/cghe_v2/iter20/
+/experiments/cghe_v2/full_cghe_dev5_*.json
+/experiments/fcr_short/events/
+/experiments/fcr_short/archive/
+/experiments/fcr_short/archive_*/
+/experiments/fcr_short/offline_pred/
+/experiments/fcr_short/*.nohup.out
+/experiments/fcr_short/valid16.parquet
 
 # Python
 __pycache__/

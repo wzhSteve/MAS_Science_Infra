@@ -587,12 +587,16 @@ def _search_query(observation: ExecutionObservation) -> str:
 
 
 def _snippet_gap(observation: ExecutionObservation, verifier: str) -> bool:
-    """A successful Bing call whose own snippets were explicitly judged insufficient."""
+    """A thin Bing return that was judged insufficient. Rich snippets are not a counterexample."""
     if verifier not in _FAILURE_LABELS:
         return False
     if "bing" not in norm(observation.tool_name):
         return False
-    if not _URL_RE.search(_result_text(observation.tool_result)):
+    text = _result_text(observation.tool_result)
+    urls = _URL_RE.findall(text)
+    if len(urls) < 1 or not _search_query(observation):
         return False
-    return bool(_search_query(observation))
+    if len(urls) >= 3 and len(text) >= 500:
+        return False
+    return True
 

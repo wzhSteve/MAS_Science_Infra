@@ -1,0 +1,108 @@
+profile: a800_2gpu
+algo: fcr_grpo
+n_runners: 2
+rollout_per_gpu: 2
+devices:
+  ids:
+  - 0
+  - 1
+model_path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+algorithm:
+  adv_estimator: grpo
+  use_kl_in_reward: false
+  tir_algo: fcr_grpo
+  tir:
+    fcr_k: 2
+    fcr_threshold: 0.5
+    fcr_lambda: 0.0
+    fcr_pattern_enabled: false
+    fcr_pattern_require_prev_fail: false
+    fcr_brier_enabled: false
+    fcr_brier_beta: 0.0
+    fcr_brier_mode: fixed
+    fcr_hard_beam_cap: true
+    initial_rollouts: 2
+    max_branch_depth: 2
+    beam_size: 2
+    ready_batch: true
+    sampling_strategy: fcr_grpo
+    sites:
+    - id: fcr_gate
+      enabled: true
+      anchor:
+        kind: after_verifier
+      when: every
+      gate:
+        type: failure_confirmed
+        params: {}
+      fork:
+        beam_size: 2
+        share_observation: true
+        resume_mode: messages
+        probe_max_tokens: 128
+      reward:
+        scheme: scalar_grpo
+        p_plus: 0.8
+        k_min: 2
+        epsilon_f: 0.001
+      priority: 100
+    fcr_repair_enabled: false
+data:
+  train_files: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/fcr_probe_train64.parquet
+  val_files: /root/autodl-tmp/MAS_Science_Infra/data/rl_datasets/fcr_probe_val32.parquet
+  shuffle: true
+  seed: 42
+  train_batch_size: 2
+  max_prompt_length: 6144
+  max_response_length: 4096
+  truncation: left
+actor_rollout_ref:
+  rollout:
+    tensor_model_parallel_size: 1
+    n: 4
+    log_prob_micro_batch_size_per_gpu: 1
+    name: vllm
+    gpu_memory_utilization: 0.28
+    engine_kwargs:
+      vllm:
+        enable_auto_tool_choice: true
+        tool_call_parser: hermes
+        max_model_len: 10240
+        served_model_name: LLM/Qwen3-4B
+  actor:
+    ppo_mini_batch_size: 1
+    ppo_micro_batch_size_per_gpu: 1
+    optim:
+      lr: 1.0e-06
+    entropy_coeff: 0
+    fsdp_config:
+      param_offload: true
+      optimizer_offload: true
+  ref:
+    log_prob_micro_batch_size_per_gpu: 1
+    fsdp_config:
+      param_offload: true
+  model:
+    path: /root/autodl-tmp/MAS_Science_Infra/LLM/Qwen3-4B
+    use_remove_padding: true
+    enable_gradient_checkpointing: true
+trainer:
+  n_gpus_per_node: 2
+  val_before_train: false
+  critic_warmup: 0
+  logger:
+  - console
+  - tensorboard
+  project_name: AgentLightning
+  experiment_name: fcr_b_only
+  default_local_dir: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/fcr_b_only
+  nnodes: 1
+  test_freq: 0
+  total_epochs: 1
+  total_training_steps: 8
+  save_freq: 1000
+  max_actor_ckpt_to_keep: 1
+  resume_mode: disable
+env:
+  FCR_GRAD_DIAGNOSTICS: '0'
+  FCR_BRIER_MAX_ROWS: '0'

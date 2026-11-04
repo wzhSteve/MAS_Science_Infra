@@ -65,6 +65,8 @@ def main() -> int:
             env.setdefault(key.strip(), value.strip().strip('"').strip("'"))
     env["CUDA_VISIBLE_DEVICES"] = env.get("CUDA_VISIBLE_DEVICES") or "0,1"
     env["PYTHONUNBUFFERED"] = "1"
+    # vLLM CuMemAllocator rejects expandable_segments; do not set it here.
+    env.pop("PYTORCH_CUDA_ALLOC_CONF", None)
     env.setdefault("VLLM_USE_V1", "1")
     env.setdefault("TIR_MAS_HEALTH", "0")
     env.setdefault("FCR_GRAD_DIAGNOSTICS", "0")
@@ -113,8 +115,13 @@ def main() -> int:
         proc.send_signal(signal.SIGINT)
         code = proc.wait()
     time.sleep(2)
-    watch.send_signal(signal.SIGINT)
-    watch.wait(timeout=10)
+    if watch.poll() is None:
+        watch.send_signal(signal.SIGINT)
+        try:
+            watch.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            watch.kill()
+            watch.wait(timeout=5)
     print(f"job {args.name} exit={code} log={log_path} metrics={metrics}", flush=True)
     return int(code)
 
