@@ -1,8 +1,0 @@
-{
-  "n_pairs": 124.0,
-  "n_snapshots": 22.0,
-  "mean_delta_fcr_minus_continue": 0.020247920866935484,
-  "n_snapshot_files": 22.0,
-  "used_snapshots": 16.0,
-  "note": "parent outcome is the continued trajectory; child outcome is the failure-conditioned continuation. Not a do(a) counterfactual."
-}

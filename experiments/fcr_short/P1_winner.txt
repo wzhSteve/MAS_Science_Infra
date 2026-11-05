@@ -1,3 +1,0 @@
-winner=fcr_p1_pred_fail
-gate=failure_confirmed
-reward_key=training/reward
