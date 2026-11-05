@@ -994,11 +994,50 @@ def _stamp_execution_observation(
             action["cghe_auth_reason"] = str(auth.get("reason") or "")[:200]
 
 
-def _observation_from_action(action: Dict[str, Any], *, verifier_label: str, hypothesis: str) -> Any:
+def _plan_argument_for_action(ep: "Episode", action: Dict[str, Any]) -> str:
+    """Planner-side argument for this step: graph node argument, else tool input / subgoal."""
+    node_id = str(action.get("cghe_node_id") or "")
+    controller = getattr(ep, "_cghe", None)
+    graph = getattr(controller, "graph", None) if controller is not None else None
+    if graph is not None and node_id:
+        try:
+            node = graph.node(node_id)
+            argument = str(getattr(node, "argument", "") or getattr(node, "action", "") or "").strip()
+            if argument:
+                return argument
+        except Exception:
+            pass
+    for key in ("tool_input", "command", "sub_goal"):
+        value = str(action.get(key) or "").strip()
+        if value:
+            return value
+    return str(getattr(ep, "context", "") or getattr(ep, "sub_goal", "") or "").strip()
+
+
+def _observation_from_action(
+    action: Dict[str, Any],
+    *,
+    verifier_label: str,
+    hypothesis: str,
+    ep: Optional["Episode"] = None,
+) -> Any:
     from cghe_types import ExecutionObservation
 
+    tool_name = str(action.get("tool_name") or "")
+    command = str(action.get("command") or "")
+    argument = _plan_argument_for_action(ep, action) if ep is not None else str(
+        action.get("tool_input") or action.get("sub_goal") or command or ""
+    ).strip()
+    parameters: Dict[str, Any] = {}
+    if argument:
+        if "bing" in tool_name.lower() or "search" in tool_name.lower():
+            parameters = {"query": argument}
+            if "query=" not in command.casefold():
+                command = f"execution = tool.execute(query={argument!r})"
+        elif "fetch" in tool_name.lower():
+            parameters = {"resource": argument}
     return ExecutionObservation(
-        tool_name=str(action.get("tool_name") or ""),
+        tool_name=tool_name,
         environment=CGHE_ENVIRONMENT,
         tool_result=action.get("raw_tool_result", action.get("result")),
         execution_log=str(action.get("execution_log") or ""),
@@ -1006,7 +1045,9 @@ def _observation_from_action(action: Dict[str, Any], *, verifier_label: str, hyp
         verifier_label=verifier_label,
         plan_id=str(action.get("cghe_plan_id") or ""),
         node_id=str(action.get("cghe_node_id") or ""),
-        command=str(action.get("command") or ""),
+        command=command,
+        parameters=parameters,
+        resource=str(parameters.get("resource") or ""),
     )
 
 
@@ -1099,9 +1140,12 @@ def _advance_after_success(ep: "Episode", controller: Any, node_id: str) -> None
         "task_completed": False,
     })
     if successors:
+        from cghe_dag_log import log_advance
+
         coverage = graph.compute_step1_coverage()
         nxt = max(successors, key=lambda item: (coverage.get(item, 0), item))
         session.log_selection(graph, nxt, coverage.get(nxt, 0), {item: coverage.get(item, 0) for item in successors})
+        log_advance(node_id, nxt, int(coverage.get(nxt, 0)), graph)
         ep._cghe_graph_mode = "switch"
         _store_graph_in_memory(ep, graph, selected_id=nxt)
         ep._cghe_directive = _directive_continue(
@@ -1140,18 +1184,10 @@ def _cghe_on_verdict(ep: "Episode", verdict: Dict[str, Any]) -> None:
     controller = ep.cghe_controller()
     if controller is None:
         return
-    tool_name = str(action.get("tool_name") or "").lower()
-    result_text = str(action.get("result") or action.get("raw_tool_result") or "")
-    if "bing" in tool_name and result_text.lower().count("http") >= 1:
-        # The search subgoal is to return candidate pages. A non-empty result list
-        # meets that subgoal even when the whole question is still unanswered.
-        flag = True
-        label = "满足"
-    if "fetch" in tool_name and len(result_text.strip()) >= 200:
-        flag = True
-        label = "满足"
+    # Judge the planner subgoal via the verifier, not whether the tool call
+    # mechanically returned links or a long page body.
     if flag is True:
-        observation = _observation_from_action(action, verifier_label=label, hypothesis="")
+        observation = _observation_from_action(action, verifier_label=label, hypothesis="", ep=ep)
         controller.record_verified_success(
             observation,
             action=str(action.get("sub_goal") or ""),
@@ -1174,6 +1210,7 @@ def _cghe_on_verdict(ep: "Episode", verdict: Dict[str, Any]) -> None:
         action,
         verifier_label=label,
         hypothesis=str(verdict.get("reason") or ""),
+        ep=ep,
     )
     outcome = controller.handle_failure(
         observation,
@@ -1249,15 +1286,23 @@ def _switch_after_graph_failure(
     graph = getattr(controller, "graph", None)
     if not node_id or graph is None or not any(node.node_id == node_id for node in graph.nodes()):
         return False
-    observation = _observation_from_action(action, verifier_label=label, hypothesis="")
+    observation = _observation_from_action(action, verifier_label=label, hypothesis="", ep=ep)
     analysis = FailureAnalyzer().analyze(observation)
     session = session_for(controller, cghe_settings())
     attempt_id = str(getattr(ep, "_cghe_open_attempt_id", "") or "")
+    from cghe_dag_log import constraint_brief, log_prune, plans_text
+
     pruned: list[str] = []
     evidence_id = ""
+    before_ids = list(graph.active_plan_ids())
     no_prune = str(os.environ.get("CGHE_NO_PRUNE") or "").strip().lower() in {"1", "true", "yes"}
     if analysis.verified_counterexample and analysis.constraint is not None and not no_prune:
-        pruned = prune_by_counterexample(graph, analysis.constraint, evidence=analysis.evidence)
+        pruned = prune_by_counterexample(
+            graph,
+            analysis.constraint,
+            evidence=analysis.evidence,
+            executed_plan_id=str(action.get("cghe_plan_id") or observation.plan_id or ""),
+        )
         evidence_id = str(analysis.constraint.evidence_id or analysis.constraint.constraint_id or "")
         try:
             controller.memory.record_counterexample(
@@ -1296,6 +1341,8 @@ def _switch_after_graph_failure(
                     evidence_id=evidence_id,
                     direct=True,
                 )
+        after_ids = list(graph.active_plan_ids())
+        brief = constraint_brief(analysis.constraint)
         session.events.append({
             "event": "counterexample_validated",
             "predicate": analysis.constraint.condition.predicate,
@@ -1303,13 +1350,27 @@ def _switch_after_graph_failure(
             "source": analysis.constraint.source,
             "validation_status": EvidenceStatus.VERIFIED_COUNTEREXAMPLE.value,
             "evidence_id": evidence_id,
+            "constraint_brief": brief,
         })
         session.events.append({
             "event": "plans_pruned",
             "evidence_id": evidence_id,
             "pruned_plan_ids": list(pruned),
-            "remaining_active_plan_ids": list(graph.active_plan_ids()),
+            "remaining_active_plan_ids": after_ids,
+            "plans_text": plans_text(graph),
+            "constraint_brief": brief,
         })
+        log_prune(before_ids, pruned, after_ids, analysis.constraint, verified=True)
+        # Exhaust this Step-1 search so Coverage moves to other queries.
+        if (
+            pruned
+            and str(getattr(analysis.constraint, "observation_code", "") or "") == "SNIPPETS_INSUFFICIENT"
+            and hasattr(graph, "mark_failed")
+        ):
+            try:
+                graph.mark_failed(node_id)
+            except Exception:
+                pass
     else:
         try:
             controller._remember_failure(analysis, observation, action=str(action.get("sub_goal") or ""), promote=False)
@@ -1332,7 +1393,9 @@ def _switch_after_graph_failure(
             "validation_status": EvidenceStatus.UNVERIFIED_HYPOTHESIS.value,
             "evidence_id": str(getattr(analysis.evidence, "evidence_id", "") or ""),
             "hard_constraint": False,
+            "constraint_brief": constraint_brief(analysis.constraint),
         })
+        log_prune(before_ids, [], before_ids, analysis.constraint, verified=False)
     if attempt_id:
         graph.finish_attempt(
             attempt_id,
@@ -1504,10 +1567,20 @@ def _open_layered_plan(ep: "Episode") -> bool:
         return False
     if validate_dag(graph):
         return False
+    from cghe_dag_log import log_dag_build, plans_text
+
     session = session_for(controller, cghe_settings())
     session.bind_graph(graph)
     record_plan_dependencies(controller.memory, graph)
     controller._round_exhausted = False
+    session.events.append({
+        "event": "dag_built",
+        "dag_id": graph.dag_id,
+        "plans_text": plans_text(graph),
+        "coverage_map": dict(graph.compute_step1_coverage()),
+        "active_plan_ids": list(graph.active_plan_ids()),
+    })
+    log_dag_build(graph)
     selection = graph.select_step1()
     if selection is None:
         return False
@@ -1525,6 +1598,8 @@ def _open_layered_plan(ep: "Episode") -> bool:
 def _cghe_trace(ep: "Episode") -> Dict[str, Any]:
     if not cghe_enabled():
         return {}
+    from cghe_dag_log import human_lines, plans_text
+
     directive = getattr(ep, "_cghe_directive", None) or {}
     snapshot = getattr(ep, "_cghe_snapshot", None) or {}
     graph = getattr(getattr(ep, "_cghe", None), "graph", None)
@@ -1532,6 +1607,8 @@ def _cghe_trace(ep: "Episode") -> Dict[str, Any]:
         snapshot = _graph_snapshot(graph, selected_id=str(directive.get("node_id") or ""))
     metrics = _metrics(ep)
     steps = max(1, int(metrics.get("steps") or 0))
+    session = getattr(getattr(ep, "_cghe", None), "cghe_session", None)
+    events = list(getattr(session, "events", None) or []) if session is not None else []
     return {
         "cghe_decision": str(directive.get("decision") or "continue_pev"),
         "cghe_reason": str(directive.get("reason") or "")[:300],
@@ -1541,8 +1618,9 @@ def _cghe_trace(ep: "Episode") -> Dict[str, Any]:
         "cghe_outlines": snapshot.get("cghe_outlines") or [],
         "cghe_frontier": snapshot.get("cghe_frontier") or [],
         "cghe_select_policy": "max_step1_path_coverage",
-        "cghe_events": list(getattr(getattr(ep, "_cghe", None), "cghe_session", None).events)[-8:]
-        if getattr(getattr(ep, "_cghe", None), "cghe_session", None) is not None else [],
+        "cghe_events": events,
+        "cghe_log_lines": human_lines(limit=120),
+        "cghe_plans_text": plans_text(graph) if graph is not None else [],
         "cghe_round_id": snapshot.get("cghe_round_id") or "",
         "cghe_feedback": list(metrics.get("feedback") or [])[-5:],
         "cghe_metrics": {
@@ -1971,10 +2049,13 @@ class EpisodeContext:
             analysis = budget_unresolved_reason(analysis, ep.memory)
 
         printed = last_python_print(ep.memory)
+        obtained = list(getattr(ep.memory, "obtained_information", None) or [])
+        obtained_text = "\n".join(str(item) for item in obtained if str(item or "").strip())
         no_evidence = (
             not printed
             and recent_steps_look_empty(ep.memory)
             and not recent_has_fetch_body(ep.memory)
+            and not obtained_text.strip()
         )
         graph = _graph_for(ep)
         pages = list(getattr(ep, "_cghe_pages", None) or [])
@@ -1989,6 +2070,13 @@ class EpisodeContext:
             evidence_ok = True
         if pages and any(page_has_answer_clues(str(ep.question or ""), page) for page in pages):
             evidence_ok = True
+        has_any_observation = bool(
+            printed
+            or obtained_text.strip()
+            or pages
+            or recent_has_search_urls(ep.memory)
+            or recent_has_fetch_body(ep.memory)
+        )
         # Early stop: extract already produced a short boxed answer with evidence.
         boxed_early = ""
         if isinstance(action, dict):
@@ -2000,8 +2088,14 @@ class EpisodeContext:
                     cand = m.group(1).strip()
                     if cand and "unknown" not in cand.lower():
                         boxed_early = cand
-        # Budget stop without grounded evidence: end the episode without inventing an answer.
-        force_empty = bool(out_of_budget and no_evidence and conclusion != "STOP")
+        # Only force an empty stop when the episode truly has zero observations.
+        # Weak search/fetch traces should still attempt final generation.
+        force_empty = bool(
+            out_of_budget
+            and no_evidence
+            and not has_any_observation
+            and conclusion != "STOP"
+        )
         stop = conclusion == "STOP" or out_of_budget or bool(boxed_early)
         if stop and conclusion == "STOP" and not evidence_ok and not out_of_budget and not boxed_early:
             # Keep searching/opening until evidence is sufficient.

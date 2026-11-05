@@ -1,6 +1,6 @@
 profile: a800_2gpu
 algo: fcr_grpo
-n_runners: 2
+n_runners: 16
 rollout_per_gpu: 2
 devices:
   ids:
@@ -82,7 +82,7 @@ trainer:
   test_freq: 1
   total_epochs: 1
   total_training_steps: 5
-  save_freq: 1000
+  save_freq: 1
   max_actor_ckpt_to_keep: 1
   resume_mode: disable
 env:

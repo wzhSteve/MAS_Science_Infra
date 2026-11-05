@@ -198,6 +198,9 @@ class CGHESession:
         return record
 
     def log_selection(self, graph: Any, node_id: str, coverage: int, eligible: dict[str, int]) -> None:
+        from cghe_dag_log import log_selection as emit_selection, plans_text
+
+        plan_ids = list(graph.plans_starting_with(node_id))
         self.events.append({
             "event": "step1_selected",
             "dag_id": graph.dag_id,
@@ -205,9 +208,11 @@ class CGHESession:
             "coverage": int(coverage),
             "coverage_map": dict(graph.compute_step1_coverage()),
             "eligible_coverage": dict(eligible),
-            "selected_plan_ids": list(graph.plans_starting_with(node_id)),
+            "selected_plan_ids": plan_ids,
             "attempt_count": graph.attempt_count,
+            "plans_text": plans_text(graph),
         })
+        emit_selection(graph, node_id, coverage, plan_ids)
 
     def next_decision(self) -> tuple[str, Any]:
         """One controller step. Does not call the Executor and does not loop."""
@@ -237,6 +242,8 @@ class CGHESession:
         """Install at most one new DAG. Planner/schema failure does not count an attempt."""
         from planning_graph import PlanningGraph
 
+        from cghe_dag_log import log_dag_build, log_regen, plans_text
+
         reasons = list(ctx.get("trigger_reasons") or [])
         old = getattr(self.controller, "graph", None)
         old_id = getattr(old, "dag_id", "")
@@ -249,6 +256,7 @@ class CGHESession:
             "global_attempts": self.global_attempts,
         })
         if not plans:
+            log_regen(old_id, "", reasons, [])
             return None
         try:
             graph = PlanningGraph(list(plans))
@@ -271,17 +279,22 @@ class CGHESession:
         self.bind_graph(graph)
         inherited = [_inherit_id(item) for item in (ctx.get("verified_counterexamples") or [])]
         inherited += [_inherit_id(item) for item in (ctx.get("verified_successes") or [])]
+        inherited_ids = [item for item in inherited if item]
         self.events.append({
             "event": "dag_regenerated",
             "new_dag_id": graph.dag_id,
             "old_dag_id": old_id,
             "trigger_reasons": reasons,
-            "inherited_ids": [item for item in inherited if item],
+            "inherited_ids": inherited_ids,
             "attempt_count": graph.attempt_count,
             "global_attempts": self.global_attempts,
             "regeneration_count": self.regeneration_count,
             "unverified_are_hard_constraints": False,
+            "plans_text": plans_text(graph),
+            "coverage_map": dict(graph.compute_step1_coverage()),
         })
+        log_regen(old_id, graph.dag_id, reasons, inherited_ids)
+        log_dag_build(graph)
         return graph
 
     def handoff_after_step1_success(self, graph: Any, node_id: str, result: Any) -> dict[str, Any]:
@@ -335,15 +348,28 @@ class CGHESession:
         }
 
 
-def prune_by_counterexample(graph: Any, constraint: Optional[Constraint], *, evidence: Any = None) -> list[str]:
+def prune_by_counterexample(
+    graph: Any,
+    constraint: Optional[Constraint],
+    *,
+    evidence: Any = None,
+    executed_plan_id: str = "",
+) -> list[str]:
     """Prune only plans the existing admission gate says explicitly depend on the evidence."""
     from hypothesis_pruner import HypothesisPruner
 
     if constraint is None:
         return []
-    result = HypothesisPruner().prune(graph, constraint, evidence=evidence, apply=True)
+    result = HypothesisPruner().prune(
+        graph,
+        constraint,
+        evidence=evidence,
+        executed_plan_id=str(executed_plan_id or ""),
+        apply=True,
+    )
     graph.refresh_orphans()
-    return list(result.pruned_plan_ids)
+    # Snippet gaps retire the executed plan only; surface those ids too.
+    return list(result.pruned_plan_ids) + list(result.instance_retired_plan_ids)
 
 
 def record_plan_dependencies(memory: Any, graph: Any) -> None:

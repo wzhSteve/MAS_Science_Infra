@@ -580,23 +580,31 @@ def _search_query(observation: ExecutionObservation) -> str:
     match = _QUERY_RE.search(str(observation.command or ""))
     if match:
         return match.group(2).strip()
+    params = dict(observation.parameters or {})
+    for key in ("query", "argument", "q"):
+        value = str(params.get(key) or "").strip()
+        if value:
+            return value
     header = _HEADER_RE.search(_result_text(observation.tool_result))
     if header:
         return header.group(1).split("\n", 1)[0].strip()
+    # Plain command / tool input left by the planner (no query= wrapper).
+    command = str(observation.command or "").strip()
+    if command and "http://" not in command.casefold() and "https://" not in command.casefold():
+        if "tool.execute" not in command.casefold() and len(command.split()) <= 16:
+            return command
     return ""
 
 
 def _snippet_gap(observation: ExecutionObservation, verifier: str) -> bool:
-    """A thin Bing return that was judged insufficient. Rich snippets are not a counterexample."""
+    """Verifier says the search subgoal failed; bind that failure to the query assumption.
+
+    Tool call success (links returned) is irrelevant. What matters is whether the
+    planner's SnippetsSufficient premise for this query holds.
+    """
     if verifier not in _FAILURE_LABELS:
         return False
-    if "bing" not in norm(observation.tool_name):
+    if "bing" not in norm(observation.tool_name) and "search" not in norm(observation.tool_name):
         return False
-    text = _result_text(observation.tool_result)
-    urls = _URL_RE.findall(text)
-    if len(urls) < 1 or not _search_query(observation):
-        return False
-    if len(urls) >= 3 and len(text) >= 500:
-        return False
-    return True
+    return bool(_search_query(observation))
 

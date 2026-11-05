@@ -60,14 +60,34 @@ class HypothesisPruner:
         active_before = len(active_before_ids)
         admissible, dep_complete, rejection = self._global_admission(graph, constraint)
         pruned: list[str] = []
-        if admissible and constraint is not None:
+        retired: list[str] = []
+        snippet_instance = bool(
+            constraint is not None
+            and constraint.observation_code == "SNIPPETS_INSUFFICIENT"
+        )
+        if admissible and constraint is not None and snippet_instance:
+            # Query-instance scope: remove plans whose Step-1 / premise matches
+            # this query argument. Other queries stay. Prefer the executed plan
+            # when labels are incomplete.
+            failed_node = str(getattr(evidence, "node_id", "") or "")
+            matched = {
+                plan_id
+                for plan_id in active_before_ids
+                if self._plan_admitted(graph, plan_id, constraint)
+            }
+            if failed_node and hasattr(graph, "plans_starting_with"):
+                matched.update(graph.plans_starting_with(failed_node))
+            if matched:
+                pruned.extend(sorted(matched))
+            elif executed_plan_id and executed_plan_id in active_before_ids:
+                retired.append(executed_plan_id)
+        elif admissible and constraint is not None:
             for plan_id in active_before_ids:
                 if self._plan_admitted(graph, plan_id, constraint):
                     pruned.append(plan_id)
-        pruned_ids = tuple(sorted(pruned))
+        pruned_ids = tuple(sorted(set(pruned)))
 
-        retired: list[str] = []
-        if not pruned_ids and self._retire_executed_only(
+        if not pruned_ids and not retired and self._retire_executed_only(
             constraint, evidence, dep_complete, rejection
         ):
             if executed_plan_id and executed_plan_id in active_before_ids:
@@ -156,6 +176,7 @@ class HypothesisPruner:
                 return False, False, "snippet gap is not bound to the search query"
             if constraint.disables_tool:
                 return False, False, "a snippet gap cannot disable the search tool"
+            # Still admissible for instance retirement; cross-path wipe is closed above.
         if constraint.observation_code == "PERMISSION_DENIED" and (
             not constraint.scope.resource or not constraint.scope.identity
         ):

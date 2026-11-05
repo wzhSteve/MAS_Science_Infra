@@ -33,10 +33,15 @@ PSI_OBSERVATION_TO_PREDICATE = {
     "SNIPPETS_INSUFFICIENT": "SnippetsSufficient",
 }
 
-# Definition 12 removes only the executed plan when a non-admissible failure
-# is bound to this parameter or this call's schema. Tool absence and
+# Definition 12 removes only the executed plan when a failure is bound to this
+# call/argument. Snippet gaps are query-instance local: a shared Step-1 search
+# must not wipe sibling plans that use different queries. Tool absence and
 # permission denials are not instance-local.
-INSTANCE_BOUND_OBSERVATIONS = frozenset({"PARAM_ERROR", "SCHEMA_MISMATCH"})
+INSTANCE_BOUND_OBSERVATIONS = frozenset({
+    "PARAM_ERROR",
+    "SCHEMA_MISMATCH",
+    "SNIPPETS_INSUFFICIENT",
+})
 
 _PREDICATE_ALIASES = {
     "toolexists": "ToolExists",

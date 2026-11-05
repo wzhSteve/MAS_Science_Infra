@@ -18,6 +18,8 @@
 
 成功写入正向记忆；可信反例写入 assumption、scope 和被剪计划。未验证失败不进入 `constraints_for_pruning`。重生成的那一次 Planner 调用通过 `context_guidance` 带上已验证记录；`drop_contradicted_plans` 丢掉重复同一 `argument` 的起点。资源 X 的否定不禁用资源 Y。`CGHE_NO_MEMORY=1` 时重生成不读因果记忆；`CGHE_NO_PRUNE=1` 时只记录反例不删计划。
 
+子目标判定以 Verifier 对 Planner 子目标的判断为准，不再用「Bing 返回了链接 / Fetch 正文够长」覆盖为满足。搜索被判定不满足时，把计划节点上的 query `argument` 绑进 `SnippetsSufficient` 反例，使同查询计划可被剪掉。
+
 ## 全量与消融
 
 100 条 HotpotQA、每题最多 4 步。三个进程同时跑 Full、无剪枝、无记忆重生成。结果见 `HOTPOT_ABLATION.md`。上一轮 Coverage 恒为 1 时的 0.230 / 0.230 / 0.250 不作本轮结论。
