@@ -78,13 +78,20 @@ def _slug(tool: str) -> str:
 
 
 class PlanningGraph:
-    """DAG of one recovery round. ``round_id`` identifies that frozen universe."""
+    """DAG of one planning round. ``round_id`` / ``version`` identify that universe.
 
-    def __init__(self, plans: Sequence[CandidatePlan], *, round_id: str = "") -> None:
+    After ``seal()``, the graph is historical: callers must not treat it as the
+    next-round active DAG. Round-based regeneration builds a *new* PlanningGraph.
+    """
+
+    def __init__(self, plans: Sequence[CandidatePlan], *, round_id: str = "", version: int | str = "") -> None:
         if not isinstance(plans, Sequence) or isinstance(plans, (str, bytes)):
             raise TypeError("plans must be a sequence of CandidatePlan")
         self.round_id = round_id or new_id("round")
+        self._version: str = str(version) if version not in ("", None) else self.round_id
         self._frozen = True
+        self._sealed = False
+        self._seal_snapshot: Optional[dict] = None
         self._plans: dict[str, CandidatePlan] = {}
         self._plan_order: list[str] = []
         copied: list[CandidatePlan] = []
@@ -114,6 +121,28 @@ class PlanningGraph:
     @property
     def dag_id(self) -> str:
         return self.round_id
+
+    @property
+    def version(self) -> str:
+        """Stable DAG version id for round-based regeneration."""
+        return self._version
+
+    @property
+    def sealed(self) -> bool:
+        return bool(self._sealed)
+
+    def seal(self) -> dict:
+        """Mark this DAG historical and capture an immutable structural snapshot."""
+        from hypothesis_round_memory import freeze_dag_snapshot
+
+        self._sealed = True
+        self._seal_snapshot = freeze_dag_snapshot(self)
+        return dict(self._seal_snapshot)
+
+    def seal_snapshot(self) -> dict:
+        if self._seal_snapshot is None:
+            return self.seal()
+        return copy.deepcopy(self._seal_snapshot)
 
     @classmethod
     def from_plans(cls, plans: Sequence[CandidatePlan], *, round_id: str = "") -> "PlanningGraph":

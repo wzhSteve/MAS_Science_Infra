@@ -69,8 +69,16 @@ def main() -> int:
             val_reward = row.get("val/reward")
             pattern_hits = row.get("fcr/strict_event_count")
             lines.append(f"### step {step}")
-            lines.append(f"- train reward: {reward}")
-            lines.append(f"- val reward: {val_reward}")
+            lines.append(f"- train reward (combined): {reward}")
+            lines.append(
+                f"- train R_answer / R_correct / R_total: "
+                f"{row.get('fcr/R_answer_mean')} / {row.get('fcr/R_correct_mean')} / {row.get('fcr/R_total_mean')}"
+            )
+            lines.append(f"- val reward (outcome-only from trainer): {val_reward}")
+            lines.append(
+                f"- val R_answer / R_correct / R_total: "
+                f"{row.get('val/fcr/R_answer_mean')} / {row.get('val/fcr/R_correct_mean')} / {row.get('val/fcr/R_total_mean')}"
+            )
             lines.append(f"- train Correct pattern hits (new design): {pattern_hits}")
             if pattern_hits == 0 or pattern_hits == 0.0:
                 lines.append("- 该步训练集 Correct pattern 命中为 0，Correct 奖励没有进入更新。")
@@ -81,9 +89,9 @@ def main() -> int:
                 lines.append(f"| {key} | {_fmt(row, 'fcr', key)} | {_fmt(row, 'val/fcr', key)} |")
             lines.append("")
             lines.append(
-                f"- R_correct_mean: {row.get('fcr/R_correct_mean')} | "
-                f"frac_Nmax_zero: {row.get('fcr/frac_Nmax_zero')} | "
-                f"budget_violation: {row.get('fcr/budget_violation_count')}"
+                f"- frac_Nmax_zero: {row.get('fcr/frac_Nmax_zero')} | "
+                f"budget_violation: {row.get('fcr/budget_violation_count')} | "
+                f"val correct+ frac: {row.get('val/fcr/correct_reward_positive_frac')}"
             )
             lines.append("")
     OUT.write_text("\n".join(lines), encoding="utf-8")

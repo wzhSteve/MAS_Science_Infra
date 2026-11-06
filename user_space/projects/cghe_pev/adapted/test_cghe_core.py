@@ -498,14 +498,27 @@ class HypothesisPrunerTests(unittest.TestCase):
 
 
 class SnippetGapTests(unittest.TestCase):
-    def test_same_query_is_pruned_and_fetch_stays(self) -> None:
+    def test_search_with_urls_is_soft_unverified(self) -> None:
+        observation = ExecutionObservation(
+            tool_name="Bing_Search_Tool",
+            environment="cghe_pev",
+            command="execution = tool.execute(query='royal flash')",
+            tool_result="1. Reed\n   URL: https://en.wikipedia.org/wiki/Oliver_Reed",
+            verifier_label="不满足",
+        )
+        analysis = FailureAnalyzer().analyze(observation)
+        self.assertFalse(analysis.verified_counterexample)
+        self.assertEqual(analysis.evidence.failure_type, FailureType.SUBGOAL_NOT_SATISFIED)
+        self.assertEqual(analysis.evidence.observation_code, "SUBGOAL_NOT_SATISFIED")
+
+    def test_empty_search_is_hard_snippet_ce(self) -> None:
         from planning_graph import plans_for_snippet_gap
 
         observation = ExecutionObservation(
             tool_name="Bing_Search_Tool",
             environment="cghe_pev",
             command="execution = tool.execute(query='royal flash')",
-            tool_result="1. Reed\n   URL: https://en.wikipedia.org/wiki/Oliver_Reed",
+            tool_result="No results",
             verifier_label="不满足",
         )
         analysis = FailureAnalyzer().analyze(observation)
@@ -516,7 +529,7 @@ class SnippetGapTests(unittest.TestCase):
             {
                 "tool_name": "Bing_Search_Tool",
                 "command": observation.command,
-                "result": observation.tool_result,
+                "result": "1. Reed\n   URL: https://en.wikipedia.org/wiki/Oliver_Reed",
             },
             environment="cghe_pev",
         )
@@ -529,10 +542,40 @@ class SnippetGapTests(unittest.TestCase):
             tool_name="Bing_Search_Tool",
             environment="cghe_pev",
             verifier_label="不满足",
-            tool_result="a normal page",
+            tool_result="a normal page without any link marker here",
         ))
         self.assertFalse(ordinary.verified_counterexample)
         self.assertEqual(ordinary.evidence.failure_type, FailureType.SUBGOAL_NOT_SATISFIED)
+
+    def test_plan_successors_and_short_answer(self) -> None:
+        from planning_graph import plans_for_snippet_gap
+        from context import _plan_successors, wrap_answer
+
+        plans = plans_for_snippet_gap(
+            {
+                "tool_name": "Bing_Search_Tool",
+                "command": "execution = tool.execute(query='royal flash')",
+                "result": "1. Reed\n   URL: https://en.wikipedia.org/wiki/Oliver_Reed",
+            },
+            environment="cghe_pev",
+        )
+        graph = PlanningGraph(plans)
+        bing = next(n.node_id for n in graph.nodes() if "bing" in str(n.tool).casefold())
+        successors = _plan_successors(graph, bing)
+        self.assertTrue(successors)
+        # Downstream may be Fetch or shared Extract/Generalist depending on outline merge.
+        self.assertTrue(
+            any(
+                any(tok in str(graph.node(n).tool).casefold() for tok in ("fetch", "generalist", "extract"))
+                for n in successors
+            )
+        )
+        short = wrap_answer(
+            "<answer>Sanming is located in Fujian Province, China, and Jiutai District is located in Jilin Province, China.</answer>"
+        )
+        self.assertIn("<answer>", short)
+        self.assertLess(len(short), 120)
+        self.assertIn("Sanming", short)
 
 
 class FrontierVoteTests(unittest.TestCase):
@@ -556,20 +599,26 @@ class FrontierVoteTests(unittest.TestCase):
     def test_failure_removes_only_the_voted_outlines_suffix(self) -> None:
         from planning_graph import plans_for_snippet_gap
 
+        # Hard CE requires empty / URL-less search; prune fixture still needs URLs for fetch plans.
         observation = ExecutionObservation(
             tool_name="Bing_Search_Tool",
             environment="sandbox",
             command="execution = tool.execute(query='paris')",
-            tool_result="1. Paris\n   URL: https://en.wikipedia.org/wiki/Paris",
+            tool_result="No results",
             verifier_label="不满足",
         )
         plans = list(plans_for_snippet_gap(
-            {"tool_name": "Bing_Search_Tool", "command": observation.command, "result": observation.tool_result},
+            {
+                "tool_name": "Bing_Search_Tool",
+                "command": observation.command,
+                "result": "1. Paris\n   URL: https://en.wikipedia.org/wiki/Paris",
+            },
             environment="sandbox",
         ))
         self.assertGreaterEqual(len(plans[0].steps), 2)
         graph = PlanningGraph(plans)
         analysis = FailureAnalyzer().analyze(observation)
+        self.assertTrue(analysis.verified_counterexample)
         result = HypothesisPruner().prune(graph, analysis.constraint, evidence=analysis.evidence)
         self.assertIn("same_query", result.pruned_plan_ids)
         self.assertNotIn("same_query", graph.active_plan_ids())

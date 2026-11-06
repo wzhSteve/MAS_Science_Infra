@@ -142,18 +142,28 @@ def _brief(item: Any) -> str:
 
 
 class CGHESession:
-    """Per-episode counters. The graph's own attempt_count resets on regeneration."""
+    """Per-episode counters. The graph's own attempt_count resets on regeneration.
+
+    Round-based mode: each ``regenerate`` seals the previous DAG and installs a
+    brand-new ``PlanningGraph`` with a new version id. Same-DAG prune+SELECT is
+    not the next-round strategy.
+    """
 
     def __init__(self, controller: Any, *, settings: Optional[dict[str, Any]] = None) -> None:
         self.controller = controller
         raw = dict(settings or {})
         self.max_step1_attempts = int(raw.get("max_step1_attempts") or 3)
-        self.max_regenerations = int(raw.get("max_regenerations") or 2)
+        # Round-based regen needs more planner rounds than the old same-DAG budget.
+        default_regen = 5 if bool(raw.get("round_regen", True)) else 2
+        self.max_regenerations = int(raw.get("max_regenerations") or default_regen)
         self.max_total = int(raw.get("max_total_step1_attempts") or raw.get("tool_calls") or 12)
+        self.round_regen = bool(raw.get("round_regen", True))
         self.global_attempts = 0
         self.regeneration_count = 0
+        self.planning_round = 0
         self.events: list[dict[str, Any]] = []
         self.archived_attempts: list[Any] = []
+        self.archived_dags: list[dict[str, Any]] = []
         self.stop_reason = ""
 
     def bind_graph(self, graph: Any) -> None:
@@ -161,6 +171,36 @@ class CGHESession:
         if not getattr(graph, "attempt_history", None):
             graph.attempt_history = []
         self.controller.graph = graph
+
+    def archive_active_dag(self, *, reason: str = "") -> Optional[dict[str, Any]]:
+        """Seal the current DAG as immutable history; return its snapshot."""
+        graph = getattr(self.controller, "graph", None)
+        if graph is None:
+            return None
+        if hasattr(graph, "seal"):
+            snap = graph.seal()
+        else:
+            from hypothesis_round_memory import freeze_dag_snapshot
+
+            snap = freeze_dag_snapshot(graph)
+        snap = dict(snap or {})
+        snap["archive_reason"] = str(reason or "")
+        snap["planning_round"] = int(self.planning_round)
+        self.archived_dags.append(snap)
+        memory = getattr(self.controller, "hypothesis_memory", None)
+        if memory is not None:
+            version = str(snap.get("version") or "")
+            if version and version not in memory.archived_dag_versions:
+                memory.archived_dag_versions.append(version)
+        self.events.append({
+            "event": "dag_archived",
+            "version": snap.get("version"),
+            "reason": reason,
+            "planning_round": self.planning_round,
+            "nodes": len(snap.get("nodes") or []),
+            "plans": len(snap.get("plans") or []),
+        })
+        return snap
 
     def note_step1_execution(
         self,
@@ -239,7 +279,11 @@ class CGHESession:
         return "SELECT", selection
 
     def regenerate(self, plans: Sequence[Any], ctx: dict[str, Any]) -> Any:
-        """Install at most one new DAG. Planner/schema failure does not count an attempt."""
+        """Install at most one NEW DAG. Planner/schema failure does not count an attempt.
+
+        The previous active DAG is sealed and archived; it is never reused as the
+        next-round mutable graph.
+        """
         from planning_graph import PlanningGraph
 
         from cghe_dag_log import log_dag_build, log_regen, plans_text
@@ -247,19 +291,26 @@ class CGHESession:
         reasons = list(ctx.get("trigger_reasons") or [])
         old = getattr(self.controller, "graph", None)
         old_id = getattr(old, "dag_id", "")
+        old_version = str(getattr(old, "version", "") or old_id)
+        old_snapshot = None
+        if old is not None and not getattr(old, "sealed", False):
+            old_snapshot = self.archive_active_dag(reason=",".join(reasons) or "regenerate")
         self.events.append({
             "event": "dag_regeneration_triggered",
             "old_dag_id": old_id,
+            "old_version": old_version,
             "trigger_reasons": reasons,
             "coverage_map": dict(old.compute_step1_coverage()) if old is not None else {},
             "attempt_count": int(getattr(old, "attempt_count", 0) or 0),
             "global_attempts": self.global_attempts,
+            "planning_round": self.planning_round,
         })
         if not plans:
             log_regen(old_id, "", reasons, [])
             return None
+        self.planning_round = int(self.planning_round) + 1
         try:
-            graph = PlanningGraph(list(plans))
+            graph = PlanningGraph(list(plans), version=self.planning_round)
         except (TypeError, ValueError):
             return None
         errors = validate_dag(graph)
@@ -272,27 +323,47 @@ class CGHESession:
             return None
         if old is not None:
             self.archived_attempts.extend(list(old.attempt_history))
+        # Identity check: new object, new version.
+        if old is not None and graph is old:
+            raise RuntimeError("regenerate must install a new PlanningGraph instance")
+        if old_version and str(graph.version) == old_version:
+            # Force distinct version string if collision.
+            graph._version = f"{self.planning_round}-{graph.round_id}"
         graph.attempt_count = 0
         graph.regeneration_count = self.regeneration_count + 1
         graph.max_attempts = self.max_step1_attempts
         self.regeneration_count = graph.regeneration_count
         self.bind_graph(graph)
+        memory = getattr(self.controller, "hypothesis_memory", None)
+        if memory is not None:
+            memory.round_index = self.planning_round
+            memory.register_dag_hypotheses(graph)
         inherited = [_inherit_id(item) for item in (ctx.get("verified_counterexamples") or [])]
         inherited += [_inherit_id(item) for item in (ctx.get("verified_successes") or [])]
         inherited_ids = [item for item in inherited if item]
         self.events.append({
             "event": "dag_regenerated",
             "new_dag_id": graph.dag_id,
+            "new_version": graph.version,
             "old_dag_id": old_id,
+            "old_version": old_version,
+            "old_sealed": bool(old_snapshot and old_snapshot.get("sealed")),
             "trigger_reasons": reasons,
             "inherited_ids": inherited_ids,
             "attempt_count": graph.attempt_count,
             "global_attempts": self.global_attempts,
             "regeneration_count": self.regeneration_count,
+            "planning_round": self.planning_round,
             "unverified_are_hard_constraints": False,
             "plans_text": plans_text(graph),
             "coverage_map": dict(graph.compute_step1_coverage()),
         })
+        print(
+            f"[CGHE][ROUND {self.planning_round}] Generated DAG version={graph.version} "
+            f"plans={len(list(graph.active_plan_ids()))} "
+            f"(prev={old_version or '-'} sealed={bool(old_snapshot)})",
+            flush=True,
+        )
         log_regen(old_id, graph.dag_id, reasons, inherited_ids)
         log_dag_build(graph)
         return graph
@@ -383,11 +454,13 @@ def record_plan_dependencies(memory: Any, graph: Any) -> None:
 
 def session_settings_from_runtime(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     raw = dict(settings or {})
+    round_regen = bool(raw.get("round_regen", True))
     return {
         "max_step1_attempts": int(raw.get("max_step1_attempts") or 3),
-        "max_regenerations": int(raw.get("max_regenerations") or 2),
+        "max_regenerations": int(raw.get("max_regenerations") or (5 if round_regen else 2)),
         "max_total_step1_attempts": int(raw.get("max_total_step1_attempts") or raw.get("tool_calls") or 12),
         "tool_calls": int(raw.get("tool_calls") or 12),
+        "round_regen": round_regen,
     }
 
 

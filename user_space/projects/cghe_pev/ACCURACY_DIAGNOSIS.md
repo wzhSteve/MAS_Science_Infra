@@ -41,4 +41,25 @@
 
 - 对齐 `MAX_STEPS=10`；有观测时禁止 `force_empty`。
 - `SNIPPETS_INSUFFICIENT` 改为只淘汰当前执行计划（实例级），避免共享 Step-1 一次剪光多路。
-- 消融臂：Full / NoPrune / NoMemory / SelectOnly，与 pure 同协议对比。
+- **Soft-Bing（2026-11-06）**：Bing 有 URL/非空摘要但 Verifier 不满足 → `SUBGOAL_NOT_SATISFIED`（UNVERIFIED），沿同 plan 进 Fetch；仅空搜才硬 `SNIPPETS_INSUFFICIENT`。Fetch 失败后再延后剪上游 query；每题最多 2 次 snippet 硬剪；重生继承 CE 截断为 32。
+- 消融臂：Full / NoPrune / NoMemory / SelectOnly / ForceRegen（`CGHE_FORCE_REGEN_AFTER_HARD_PRUNE`），与 pure 同协议对比。
+
+## 消融结果
+
+目录：`/root/autodl-tmp/MAS_Science_Infra/user_space/projects/cghe_pev/artifacts/smoke20_20261105_093728`
+
+| 臂 | 数据集 | n | EM | accuracy | nonempty | pruned | regen |
+|---|---|---|---|---|---|---|---|
+| full | hotpot | 20 | 0.500 | 0.500 | 1.000 | 195 | 61 |
+| noprune | hotpot | 20 | 0.350 | 0.350 | 1.000 | 0 | 19 |
+
+## 消融结果
+
+目录：`/root/autodl-tmp/MAS_Science_Infra/user_space/projects/cghe_pev/artifacts/smoke20_softbing_20261106_153500`
+
+| 臂 | 数据集 | n | EM | accuracy | nonempty | pruned | regen |
+|---|---|---|---|---|---|---|---|
+| full | hotpot | 20 | 0.450 | 0.450 | 1.000 | 0 | 0 |
+| full | bamboogle | 20 | 0.600 | 0.550 | 0.950 | 0 | 2 |
+| forceregen | hotpot | 20 | 0.500 | 0.500 | 1.000 | 0 | 2 |
+| forceregen | bamboogle | 20 | 0.750 | 0.750 | 1.000 | 4 | 3 |

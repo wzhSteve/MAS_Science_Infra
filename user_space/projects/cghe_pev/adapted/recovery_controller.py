@@ -379,6 +379,10 @@ class RecoveryController:
         self._fingerprint_counts: dict[str, int] = {}
         self._replayed_fingerprints: set[str] = set()
         self._call_log: list[dict[str, object]] = []
+        # Persistent across planning rounds; DAGs remain temporary.
+        from hypothesis_round_memory import HypothesisMemory
+
+        self.hypothesis_memory = HypothesisMemory()
 
     def _v2_log(self):
         if self.algorithm != "v2":

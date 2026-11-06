@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Module ablations for CGHE after accuracy fixes.
-# Arms: full | noprune | nomemory | selectonly
+# Arms: full | noprune | nomemory | selectonly | forceregen
 # Datasets: hotpot + bamboogle in parallel per arm; arms run sequentially
 # (at most one arm's two dataset workers) to protect Bing quota.
+# forceregen = SoftBing default + CGHE_FORCE_REGEN_AFTER_HARD_PRUNE=1 (ablation only).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
@@ -97,12 +98,13 @@ dataset_path() {
 
 apply_arm_env() {
   local arm="$1"
-  unset CGHE_NO_PRUNE CGHE_NO_MEMORY || true
+  unset CGHE_NO_PRUNE CGHE_NO_MEMORY CGHE_FORCE_REGEN_AFTER_HARD_PRUNE || true
   case "$arm" in
     full) ;;
     noprune) export CGHE_NO_PRUNE=1 ;;
     nomemory) export CGHE_NO_MEMORY=1 ;;
     selectonly) export CGHE_NO_PRUNE=1; export CGHE_NO_MEMORY=1 ;;
+    forceregen) export CGHE_FORCE_REGEN_AFTER_HARD_PRUNE=1 ;;
     *) echo "unknown arm $arm" >&2; exit 1 ;;
   esac
 }

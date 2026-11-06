@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Launch HotpotQA + Bamboogle pure_pev full evals in parallel.
+# Launch two pure_pev full evals in parallel.
 # Both processes use .env LLM (OPENAI_* / MODEL_Name) and Bright Data KEY_2.
+#
+# Usage:
+#   ./launch_full_qa_parallel.sh [stamp] [dataset_a] [dataset_b]
+# Defaults: stamp=now, dataset_a=hotpotqa, dataset_b=bamboogle
 set -euo pipefail
 
 ROOT="/root/autodl-tmp/MAS_Science_Infra"
@@ -8,6 +12,8 @@ PROJECT="$ROOT/user_space/projects/pure_pev"
 PY="$ROOT/.venv/bin/python"
 SCRIPT="$PROJECT/adapted/eval_full_qa.py"
 STAMP="${1:-$(date +%Y%m%d_%H%M%S)}"
+DS_A="${2:-hotpotqa}"
+DS_B="${3:-bamboogle}"
 OUT="$PROJECT/artifacts/full_qa_${STAMP}"
 mkdir -p "$OUT"
 
@@ -34,28 +40,30 @@ export enable_thinking=false
 
 {
   echo "OUT=$OUT"
+  echo "datasets=$DS_A,$DS_B"
   echo "MODEL_Name=$MODEL_Name"
   echo "OPENAI_API_BASE_URL=$OPENAI_API_BASE_URL"
   echo "BRIGHT_DATA_API_KEY=${BRIGHT_DATA_API_KEY:0:8}..."
   echo "BRIGHT_DATA_SERP_ZONES=$BRIGHT_DATA_SERP_ZONES"
 } | tee "$OUT/launch_env.txt"
 
-echo "starting hotpotqa (KEY_2) ..."
+echo "starting $DS_A (KEY_2) ..."
 nohup "$PY" "$SCRIPT" \
-  --dataset hotpotqa \
+  --dataset "$DS_A" \
   --serp-account secondary \
   --out "$OUT" \
-  >"$OUT/hotpotqa.log" 2>&1 &
-echo $! >"$OUT/hotpotqa.pid"
+  >"$OUT/${DS_A}.log" 2>&1 &
+echo $! >"$OUT/${DS_A}.pid"
 
-echo "starting bamboogle (KEY_2) ..."
+echo "starting $DS_B (KEY_2) ..."
 nohup "$PY" "$SCRIPT" \
-  --dataset bamboogle \
+  --dataset "$DS_B" \
   --serp-account secondary \
   --out "$OUT" \
-  >"$OUT/bamboogle.log" 2>&1 &
-echo $! >"$OUT/bamboogle.pid"
+  >"$OUT/${DS_B}.log" 2>&1 &
+echo $! >"$OUT/${DS_B}.pid"
 
-echo "pids: hotpotqa=$(cat "$OUT/hotpotqa.pid") bamboogle=$(cat "$OUT/bamboogle.pid")"
-echo "logs: $OUT/hotpotqa.log $OUT/bamboogle.log"
+echo "pids: ${DS_A}=$(cat "$OUT/${DS_A}.pid") ${DS_B}=$(cat "$OUT/${DS_B}.pid")"
+echo "logs: $OUT/${DS_A}.log $OUT/${DS_B}.log"
 echo "$OUT" >"$PROJECT/artifacts/full_qa_latest.path"
+printf '%s\n%s\n' "$DS_A" "$DS_B" >"$OUT/datasets.txt"

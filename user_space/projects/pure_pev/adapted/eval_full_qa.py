@@ -1,9 +1,9 @@
-"""Full HotpotQA / Bamboogle eval for pure_pev with incremental jsonl.
+"""Full QA eval for pure_pev with incremental jsonl.
 
 Example
 -------
 python adapted/eval_full_qa.py --dataset hotpotqa --out artifacts/full_qa_run
-python adapted/eval_full_qa.py --dataset bamboogle --out artifacts/full_qa_run
+python adapted/eval_full_qa.py --dataset musique --out artifacts/full_qa_run
 """
 
 from __future__ import annotations
@@ -25,6 +25,15 @@ ADAPTED = PROJECT / "adapted"
 DATASETS = {
     "hotpotqa": ROOT / "data" / "hotpotqa.json",
     "bamboogle": ROOT / "data" / "bamboogle.json",
+    "musique": ROOT / "data" / "musique.json",
+    "2wiki": ROOT / "data" / "2wiki.json",
+}
+# Episode payload source tags used by wrap_answer / scoring branches.
+SOURCE_TAGS = {
+    "hotpotqa": "hotpot",
+    "bamboogle": "bamboogle",
+    "musique": "musique",
+    "2wiki": "2wiki",
 }
 _ANSWER_TAIL = re.compile(r"(?is)\s*when ready, output the final answer.*$")
 
@@ -76,7 +85,10 @@ def _load_items(dataset: str) -> List[Dict[str, Any]]:
         item["question"] = _clean_question(item.get("question") or item.get("query") or "")
         item["golds"] = _parse_golds(item.get("answer"))
         item["dataset"] = dataset
-        item["idx"] = int(item.get("idx") if item.get("idx") is not None else len(out))
+        raw_idx = item.get("idx")
+        if raw_idx is None:
+            raw_idx = item.get("pid")
+        item["idx"] = int(raw_idx) if raw_idx is not None else len(out)
         out.append(item)
     return out
 
@@ -162,7 +174,7 @@ def _run_one(ctx: Any, item: Dict[str, Any], max_steps: int) -> Dict[str, Any]:
     from rl.rewards.outcome import extract_answer_text
 
     dataset = item["dataset"]
-    source = "hotpot" if dataset == "hotpotqa" else "bamboogle"
+    source = SOURCE_TAGS.get(dataset, dataset)
     token = bind_episode_id(f"full-{dataset}-{item['idx']}")
     payload = {"question": item["question"], "source": source}
     answer = ""

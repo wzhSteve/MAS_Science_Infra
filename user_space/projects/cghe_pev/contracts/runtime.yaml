@@ -30,8 +30,11 @@ cghe:
   mu_risk: 0.0
   epv_threshold: 0.0
   max_step1_attempts: 3
-  max_regenerations: 2
+  max_regenerations: 5
   max_total_step1_attempts: 12
+  max_verified_snippet_prunes_per_episode: 2
+  max_inherited_ce: 32
+  round_regen: true
   selection:
     strategy: max_step1_path_coverage
   pruning_gates:

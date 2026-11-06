@@ -78,8 +78,11 @@ RUNTIME_DEFAULTS: Dict[str, Any] = {
         "mu_risk": 0.0,
         "epv_threshold": 0.0,
         "max_step1_attempts": 3,
-        "max_regenerations": 2,
+        "max_regenerations": 5,
         "max_total_step1_attempts": 12,
+        "max_verified_snippet_prunes_per_episode": 2,
+        "max_inherited_ce": 32,
+        "round_regen": True,
         "selection": {"strategy": "max_step1_path_coverage"},
         "pruning_gates": {
             "require_verified_counterexample": True,
@@ -238,6 +241,12 @@ def cghe_settings() -> Dict[str, Any]:
     if n_env.isdigit():
         count = int(n_env)
 
+    env_rr = os.environ.get("CGHE_ROUND_REGEN")
+    if env_rr is not None and str(env_rr).strip() != "":
+        round_regen = str(env_rr).strip().lower() not in {"0", "false", "no"}
+    else:
+        round_regen = bool(merged.get("round_regen", True))
+
     return {
         "enabled": bool(enabled),
         "n": max(1, count),
@@ -255,8 +264,11 @@ def cghe_settings() -> Dict[str, Any]:
         "mu_risk": _float_setting(merged.get("mu_risk"), 0.0),
         "epv_threshold": _float_setting(merged.get("epv_threshold"), 0.0),
         "max_step1_attempts": positive("max_step1_attempts", 3),
-        "max_regenerations": positive("max_regenerations", 2),
         "max_total_step1_attempts": positive("max_total_step1_attempts", 12),
+        "max_verified_snippet_prunes_per_episode": positive("max_verified_snippet_prunes_per_episode", 2),
+        "max_inherited_ce": positive("max_inherited_ce", 32),
+        "round_regen": round_regen,
+        "max_regenerations": positive("max_regenerations", 5 if round_regen else 2),
         "selection": merged.get("selection") if isinstance(merged.get("selection"), dict) else {
             "strategy": "max_step1_path_coverage",
         },
@@ -335,10 +347,39 @@ def wrap_answer(direct_output: str, *, source: str = "") -> str:
     if str(source or "").lower() == "gsm8k":
         nums = _NUM_RE.findall(body)
         body = nums[-1] if nums else body
-    body = str(body or "").strip()
+    body = _prefer_short_answer_span(str(body or "").strip())
     if not body:
         return ""
     return f"<answer>{body}</answer>"
+
+
+def _prefer_short_answer_span(body: str) -> str:
+    """Prefer a short span matching Hotpot/Bamboogle gold granularity.
+
+    Drops long explanatory sentences while keeping full dates / proper names.
+    """
+    text = str(body or "").strip()
+    if not text:
+        return ""
+    # Prefer \\boxed{...} if still nested.
+    boxed = re.search(r"\\boxed\{([^{}]{1,160})\}", text)
+    if boxed:
+        text = boxed.group(1).strip()
+    # Drop "X is located in Y, and ..." multi-clause dumps: keep first clause if short.
+    if len(text) > 80 and ("," in text or " and " in text.lower() or "。" in text):
+        for sep in (". ", "。", "; ", "；", "\n"):
+            if sep in text:
+                first = text.split(sep, 1)[0].strip()
+                if 1 <= len(first) <= 80:
+                    text = first
+                    break
+    # Strip leading labels like "Answer:" / "The answer is".
+    text = re.sub(r"^(?:the\s+)?(?:final\s+)?answer\s*(?:is|:)\s*", "", text, flags=re.I).strip()
+    # Cap runaway prose; keep up to ~12 tokens for entity answers.
+    words = text.split()
+    if len(words) > 16 and len(text) > 100:
+        text = " ".join(words[:12]).strip(" ,;:")
+    return text.strip()
 
 
 class Components:
@@ -1107,6 +1148,103 @@ def _complete_cghe_plans(ep: "Episode") -> None:
     graph.complete_plans(plan_ids)
 
 
+def _plan_successors(graph: Any, node_id: str) -> list[str]:
+    """Pending downstream nodes on ACTIVE plans that contain ``node_id``."""
+    successors: list[str] = []
+    for plan_id in graph.active_plan_ids():
+        sequence = list(graph.plan_node_ids(plan_id))
+        if node_id not in sequence:
+            continue
+        index = sequence.index(node_id)
+        if index + 1 >= len(sequence):
+            continue
+        nxt = sequence[index + 1]
+        status = str(getattr(graph.node(nxt).status, "value", graph.node(nxt).status) or "")
+        if status == "pending" and nxt not in successors:
+            successors.append(nxt)
+    return successors
+
+
+def _lock_successor(
+    ep: "Episode",
+    controller: Any,
+    graph: Any,
+    node_id: str,
+    successors: list[str],
+    *,
+    reason: str,
+) -> bool:
+    """Lock the highest-coverage pending successor (usually Fetch after Bing)."""
+    from cghe_loop import session_for
+    from cghe_dag_log import log_advance
+
+    if not successors:
+        return False
+    session = session_for(controller, cghe_settings())
+    coverage = graph.compute_step1_coverage()
+    nxt = max(successors, key=lambda item: (coverage.get(item, 0), item))
+    session.log_selection(graph, nxt, coverage.get(nxt, 0), {item: coverage.get(item, 0) for item in successors})
+    log_advance(node_id, nxt, int(coverage.get(nxt, 0)), graph)
+    ep._cghe_graph_mode = "switch"
+    _store_graph_in_memory(ep, graph, selected_id=nxt)
+    ep._cghe_directive = _directive_continue(graph.node(nxt), reason, graph.round_id)
+    ep._cghe_directive["coverage"] = int(coverage.get(nxt, 0))
+    graph.protect_children_of = node_id
+    return True
+
+
+def _advance_to_plan_successor(
+    ep: "Episode",
+    controller: Any,
+    node_id: str,
+    *,
+    soft: bool = False,
+    verifier_status: str = "SUCCESS",
+) -> bool:
+    """Advance along the current plan. Soft Bing failures do not mark the node satisfied."""
+    from cghe_loop import session_for
+
+    graph = getattr(controller, "graph", None)
+    session = session_for(controller, cghe_settings())
+    if not node_id or graph is None or not any(node.node_id == node_id for node in graph.nodes()):
+        return False
+    successors = _plan_successors(graph, node_id)
+    if not soft:
+        graph.mark_satisfied(node_id)
+    else:
+        # Keep the Bing node reusable for sibling OR plans; just remember soft miss.
+        try:
+            if hasattr(graph, "mark_attempted"):
+                graph.mark_attempted(node_id)
+            elif hasattr(graph, "note_attempt"):
+                graph.note_attempt(node_id)
+        except Exception:
+            pass
+    attempt_id = str(getattr(ep, "_cghe_open_attempt_id", "") or "")
+    if attempt_id:
+        graph.finish_attempt(
+            attempt_id,
+            execution_status="success" if not soft else "soft_continue",
+            verifier_status=verifier_status,
+        )
+    session.events.append({
+        "event": "verification_completed",
+        "verifier_status": verifier_status if not soft else (verifier_status or "SOFT_CONTINUE"),
+        "node_id": node_id,
+        "dag_id": graph.dag_id,
+        "task_completed": False,
+        "soft_advance": bool(soft),
+    })
+    reason = (
+        "soft-advance to Fetch after Bing snippet gap"
+        if soft
+        else f"advanced along path after success"
+    )
+    if _lock_successor(ep, controller, graph, node_id, successors, reason=reason):
+        return True
+    return False
+
+
 def _advance_after_success(ep: "Episode", controller: Any, node_id: str) -> None:
     """A successful step stays on this DAG. The next ready step 1 is selected by coverage."""
     from cghe_loop import session_for
@@ -1117,43 +1255,9 @@ def _advance_after_success(ep: "Episode", controller: Any, node_id: str) -> None
         ep._cghe_directive = dict(_PEV_DIRECTIVE)
         ep._cghe_directive["reason"] = "verified step had no graph node"
         return
-    successors: list[str] = []
-    for plan_id in graph.active_plan_ids():
-        sequence = list(graph.plan_node_ids(plan_id))
-        if node_id not in sequence:
-            continue
-        index = sequence.index(node_id)
-        if index + 1 >= len(sequence):
-            continue
-        nxt = sequence[index + 1]
-        if graph.node(nxt).status.value == "pending" and nxt not in successors:
-            successors.append(nxt)
-    graph.mark_satisfied(node_id)
-    attempt_id = str(getattr(ep, "_cghe_open_attempt_id", "") or "")
-    if attempt_id:
-        graph.finish_attempt(attempt_id, execution_status="success", verifier_status="SUCCESS")
-    session.events.append({
-        "event": "verification_completed",
-        "verifier_status": "SUCCESS",
-        "node_id": node_id,
-        "dag_id": graph.dag_id,
-        "task_completed": False,
-    })
-    if successors:
-        from cghe_dag_log import log_advance
-
-        coverage = graph.compute_step1_coverage()
-        nxt = max(successors, key=lambda item: (coverage.get(item, 0), item))
-        session.log_selection(graph, nxt, coverage.get(nxt, 0), {item: coverage.get(item, 0) for item in successors})
-        log_advance(node_id, nxt, int(coverage.get(nxt, 0)), graph)
-        ep._cghe_graph_mode = "switch"
-        _store_graph_in_memory(ep, graph, selected_id=nxt)
-        ep._cghe_directive = _directive_continue(
-            graph.node(nxt), f"advanced along path coverage {coverage.get(nxt, 0)}", graph.round_id,
-        )
-        ep._cghe_directive["coverage"] = int(coverage.get(nxt, 0))
-        graph.protect_children_of = node_id
+    if _advance_to_plan_successor(ep, controller, node_id, soft=False, verifier_status="SUCCESS"):
         return
+    # No downstream on this plan: pick another Step-1 or regenerate.
     selection = graph.select_step1()
     if selection is None or graph.coverage_saturated():
         ep._cghe_pending_reasons = list(graph.regeneration_reasons() or ["NO_EXECUTABLE_CANDIDATE"])
@@ -1196,6 +1300,24 @@ def _cghe_on_verdict(ep: "Episode", verdict: Dict[str, Any]) -> None:
             source="verifier",
             note="verifier satisfied",
         )
+        try:
+            from hypothesis_round_memory import build_verifier_feedback
+
+            graph = getattr(controller, "graph", None)
+            fb = build_verifier_feedback(
+                satisfied=True,
+                label=label or "满足",
+                analysis=None,
+                action=action,
+                evidence_text="verifier satisfied",
+                dag_version=str(getattr(graph, "version", "") or getattr(graph, "dag_id", "") or ""),
+                round_id=int(getattr(getattr(controller, "cghe_session", None), "planning_round", 0) or 0),
+            )
+            _hypothesis_memory(controller).update_from_feedback(
+                fb, environment_fingerprint=_env_fingerprint(ep),
+            )
+        except Exception:
+            pass
         _update_v2_hypotheses(controller, observation="verifier_satisfied", verified=False)
         _advance_after_success(ep, controller, str(action.get("cghe_node_id") or ""))
         return
@@ -1270,6 +1392,197 @@ def _graph_snapshot(graph: Any, *, selected_id: str = "") -> Dict[str, Any]:
     }
 
 
+def _is_search_action(action: Dict[str, Any]) -> bool:
+    tool = str(action.get("tool_name") or action.get("tool") or "").casefold()
+    return "bing" in tool or "search" in tool
+
+
+def _is_fetch_or_extract_action(action: Dict[str, Any]) -> bool:
+    tool = str(action.get("tool_name") or action.get("tool") or "").casefold()
+    return "fetch" in tool or "extract" in tool or "generalist" in tool or "generator" in tool
+
+
+def _snippet_prune_budget_ok(ep: "Episode") -> bool:
+    used = int(getattr(ep, "_cghe_snippet_prunes", 0) or 0)
+    limit = int(cghe_settings().get("max_verified_snippet_prunes_per_episode") or 2)
+    return used < max(0, limit)
+
+
+def _note_snippet_prune(ep: "Episode") -> None:
+    ep._cghe_snippet_prunes = int(getattr(ep, "_cghe_snippet_prunes", 0) or 0) + 1
+
+
+def _upstream_bing_query(graph: Any, node_id: str, plan_id: str = "") -> str:
+    """Recover the Step-1 Bing query for a Fetch/Extract node on the same plan."""
+    plan_ids = [plan_id] if plan_id else list(graph.active_plan_ids())
+    for pid in plan_ids:
+        sequence = list(graph.plan_node_ids(pid))
+        if node_id not in sequence:
+            continue
+        for prior_id in sequence:
+            if prior_id == node_id:
+                break
+            node = graph.node(prior_id)
+            tool = str(getattr(node, "tool", "") or getattr(node, "action", "") or "").casefold()
+            if "bing" in tool or "search" in tool:
+                argument = str(getattr(node, "argument", "") or getattr(node, "action", "") or "").strip()
+                if argument:
+                    return argument
+    # Fallback: any Bing ancestor among plan ids that still list this node.
+    for pid in graph.active_plan_ids():
+        sequence = list(graph.plan_node_ids(pid))
+        if node_id not in sequence:
+            continue
+        for prior_id in sequence:
+            if prior_id == node_id:
+                break
+            node = graph.node(prior_id)
+            tool = str(getattr(node, "tool", "") or "").casefold()
+            if "bing" in tool or "search" in tool:
+                argument = str(getattr(node, "argument", "") or "").strip()
+                if argument:
+                    return argument
+    return ""
+
+
+def _fetch_result_is_empty_or_error(action: Dict[str, Any], observation: Any) -> bool:
+    """True only for empty/blocked Fetch bodies — not 'page OK but verifier wants more'."""
+    text = str(
+        getattr(observation, "tool_result", None)
+        or action.get("raw_tool_result")
+        or action.get("result")
+        or ""
+    ).strip()
+    if not text:
+        return True
+    low = text.casefold()
+    if low in {"null", "none", "empty", "no result", "no results", "[]", "{}"}:
+        return True
+    error_markers = (
+        "http error", "status code 4", "status code 5", "403", "404", "429", "503",
+        "blocked", "access denied", "timeout", "timed out", "proxyerror",
+        "fetch_unavailable", "connection error", "traceback",
+    )
+    if any(m in low for m in error_markers) and len(text) < 400:
+        return True
+    # Very short body with no article signal → treat as empty page.
+    if len(text) < 80 and "http" not in low and "<p" not in low:
+        return True
+    return False
+
+
+def _deferred_snippet_ce_from_fetch(
+    ep: "Episode",
+    controller: Any,
+    action: Dict[str, Any],
+    observation: Any,
+    label: str,
+) -> Optional[Any]:
+    """Only after Fetch/Extract returns empty/error, retire the upstream Bing query.
+
+    Verifier-unsatisfied on a non-empty page must NOT become a hard snippet CE —
+    that recreates Soft-Bing's failure mode one hop later.
+    """
+    from failure_analyzer import FailureAnalyzer
+    from cghe_types import ExecutionObservation
+
+    graph = getattr(controller, "graph", None)
+    node_id = str(action.get("cghe_node_id") or "")
+    if graph is None or not node_id:
+        return None
+    if not _is_fetch_or_extract_action(action):
+        return None
+    if not _fetch_result_is_empty_or_error(action, observation):
+        return None
+    query = _upstream_bing_query(graph, node_id, str(action.get("cghe_plan_id") or ""))
+    if not query:
+        return None
+    if not _snippet_prune_budget_ok(ep):
+        return None
+    synthetic = ExecutionObservation(
+        tool_name="Bing_Search_Tool",
+        environment=str(getattr(observation, "environment", "") or CGHE_ENVIRONMENT),
+        command=f"execution = tool.execute(query={query!r})",
+        tool_result="No results",
+        verifier_label=label or "不满足",
+        plan_id=str(action.get("cghe_plan_id") or getattr(observation, "plan_id", "") or ""),
+        parameters={"query": query},
+    )
+    analysis = FailureAnalyzer().analyze(synthetic)
+    if not analysis.verified_counterexample or analysis.constraint is None:
+        return None
+    try:
+        analysis.constraint.source = "deferred_fetch_empty_or_error"
+        analysis.constraint.note = "Fetch empty/error; retire upstream search query"
+    except Exception:
+        pass
+    return analysis
+
+
+def _truncate_records(items: list, limit: int) -> list:
+    if limit <= 0:
+        return []
+    if len(items) <= limit:
+        return list(items)
+    return list(items)[-limit:]
+
+
+def _round_regen_enabled() -> bool:
+    return bool(cghe_settings().get("round_regen", True))
+
+
+def _hypothesis_memory(controller: Any) -> Any:
+    mem = getattr(controller, "hypothesis_memory", None)
+    if mem is not None:
+        return mem
+    from hypothesis_round_memory import HypothesisMemory
+
+    mem = HypothesisMemory()
+    controller.hypothesis_memory = mem
+    return mem
+
+
+def _env_fingerprint(ep: "Episode") -> str:
+    # Lightweight environment fingerprint; extend if richer MAS state is available.
+    return f"q:{norm_key(str(ep.question or '')[:120])}|step:{int(ep.step_count)}"
+
+
+def norm_key(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").strip().casefold())
+
+
+def _end_round_for_regen(
+    ep: "Episode",
+    controller: Any,
+    *,
+    reasons: list[str],
+    feedback: Any = None,
+) -> bool:
+    """Seal current DAG and request a NEW planning DAG (round-based regeneration)."""
+    from cghe_loop import session_for
+
+    session = session_for(controller, cghe_settings())
+    memory = _hypothesis_memory(controller)
+    if feedback is not None:
+        memory.update_from_feedback(feedback, environment_fingerprint=_env_fingerprint(ep))
+    graph = getattr(controller, "graph", None)
+    version = str(getattr(graph, "version", "") or getattr(graph, "round_id", "") or "")
+    if graph is not None and not getattr(graph, "sealed", False):
+        session.archive_active_dag(reason=",".join(reasons) or "round_end")
+    print(
+        f"[CGHE][ROUND] End version={version} reasons={reasons} "
+        f"hypotheses={len(memory)} last={getattr(memory.last_feedback, 'planning_implication', None)}",
+        flush=True,
+    )
+    ep._cghe_graph_mode = "rebuild"
+    ep._cghe_pending_reasons = list(reasons or ["ROUND_FEEDBACK_REGEN"])
+    ep._cghe_directive = dict(_PEV_DIRECTIVE)
+    ep._cghe_directive["reason"] = "round ended; generate a new Planning DAG from HypothesisMemory"
+    # Clear active graph pointer so the next open builds/regenerates cleanly.
+    # Historical snapshot remains in session.archived_dags / seal_snapshot.
+    return True
+
+
 def _switch_after_graph_failure(
     ep: "Episode",
     controller: Any,
@@ -1277,7 +1590,11 @@ def _switch_after_graph_failure(
     label: str,
     flag: Optional[bool],
 ) -> bool:
-    """Ordinary failures stay on the graph. Only a verified counterexample prunes plans."""
+    """Ordinary failures stay on the graph. Only a verified counterexample prunes plans.
+
+    Soft Bing failures (URLs present, verifier unsatisfied) advance to Fetch on the
+    same plan instead of pruning or regenerating.
+    """
     from failure_analyzer import FailureAnalyzer
     from cghe_loop import prune_by_counterexample, session_for
     from cghe_types import CausalRelation, EvidenceStatus
@@ -1292,17 +1609,101 @@ def _switch_after_graph_failure(
     attempt_id = str(getattr(ep, "_cghe_open_attempt_id", "") or "")
     from cghe_dag_log import constraint_brief, log_prune, plans_text
 
+    # Soft Bing (or non-empty Fetch) miss with a successor → same-plan advance.
+    soft_codes = {"SUBGOAL_NOT_SATISFIED", "VERIFIER_UNCERTAIN", ""}
+    obs_code_soft = str(getattr(analysis.evidence, "observation_code", "") or "")
+    soft_search = (
+        not analysis.verified_counterexample
+        and _is_search_action(action)
+        and obs_code_soft in soft_codes
+    )
+    soft_fetch = (
+        not analysis.verified_counterexample
+        and _is_fetch_or_extract_action(action)
+        and obs_code_soft in soft_codes
+        and not _fetch_result_is_empty_or_error(action, observation)
+    )
+    if (soft_search or soft_fetch) and _plan_successors(graph, node_id):
+        try:
+            controller._remember_failure(
+                analysis, observation, action=str(action.get("sub_goal") or ""), promote=False,
+            )
+        except Exception:
+            pass
+        session.events.append({
+            "event": "counterexample_validated",
+            "predicate": "",
+            "validation_status": EvidenceStatus.UNVERIFIED_HYPOTHESIS.value,
+            "evidence_id": str(getattr(analysis.evidence, "evidence_id", "") or ""),
+            "hard_constraint": False,
+            "soft_advance": True,
+            "soft_fetch": bool(soft_fetch),
+            "constraint_brief": constraint_brief(analysis.constraint),
+        })
+        reason_status = label or ("SOFT_FETCH_CONTINUE" if soft_fetch else "SOFT_CONTINUE")
+        if _advance_to_plan_successor(
+            ep, controller, node_id, soft=True, verifier_status=reason_status,
+        ):
+            # Within-round soft continue: record UNVERIFIED, keep the same DAG.
+            try:
+                from hypothesis_round_memory import build_verifier_feedback
+
+                fb = build_verifier_feedback(
+                    satisfied=False,
+                    label=label or "不满足",
+                    analysis=analysis,
+                    action=action,
+                    evidence_text=str(getattr(observation, "tool_result", "") or "")[:400],
+                    dag_version=str(getattr(graph, "version", "") or graph.dag_id),
+                    round_id=int(getattr(session, "planning_round", 0) or 0),
+                    soft_continue=True,
+                )
+                _hypothesis_memory(controller).update_from_feedback(
+                    fb, environment_fingerprint=_env_fingerprint(ep),
+                )
+            except Exception:
+                pass
+            return True
+
+    # Fetch empty/error only → deferred query-level CE against upstream Bing.
+    deferred = None
+    if (
+        not analysis.verified_counterexample
+        and _is_fetch_or_extract_action(action)
+        and str(os.environ.get("CGHE_NO_PRUNE") or "").strip().lower() not in {"1", "true", "yes"}
+    ):
+        deferred = _deferred_snippet_ce_from_fetch(ep, controller, action, observation, label)
+        if deferred is not None and getattr(deferred, "verified_counterexample", False):
+            analysis = deferred
+
     pruned: list[str] = []
     evidence_id = ""
     before_ids = list(graph.active_plan_ids())
     no_prune = str(os.environ.get("CGHE_NO_PRUNE") or "").strip().lower() in {"1", "true", "yes"}
-    if analysis.verified_counterexample and analysis.constraint is not None and not no_prune:
+    allow_snippet_prune = True
+    obs_code = str(getattr(getattr(analysis, "constraint", None), "observation_code", "") or "")
+    if obs_code == "SNIPPETS_INSUFFICIENT" and not _snippet_prune_budget_ok(ep):
+        allow_snippet_prune = False
+        session.events.append({
+            "event": "snippet_prune_budget_exhausted",
+            "used": int(getattr(ep, "_cghe_snippet_prunes", 0) or 0),
+            "limit": int(cghe_settings().get("max_verified_snippet_prunes_per_episode") or 2),
+        })
+
+    if (
+        analysis.verified_counterexample
+        and analysis.constraint is not None
+        and not no_prune
+        and allow_snippet_prune
+    ):
         pruned = prune_by_counterexample(
             graph,
             analysis.constraint,
             evidence=analysis.evidence,
             executed_plan_id=str(action.get("cghe_plan_id") or observation.plan_id or ""),
         )
+        if pruned and obs_code == "SNIPPETS_INSUFFICIENT":
+            _note_snippet_prune(ep)
         evidence_id = str(analysis.constraint.evidence_id or analysis.constraint.constraint_id or "")
         try:
             controller.memory.record_counterexample(
@@ -1351,6 +1752,7 @@ def _switch_after_graph_failure(
             "validation_status": EvidenceStatus.VERIFIED_COUNTEREXAMPLE.value,
             "evidence_id": evidence_id,
             "constraint_brief": brief,
+            "deferred_from_fetch": bool(deferred is not None),
         })
         session.events.append({
             "event": "plans_pruned",
@@ -1361,16 +1763,33 @@ def _switch_after_graph_failure(
             "constraint_brief": brief,
         })
         log_prune(before_ids, pruned, after_ids, analysis.constraint, verified=True)
-        # Exhaust this Step-1 search so Coverage moves to other queries.
         if (
             pruned
-            and str(getattr(analysis.constraint, "observation_code", "") or "") == "SNIPPETS_INSUFFICIENT"
+            and obs_code == "SNIPPETS_INSUFFICIENT"
             and hasattr(graph, "mark_failed")
         ):
             try:
-                graph.mark_failed(node_id)
+                bing_id = node_id
+                query = str(getattr(getattr(analysis.constraint, "scope", None), "argument", "") or "")
+                if deferred is not None and query:
+                    for pid in list(graph.active_plan_ids()) + (
+                        [str(action.get("cghe_plan_id") or "")] if action.get("cghe_plan_id") else []
+                    ):
+                        if not pid:
+                            continue
+                        for nid in graph.plan_node_ids(pid):
+                            node = graph.node(nid)
+                            tool = str(getattr(node, "tool", "") or "").casefold()
+                            arg = str(getattr(node, "argument", "") or "")
+                            if ("bing" in tool or "search" in tool) and arg == query:
+                                bing_id = nid
+                                break
+                graph.mark_failed(bing_id)
             except Exception:
-                pass
+                try:
+                    graph.mark_failed(node_id)
+                except Exception:
+                    pass
     else:
         try:
             controller._remember_failure(analysis, observation, action=str(action.get("sub_goal") or ""), promote=False)
@@ -1397,14 +1816,17 @@ def _switch_after_graph_failure(
         })
         log_prune(before_ids, [], before_ids, analysis.constraint, verified=False)
     if attempt_id:
-        graph.finish_attempt(
-            attempt_id,
-            execution_status="failure",
-            verifier_status=label,
-            evidence_id=evidence_id or None,
-            pruning_applied=bool(pruned),
-            pruned_plan_ids=pruned,
-        )
+        try:
+            graph.finish_attempt(
+                attempt_id,
+                execution_status="failure",
+                verifier_status=label,
+                evidence_id=evidence_id or None,
+                pruning_applied=bool(pruned),
+                pruned_plan_ids=pruned,
+            )
+        except Exception:
+            pass
     session.events.append({
         "event": "verification_completed",
         "verifier_status": label or "FAILURE",
@@ -1412,6 +1834,39 @@ def _switch_after_graph_failure(
         "dag_id": graph.dag_id,
         "pruning_applied": bool(pruned),
     })
+
+    # Round-based regeneration (default): do NOT continue pruning/SELECT on the
+    # same active DAG. Seal it, update HypothesisMemory, and request a NEW DAG.
+    from hypothesis_round_memory import build_verifier_feedback
+
+    hyp_mem = _hypothesis_memory(controller)
+    feedback = build_verifier_feedback(
+        satisfied=False,
+        label=label or "不满足",
+        analysis=analysis,
+        action=action,
+        evidence_text=str(
+            getattr(observation, "tool_result", "") or action.get("result") or label or ""
+        )[:500],
+        dag_version=str(getattr(graph, "version", "") or graph.dag_id),
+        round_id=int(getattr(session, "planning_round", 0) or 0),
+        soft_continue=False,
+    )
+    if _round_regen_enabled() or (
+        str(os.environ.get("CGHE_FORCE_REGEN_AFTER_HARD_PRUNE") or "").strip().lower() in {"1", "true", "yes"}
+        and pruned
+    ):
+        reasons = ["ROUND_FEEDBACK_REGEN"]
+        if pruned:
+            reasons.append("VERIFIED_COUNTEREXAMPLE")
+        if analysis.verified_counterexample:
+            reasons.append(str(getattr(analysis.constraint, "observation_code", "") or "HARD_CE"))
+        else:
+            reasons.append("SUBGOAL_NOT_SATISFIED")
+        return _end_round_for_regen(ep, controller, reasons=reasons, feedback=feedback)
+
+    # Legacy same-DAG SELECT path (CGHE_ROUND_REGEN=0).
+    hyp_mem.update_from_feedback(feedback, environment_fingerprint=_env_fingerprint(ep))
     decision, payload = session.next_decision()
     if decision == "REGENERATE":
         ep._cghe_graph_mode = "rebuild"
@@ -1454,9 +1909,15 @@ def _continue_existing_graph(ep: "Episode") -> bool:
 
     if _handoff_active(ep):
         return False
+    if list(getattr(ep, "_cghe_pending_reasons", None) or []):
+        # Round ended; must regenerate a NEW DAG rather than SELECT on the old one.
+        return False
     controller = ep.cghe_controller()
     graph = getattr(controller, "graph", None) if controller is not None else None
     if graph is None:
+        return False
+    if getattr(graph, "sealed", False):
+        ep._cghe_pending_reasons = list(getattr(ep, "_cghe_pending_reasons", None) or ["SEALED_DAG"])
         return False
     session = session_for(controller, cghe_settings())
     decision, payload = session.next_decision()
@@ -1481,13 +1942,14 @@ def _regenerate_layered_plan(ep: "Episode", controller: Any, reasons: list) -> b
     graph = getattr(controller, "graph", None)
     records = controller.planning_records()
     remaining = max(0, session.max_total - session.global_attempts)
+    ce_limit = int(cghe_settings().get("max_inherited_ce") or 32)
     ctx = make_regeneration_context(
         query=str(ep.question or ""),
         mas_state=getattr(ep, "json_data", None),
         active_plans=list(graph.active_plans()) if graph is not None else [],
-        verified_counterexamples=list(records.verified_counterexamples),
-        verified_successes=list(records.verified_successes),
-        unverified_failures=list(records.diagnostic_hypotheses),
+        verified_counterexamples=_truncate_records(list(records.verified_counterexamples), ce_limit),
+        verified_successes=_truncate_records(list(records.verified_successes), ce_limit),
+        unverified_failures=_truncate_records(list(records.diagnostic_hypotheses), ce_limit),
         observations=[],
         previous_attempts=list(getattr(graph, "attempt_history", []) or []) + list(session.archived_attempts),
         trigger_reasons=reasons,
@@ -1499,8 +1961,13 @@ def _regenerate_layered_plan(ep: "Episode", controller: Any, reasons: list) -> b
     runtime = load_runtime()
     depth = min(3, max(1, int(runtime["max_steps"]) - int(ep.step_count) + 1))
     n = int(cghe_settings().get("n") or 8)
+    hyp_mem = _hypothesis_memory(controller)
     try:
-        guidance = "" if str(os.environ.get("CGHE_NO_MEMORY") or "").strip().lower() in {"1", "true", "yes"} else context_guidance(ctx)
+        guidance = ""
+        if str(os.environ.get("CGHE_NO_MEMORY") or "").strip().lower() not in {"1", "true", "yes"}:
+            guidance = context_guidance(ctx)
+            hyp_guide = hyp_mem.planner_guidance(environment_fingerprint=_env_fingerprint(ep))
+            guidance = (guidance + "\n" + hyp_guide).strip()
         plans = build_outlines_oneshot(
             engine, ep.question, n=n, depth=depth, guidance=guidance,
         )
@@ -1510,6 +1977,7 @@ def _regenerate_layered_plan(ep: "Episode", controller: Any, reasons: list) -> b
 
     if str(os.environ.get("CGHE_NO_MEMORY") or "").strip().lower() not in {"1", "true", "yes"}:
         plans = drop_contradicted_plans(plans, records.verified_counterexamples)
+        plans = hyp_mem.filter_plans(plans, environment_fingerprint=_env_fingerprint(ep))
     installed = session.regenerate(plans, ctx)
     if installed is None:
         return False
@@ -1552,26 +2020,40 @@ def _open_layered_plan(ep: "Episode") -> bool:
     runtime = load_runtime()
     depth = min(3, max(1, int(runtime["max_steps"]) - int(ep.step_count) + 1))
     n = int(cghe_settings().get("n") or 8)
+    hyp_mem = _hypothesis_memory(controller)
     try:
-        plans = build_outlines_oneshot(engine, ep.question, n=n, depth=depth)
+        guidance = ""
+        if str(os.environ.get("CGHE_NO_MEMORY") or "").strip().lower() not in {"1", "true", "yes"}:
+            guidance = hyp_mem.planner_guidance(environment_fingerprint=_env_fingerprint(ep))
+        plans = build_outlines_oneshot(engine, ep.question, n=n, depth=depth, guidance=guidance or None)
     except Exception:
         return False
     from cghe_loop import drop_contradicted_plans
 
     plans = drop_contradicted_plans(plans, controller.planning_records().verified_counterexamples)
+    plans = hyp_mem.filter_plans(plans, environment_fingerprint=_env_fingerprint(ep))
     if not plans:
         return False
     try:
-        graph = PlanningGraph(list(plans))
+        session = session_for(controller, cghe_settings())
+        if int(getattr(session, "planning_round", 0) or 0) <= 0:
+            session.planning_round = 1
+        graph = PlanningGraph(list(plans), version=session.planning_round)
     except (TypeError, ValueError):
         return False
     if validate_dag(graph):
         return False
     from cghe_dag_log import log_dag_build, plans_text
 
-    session = session_for(controller, cghe_settings())
     session.bind_graph(graph)
+    hyp_mem.round_index = session.planning_round
+    hyp_mem.register_dag_hypotheses(graph)
     record_plan_dependencies(controller.memory, graph)
+    print(
+        f"[CGHE][ROUND {session.planning_round}] Generated DAG version={graph.version} "
+        f"plans={len(list(graph.active_plan_ids()))}",
+        flush=True,
+    )
     controller._round_exhausted = False
     session.events.append({
         "event": "dag_built",

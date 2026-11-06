@@ -7,8 +7,11 @@ counterexample, and only when the binding is complete:
 - permission denied → ``CanAccess`` is false for this resource and identity
 - schema mismatch → ``SchemaOk`` is false for this call shape, not for the tool
 - a parameter error bound to this call → ``ValidID`` is false for that argument
-- Bing returned URLs and the verifier says those snippets miss the subgoal
+- Bing returned **empty / no URLs** and the verifier says the search subgoal failed
   → ``SnippetsSufficient`` is false for that query only, not for the search tool
+- Bing returned URLs / non-empty snippets but the verifier is unsatisfied
+  → ``SUBGOAL_NOT_SATISFIED`` as ``UNVERIFIED`` only (search sufficiency ≠ final answer;
+  the controller should advance to Fetch rather than hard-prune)
 
 Timeouts, verifier uncertainty, generic exceptions, empty returns and text that
 appears only in an LLM hypothesis are recorded as unverified. They do not
@@ -152,7 +155,9 @@ class FailureAnalyzer:
 
         if code in PSI_OBSERVATION_TO_PREDICATE:
             return self._mapped(observation, code, payload, source)
-        if _snippet_gap(observation, verifier):
+        # Empty / URL-less search + verifier fail → hard SnippetsSufficient CE.
+        # Search with URLs + verifier fail → soft SUBGOAL_NOT_SATISFIED (do not prune).
+        if _empty_search_snippet_gap(observation, verifier):
             return self._mapped(
                 observation,
                 "SNIPPETS_INSUFFICIENT",
@@ -162,6 +167,15 @@ class FailureAnalyzer:
                     "tool": observation.tool_name,
                 },
                 "tool_result",
+            )
+        if _soft_search_subgoal_gap(observation, verifier):
+            return self._unverified(
+                observation,
+                FailureType.SUBGOAL_NOT_SATISFIED,
+                observation_code="SUBGOAL_NOT_SATISFIED",
+                source="verifier",
+                origin=EvidenceOrigin.DIRECT_OBSERVATION,
+                note="search returned URLs; snippet gap vs final answer is unverified — prefer Fetch",
             )
         if code == "TRANSIENT":
             return self._unverified(
@@ -596,15 +610,66 @@ def _search_query(observation: ExecutionObservation) -> str:
     return ""
 
 
-def _snippet_gap(observation: ExecutionObservation, verifier: str) -> bool:
-    """Verifier says the search subgoal failed; bind that failure to the query assumption.
+def _is_search_tool(observation: ExecutionObservation) -> bool:
+    tool = norm(observation.tool_name)
+    return "bing" in tool or "search" in tool
 
-    Tool call success (links returned) is irrelevant. What matters is whether the
-    planner's SnippetsSufficient premise for this query holds.
+
+def _search_has_usable_hits(observation: ExecutionObservation) -> bool:
+    """True when Bing/search returned at least one URL or a non-trivial snippet body."""
+    text = _result_text(observation.tool_result)
+    if _URL_RE.search(text):
+        return True
+    # Structured result lists often carry url fields without raw http in str().
+    raw = observation.tool_result
+    if isinstance(raw, dict):
+        blob = json_dumps_safe(raw)
+        if _URL_RE.search(blob):
+            return True
+        for key in ("results", "organic", "items", "webPages"):
+            items = raw.get(key)
+            if isinstance(items, list) and items:
+                return True
+    if isinstance(raw, list) and raw:
+        return True
+    body = text.strip()
+    if not body or body.casefold() in {"null", "none", "empty", "no result", "no results", "[]", "{}"}:
+        return False
+    # Non-empty prose without URLs still counts as a soft hit (continue to Fetch if possible).
+    return len(body) >= 24
+
+
+def json_dumps_safe(value: Any) -> str:
+    try:
+        import json
+
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return str(value or "")
+
+
+def _snippet_gap(observation: ExecutionObservation, verifier: str) -> bool:
+    """Legacy helper: any search + verifier fail with a bindable query.
+
+    Prefer ``_empty_search_snippet_gap`` / ``_soft_search_subgoal_gap`` for control flow.
     """
     if verifier not in _FAILURE_LABELS:
         return False
-    if "bing" not in norm(observation.tool_name) and "search" not in norm(observation.tool_name):
+    if not _is_search_tool(observation):
         return False
     return bool(_search_query(observation))
+
+
+def _empty_search_snippet_gap(observation: ExecutionObservation, verifier: str) -> bool:
+    """Hard CE only when the search truly returned nothing usable."""
+    if not _snippet_gap(observation, verifier):
+        return False
+    return not _search_has_usable_hits(observation)
+
+
+def _soft_search_subgoal_gap(observation: ExecutionObservation, verifier: str) -> bool:
+    """Verifier unsatisfied on a search that still returned URLs/snippets."""
+    if not _snippet_gap(observation, verifier):
+        return False
+    return _search_has_usable_hits(observation)
 

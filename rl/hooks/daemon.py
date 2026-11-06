@@ -1118,6 +1118,28 @@ class TirAgentModeDaemon(AgentModeDaemon):
             reward = getattr(rollout, "final_reward", None)
             answers[rid_s] = 1.0 if isinstance(reward, (int, float)) and float(reward) > 0 else 0.0
         metrics.update(_recovery_rates(event_lists, prefix="val/fcr"))
+        # Split val reward into answer vs Correct (same N_i/N_max rule as train).
+        # val/reward from the trainer stays outcome-only; these keys are explicit.
+        if rollout_ids:
+            from rl.hooks.advantage import correct_pattern_rewards
+
+            pattern_rewards, _, n_max = correct_pattern_rewards(
+                rollout_ids=rollout_ids,
+                prediction_events=event_lists,
+                group_ids=data_ids,
+                threshold=float(self.tir_config.get("fcr_threshold", 0.5)),
+            )
+            r_correct_vals = [float(value) for value in pattern_rewards]
+            r_answer_vals = [float(answers.get(rid, 0.0)) for rid in rollout_ids]
+            r_answer_mean = float(np.mean(r_answer_vals)) if r_answer_vals else 0.0
+            r_correct_mean = float(np.mean(r_correct_vals)) if r_correct_vals else 0.0
+            metrics["val/fcr/R_answer_mean"] = r_answer_mean
+            metrics["val/fcr/R_correct_mean"] = r_correct_mean
+            metrics["val/fcr/R_total_mean"] = r_answer_mean + r_correct_mean
+            metrics["val/fcr/correct_pattern_n_max"] = float(n_max)
+            metrics["val/fcr/correct_reward_positive_frac"] = float(
+                sum(1 for value in r_correct_vals if value > 0.0) / max(1, len(r_correct_vals))
+            )
         event_log = str(os.environ.get("FCR_EVENT_LOG") or "").strip()
         if event_log:
             step = int(getattr(self, "_val_dump_step", 0)) + 1
