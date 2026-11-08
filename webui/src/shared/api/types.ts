@@ -473,6 +473,8 @@ export interface Hypothesis { plugin: string; event_id?: string; message: string
 export interface RewardPoint {
   index: number;
   reward: number;
+  answer_reward?: number;
+  correct_reward?: number;
   branch_count?: number;
   dataset?: 'train' | 'val';
   dataset_label?: string;
@@ -528,6 +530,10 @@ export interface MonitorResponse {
   step_rewards?: RewardPoint[];
   val_rewards?: RewardPoint[];
   critic_rewards?: RewardPoint[];
+  train_answer_rewards?: RewardPoint[];
+  train_correct_rewards?: RewardPoint[];
+  val_answer_rewards?: RewardPoint[];
+  val_correct_rewards?: RewardPoint[];
   reward_archives?: RewardArchive[];
   reward_datasets?: RewardDatasets;
   train_running?: boolean;

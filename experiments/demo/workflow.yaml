@@ -1,0 +1,24 @@
+schema_version: '0.3'
+topology: centralized
+entry_agent: planner
+hub:
+  role: planner
+  skills: []
+  system_prompt: ''
+tools:
+- wikipedia_search
+- bing_search
+- web_search
+- python_coder
+- base_generator
+llm:
+  kind: api
+  model: Qwen3-4B
+  base_url: http://localhost:8000/v1
+memory:
+  agent: messages
+  system: none
+archive:
+  window: post_first_tool
+agents: []
+edges: []

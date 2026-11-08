@@ -26,6 +26,11 @@ export const MonitorSummary = memo(function MonitorSummary({ model }: { model: M
   const valPoints = model?.val_rewards?.length || 0;
   const lossPoints = model?.step_losses?.length || 0;
   const latestReward = latestNumber(model?.step_rewards || [], 'reward');
+  const latestValReward = latestNumber(model?.val_rewards || [], 'reward');
+  const latestValRa = latestNumber(model?.val_answer_rewards || model?.val_rewards || [], 'reward')
+    ?? latestNumber(model?.val_rewards || [], 'answer_reward');
+  const latestValRc = latestNumber(model?.val_correct_rewards || [], 'reward')
+    ?? latestNumber(model?.val_rewards || [], 'correct_reward');
   const losses = model?.step_losses || [];
   const pg = latestNumber(losses, 'pg_loss');
   const entropy = latestNumber(losses, 'entropy_loss');
@@ -36,7 +41,10 @@ export const MonitorSummary = memo(function MonitorSummary({ model }: { model: M
       <div className="metric"><dt className="metric-label">训练集 step reward 记录数</dt><dd className="metric-value">{trainPoints}</dd></div>
       <div className="metric"><dt className="metric-label">验证集 reward 记录数</dt><dd className="metric-value">{valPoints}</dd></div>
       <div className="metric"><dt className="metric-label">Loss 记录数</dt><dd className="metric-value">{lossPoints}</dd></div>
-      <div className="metric"><dt className="metric-label">最新训练集 step reward</dt><dd className="metric-value">{formatScalar(latestReward)}</dd></div>
+      <div className="metric"><dt className="metric-label">最新 train reward</dt><dd className="metric-value">{formatScalar(latestReward)}</dd></div>
+      <div className="metric"><dt className="metric-label">最新 val reward</dt><dd className="metric-value">{formatScalar(latestValReward)}</dd></div>
+      <div className="metric"><dt className="metric-label">最新 val Ra</dt><dd className="metric-value">{formatScalar(latestValRa)}</dd></div>
+      <div className="metric"><dt className="metric-label">最新 val Rc</dt><dd className="metric-value">{formatScalar(latestValRc)}</dd></div>
       <div className="metric"><dt className="metric-label">最新 Loss</dt><dd className="metric-value">{formatScalar(latestLoss)}</dd></div>
       <div className="metric"><dt className="metric-label">算法</dt><dd className="metric-value">{model?.tir_algo || '—'}</dd></div>
       <div className="metric"><dt className="metric-label">已用时间</dt><dd className="metric-value">{elapsed}</dd></div>
@@ -47,6 +55,33 @@ export const MonitorSummary = memo(function MonitorSummary({ model }: { model: M
 
 function chartPoints(points: RewardPoint[]): ChartPoint[] {
   return points.map(point => ({ i: point.index, reward: point.reward }));
+}
+
+function mergeRewardSeries(
+  total: RewardPoint[],
+  answer: RewardPoint[],
+  correct: RewardPoint[],
+): ChartPoint[] {
+  const byIndex = new Map<number, ChartPoint>();
+  for (const point of total) {
+    byIndex.set(point.index, {
+      i: point.index,
+      reward: point.reward,
+      answer_reward: point.answer_reward,
+      correct_reward: point.correct_reward,
+    });
+  }
+  for (const point of answer) {
+    const existing = byIndex.get(point.index) || { i: point.index };
+    existing.answer_reward = point.reward;
+    byIndex.set(point.index, existing);
+  }
+  for (const point of correct) {
+    const existing = byIndex.get(point.index) || { i: point.index };
+    existing.correct_reward = point.reward;
+    byIndex.set(point.index, existing);
+  }
+  return [...byIndex.values()].sort((a, b) => a.i - b.i);
 }
 
 function ArchiveCharts({ archive }: { archive: RewardArchive }) {
@@ -85,12 +120,42 @@ export const MonitorData = memo(function MonitorData({ model, aglOnline, visible
   const training = model?.step_rewards ?? EMPTY_REWARDS;
   const validation = model?.val_rewards ?? EMPTY_REWARDS;
   const critic = model?.critic_rewards ?? EMPTY_REWARDS;
+  const trainAnswer = model?.train_answer_rewards ?? EMPTY_REWARDS;
+  const trainCorrect = model?.train_correct_rewards ?? EMPTY_REWARDS;
+  const valAnswer = model?.val_answer_rewards ?? EMPTY_REWARDS;
+  const valCorrect = model?.val_correct_rewards ?? EMPTY_REWARDS;
   const archives = model?.reward_archives ?? [];
   const labels = model?.reward_datasets;
   const losses = model?.step_losses ?? EMPTY_LOSSES;
-  const trainChart = useMemo(() => chartPoints(training), [training]);
-  const valChart = useMemo(() => chartPoints(validation), [validation]);
+  const trainChart = useMemo(
+    () => mergeRewardSeries(training, trainAnswer, trainCorrect),
+    [training, trainAnswer, trainCorrect],
+  );
+  const valChart = useMemo(
+    () => mergeRewardSeries(validation, valAnswer, valCorrect),
+    [validation, valAnswer, valCorrect],
+  );
   const criticChart = useMemo(() => chartPoints(critic), [critic]);
+  const trainSeries = useMemo(() => {
+    const series: ChartSeries[] = [{ key: 'reward', name: 'train reward (total)', color: 'var(--chart-train)' }];
+    if (trainChart.some(point => typeof point.answer_reward === 'number')) {
+      series.push({ key: 'answer_reward', name: 'train Ra (answer)', color: '#12b886' });
+    }
+    if (trainChart.some(point => typeof point.correct_reward === 'number')) {
+      series.push({ key: 'correct_reward', name: 'train Rc (correct)', color: '#e8590c' });
+    }
+    return series;
+  }, [trainChart]);
+  const valSeries = useMemo(() => {
+    const series: ChartSeries[] = [{ key: 'reward', name: 'val reward (total)', color: '#228be6' }];
+    if (valChart.some(point => typeof point.answer_reward === 'number')) {
+      series.push({ key: 'answer_reward', name: 'val Ra (answer)', color: '#12b886' });
+    }
+    if (valChart.some(point => typeof point.correct_reward === 'number')) {
+      series.push({ key: 'correct_reward', name: 'val Rc (correct)', color: '#e8590c' });
+    }
+    return series;
+  }, [valChart]);
   const lossChart = useMemo(
     () => losses.map(point => ({
       i: point.index,
@@ -107,10 +172,10 @@ export const MonitorData = memo(function MonitorData({ model, aglOnline, visible
   const criticName = labels?.critic_label || '同一批训练样本的 critic/rewards/mean，不是验证集';
   return (
     <>
-      <Section title="训练集 step reward">
-        <p className="field-hint">{trainName}。来自当前实验 data.train_files，不包含验证集。</p>
+      <Section title="训练集 reward（total / Ra / Rc）">
+        <p className="field-hint">{trainName}。Ra=`fcr/R_answer_mean`，Rc=`fcr/R_correct_mean`。</p>
         {!visible ? <div className="h-[220px]" aria-hidden="true" /> : trainChart.length ? (
-          <RewardChart data={trainChart} title="训练集 step reward" series={[{ key: 'reward', name: trainName, color: 'var(--chart-train)' }]} />
+          <RewardChart data={trainChart} title="训练集 reward" series={trainSeries} />
         ) : (
           <EmptyState title={aglOnline ? '训练已连接，尚无训练集 step reward' : '尚无训练集 step reward'}>
             {aglOnline
@@ -123,10 +188,10 @@ export const MonitorData = memo(function MonitorData({ model, aglOnline, visible
           <RewardChart data={criticChart} title="训练集 critic/rewards/mean" series={[{ key: 'reward', name: criticName, color: '#f59f00' }]} />
         </> : null}
       </Section>
-      <Section title="验证集 reward">
-        <p className="field-hint">{valName}。来自当前实验 data.val_files。</p>
+      <Section title="验证集 reward（total / Ra / Rc）">
+        <p className="field-hint">{valName}。Ra=`val/fcr/R_answer_mean`，Rc=`val/fcr/R_correct_mean`。</p>
         {!visible ? <div className="h-[220px]" aria-hidden="true" /> : valChart.length ? (
-          <RewardChart data={valChart} title="验证集 reward" series={[{ key: 'reward', name: valName, color: '#228be6' }]} />
+          <RewardChart data={valChart} title="验证集 reward" series={valSeries} />
         ) : (
           <EmptyState title="尚无验证集 reward">
             val/reward 只在验证触发时写入。test_freq 未到，或这次运行没有验证。

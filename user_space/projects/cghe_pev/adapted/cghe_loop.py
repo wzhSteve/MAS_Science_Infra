@@ -165,6 +165,11 @@ class CGHESession:
         self.archived_attempts: list[Any] = []
         self.archived_dags: list[dict[str, Any]] = []
         self.stop_reason = ""
+        # Make session_for(controller) reuse this instance.
+        try:
+            controller.cghe_session = self
+        except Exception:
+            pass
 
     def bind_graph(self, graph: Any) -> None:
         graph.max_attempts = self.max_step1_attempts

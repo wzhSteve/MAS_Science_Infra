@@ -36,7 +36,7 @@ import time
 from uuid import uuid4
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 _ADAPTED = Path(__file__).resolve().parent
 if str(_ADAPTED) not in sys.path:
@@ -82,6 +82,7 @@ RUNTIME_DEFAULTS: Dict[str, Any] = {
         "max_total_step1_attempts": 12,
         "max_verified_snippet_prunes_per_episode": 2,
         "max_inherited_ce": 32,
+        "max_soft_advances_per_plan": 1,
         "round_regen": True,
         "selection": {"strategy": "max_step1_path_coverage"},
         "pruning_gates": {
@@ -267,6 +268,7 @@ def cghe_settings() -> Dict[str, Any]:
         "max_total_step1_attempts": positive("max_total_step1_attempts", 12),
         "max_verified_snippet_prunes_per_episode": positive("max_verified_snippet_prunes_per_episode", 2),
         "max_inherited_ce": positive("max_inherited_ce", 32),
+        "max_soft_advances_per_plan": positive("max_soft_advances_per_plan", 1),
         "round_regen": round_regen,
         "max_regenerations": positive("max_regenerations", 5 if round_regen else 2),
         "selection": merged.get("selection") if isinstance(merged.get("selection"), dict) else {
@@ -1531,6 +1533,142 @@ def _round_regen_enabled() -> bool:
     return bool(cghe_settings().get("round_regen", True))
 
 
+def _max_soft_advances_per_plan() -> int:
+    return max(1, int(cghe_settings().get("max_soft_advances_per_plan") or 1))
+
+
+def _active_plans_for_action(graph: Any, action: Dict[str, Any], node_id: str) -> list[str]:
+    """Prefer the executed plan_id so a shared Extract leaf does not wipe sibling outlines."""
+    explicit = str(action.get("cghe_plan_id") or "").strip()
+    if explicit:
+        return [explicit]
+    plan_ids: list[str] = []
+    if graph is not None and hasattr(graph, "plans_containing") and node_id:
+        for pid in graph.plans_containing(node_id, active_only=True):
+            if pid not in plan_ids:
+                plan_ids.append(pid)
+    elif graph is not None and node_id:
+        for pid in list(graph.active_plan_ids()):
+            if node_id in list(graph.plan_node_ids(pid)) and pid not in plan_ids:
+                plan_ids.append(pid)
+    return plan_ids
+
+
+def _soft_budget_ok(graph: Any, plan_ids: Sequence[str]) -> bool:
+    """False when any plan has already used up its Soft-Bing advance budget."""
+    if graph is None or not plan_ids:
+        return True
+    limit = _max_soft_advances_per_plan()
+    for pid in plan_ids:
+        count = int(graph.soft_advance_count(pid)) if hasattr(graph, "soft_advance_count") else 0
+        if count >= limit:
+            return False
+    return True
+
+
+_ABSTENTION_MARKERS = (
+    "does not contain",
+    "do not contain",
+    "information provided",
+    "information is not available",
+    "not available in",
+    "no valid answer",
+    "no valid ",
+    "cannot be determined",
+    "can't be determined",
+    "unable to determine",
+    "not enough information",
+    "insufficient information",
+    "no information",
+    "cannot find",
+    "could not find",
+    "none of the retrieved",
+    "no brother",
+    "not mentioned",
+)
+
+_ABSTENTION_EXACT = {
+    "none", "n/a", "na", "unknown", "undetermined", "unavailable",
+    "no answer", "not found", "cannot tell", "can't tell",
+}
+
+
+def _looks_like_abstention(answer: str) -> bool:
+    text = str(answer or "").strip()
+    if not text:
+        return True
+    # Strip common wrappers then score.
+    low = re.sub(r"</?answer>|\\boxed\{|\}", " ", text).casefold()
+    low = re.sub(r"\s+", " ", low).strip(" .;:")
+    if len(low) < 2:
+        return True
+    if low in _ABSTENTION_EXACT:
+        return True
+    return any(marker in low for marker in _ABSTENTION_MARKERS)
+
+
+def _soft_exhaust_sibling_or_regen(
+    ep: "Episode",
+    controller: Any,
+    *,
+    node_id: str,
+    action: Dict[str, Any],
+    reasons: list[str],
+    feedback: Any = None,
+    label: str = "",
+) -> bool:
+    """Mark Soft-Bing-dead plans exhausted, then SELECT a sibling or Round-Regen."""
+    from cghe_loop import session_for
+    from cghe_types import PlanStatus
+
+    graph = getattr(controller, "graph", None)
+    session = session_for(controller, cghe_settings())
+    plan_ids = _active_plans_for_action(graph, action, node_id) if node_id else []
+    if graph is not None and not plan_ids:
+        # Abstention / unknown node: drop every still-active outline so SELECT cannot loop.
+        plan_ids = list(graph.active_plan_ids())
+    exhausted: list[str] = []
+    if graph is not None and plan_ids and hasattr(graph, "mark_soft_exhausted"):
+        exhausted = list(graph.mark_soft_exhausted(plan_ids, reason="soft_chain_exhausted"))
+    elif graph is not None and plan_ids:
+        exhausted = list(graph.retire_plans(plan_ids, status=PlanStatus.ABANDONED, prune_reason="soft_chain_exhausted"))
+    session.events.append({
+        "event": "plans_soft_exhausted",
+        "node_id": node_id,
+        "plan_ids": list(exhausted) or list(plan_ids),
+        "reasons": list(reasons or []),
+        "verifier_status": label or "",
+    })
+    if feedback is not None:
+        try:
+            _hypothesis_memory(controller).update_from_feedback(
+                feedback, environment_fingerprint=_env_fingerprint(ep),
+            )
+        except Exception:
+            pass
+
+    if graph is not None:
+        selection = graph.select_step1()
+        if selection is not None:
+            selected, coverage, eligible = selection
+            session.log_selection(graph, selected, coverage, eligible)
+            node = graph.node(selected)
+            _store_graph_in_memory(ep, graph, selected_id=selected)
+            ep._cghe_graph_mode = "switch"
+            ep._cghe_directive = _directive_continue(
+                node,
+                f"sibling step1 coverage {coverage} after soft exhaust",
+                graph.round_id,
+            )
+            ep._cghe_directive["coverage"] = int(coverage)
+            return True
+
+    regen_reasons = list(reasons or ["SOFT_CHAIN_EXHAUSTED"])
+    if "SOFT_CHAIN_EXHAUSTED" not in regen_reasons:
+        regen_reasons.insert(0, "SOFT_CHAIN_EXHAUSTED")
+    return _end_round_for_regen(ep, controller, reasons=regen_reasons, feedback=feedback)
+
+
 def _hypothesis_memory(controller: Any) -> Any:
     mem = getattr(controller, "hypothesis_memory", None)
     if mem is not None:
@@ -1610,6 +1748,7 @@ def _switch_after_graph_failure(
     from cghe_dag_log import constraint_brief, log_prune, plans_text
 
     # Soft Bing (or non-empty Fetch) miss with a successor → same-plan advance.
+    # Soft budget / leaf dead-end → soft-exhaust → sibling SELECT or Round-Regen.
     soft_codes = {"SUBGOAL_NOT_SATISFIED", "VERIFIER_UNCERTAIN", ""}
     obs_code_soft = str(getattr(analysis.evidence, "observation_code", "") or "")
     soft_search = (
@@ -1623,7 +1762,46 @@ def _switch_after_graph_failure(
         and obs_code_soft in soft_codes
         and not _fetch_result_is_empty_or_error(action, observation)
     )
-    if (soft_search or soft_fetch) and _plan_successors(graph, node_id):
+    soft_miss = soft_search or soft_fetch
+    soft_plans = _active_plans_for_action(graph, action, node_id)
+    successors = _plan_successors(graph, node_id) if soft_miss else []
+    if soft_miss and successors and not _soft_budget_ok(graph, soft_plans):
+        # Soft re-entry budget exhausted: do not loop the same outline.
+        try:
+            from hypothesis_round_memory import build_verifier_feedback
+
+            fb_budget = build_verifier_feedback(
+                satisfied=False,
+                label=label or "不满足",
+                analysis=analysis,
+                action=action,
+                evidence_text=str(getattr(observation, "tool_result", "") or "")[:400],
+                dag_version=str(getattr(graph, "version", "") or graph.dag_id),
+                round_id=int(getattr(session, "planning_round", 0) or 0),
+                soft_continue=False,
+            )
+        except Exception:
+            fb_budget = None
+        session.events.append({
+            "event": "counterexample_validated",
+            "predicate": "",
+            "validation_status": EvidenceStatus.UNVERIFIED_HYPOTHESIS.value,
+            "evidence_id": str(getattr(analysis.evidence, "evidence_id", "") or ""),
+            "hard_constraint": False,
+            "soft_advance": False,
+            "soft_budget_exhausted": True,
+            "constraint_brief": constraint_brief(analysis.constraint),
+        })
+        return _soft_exhaust_sibling_or_regen(
+            ep,
+            controller,
+            node_id=node_id,
+            action=action,
+            reasons=["SOFT_ADVANCE_BUDGET", "SUBGOAL_NOT_SATISFIED"],
+            feedback=fb_budget,
+            label=label,
+        )
+    if soft_miss and successors:
         try:
             controller._remember_failure(
                 analysis, observation, action=str(action.get("sub_goal") or ""), promote=False,
@@ -1641,6 +1819,9 @@ def _switch_after_graph_failure(
             "constraint_brief": constraint_brief(analysis.constraint),
         })
         reason_status = label or ("SOFT_FETCH_CONTINUE" if soft_fetch else "SOFT_CONTINUE")
+        # Count soft entry from Bing/search only (one soft chain per plan).
+        if soft_search and soft_plans and hasattr(graph, "note_soft_advance"):
+            graph.note_soft_advance(soft_plans)
         if _advance_to_plan_successor(
             ep, controller, node_id, soft=True, verifier_status=reason_status,
         ):
@@ -1664,6 +1845,59 @@ def _switch_after_graph_failure(
             except Exception:
                 pass
             return True
+    if soft_miss and not successors:
+        # Leaf of a Soft-Bing chain failed → exhaust plan, try sibling / regen.
+        try:
+            from hypothesis_round_memory import build_verifier_feedback
+
+            fb_leaf = build_verifier_feedback(
+                satisfied=False,
+                label=label or "不满足",
+                analysis=analysis,
+                action=action,
+                evidence_text=str(getattr(observation, "tool_result", "") or "")[:500],
+                dag_version=str(getattr(graph, "version", "") or graph.dag_id),
+                round_id=int(getattr(session, "planning_round", 0) or 0),
+                soft_continue=False,
+            )
+        except Exception:
+            fb_leaf = None
+        session.events.append({
+            "event": "counterexample_validated",
+            "predicate": "",
+            "validation_status": EvidenceStatus.UNVERIFIED_HYPOTHESIS.value,
+            "evidence_id": str(getattr(analysis.evidence, "evidence_id", "") or ""),
+            "hard_constraint": False,
+            "soft_leaf_fail": True,
+            "constraint_brief": constraint_brief(analysis.constraint),
+        })
+        session.events.append({
+            "event": "verification_completed",
+            "verifier_status": label or "FAILURE",
+            "node_id": node_id,
+            "dag_id": graph.dag_id,
+            "pruning_applied": False,
+            "soft_leaf_fail": True,
+        })
+        if attempt_id:
+            try:
+                graph.finish_attempt(
+                    attempt_id,
+                    execution_status="failure",
+                    verifier_status=label,
+                    pruning_applied=False,
+                )
+            except Exception:
+                pass
+        return _soft_exhaust_sibling_or_regen(
+            ep,
+            controller,
+            node_id=node_id,
+            action=action,
+            reasons=["SOFT_CHAIN_EXHAUSTED", "SUBGOAL_NOT_SATISFIED"],
+            feedback=fb_leaf,
+            label=label,
+        )
 
     # Fetch empty/error only → deferred query-level CE against upstream Bing.
     deferred = None
@@ -1835,11 +2069,10 @@ def _switch_after_graph_failure(
         "pruning_applied": bool(pruned),
     })
 
-    # Round-based regeneration (default): do NOT continue pruning/SELECT on the
-    # same active DAG. Seal it, update HypothesisMemory, and request a NEW DAG.
+    # After hard CE prune or ordinary unverified miss: soft-exhaust current plans,
+    # try a sibling Step-1, else Round-Regen. Never re-SELECT the same soft-loop Bing.
     from hypothesis_round_memory import build_verifier_feedback
 
-    hyp_mem = _hypothesis_memory(controller)
     feedback = build_verifier_feedback(
         satisfied=False,
         label=label or "不满足",
@@ -1852,43 +2085,60 @@ def _switch_after_graph_failure(
         round_id=int(getattr(session, "planning_round", 0) or 0),
         soft_continue=False,
     )
-    if _round_regen_enabled() or (
+    # Hard prune already dropped dependent plans. Prefer remaining siblings before
+    # sealing the whole DAG — immediate Round-Regen was burning Hotpot budget.
+    force_regen = (
         str(os.environ.get("CGHE_FORCE_REGEN_AFTER_HARD_PRUNE") or "").strip().lower() in {"1", "true", "yes"}
         and pruned
-    ):
-        reasons = ["ROUND_FEEDBACK_REGEN"]
-        if pruned:
-            reasons.append("VERIFIED_COUNTEREXAMPLE")
+    )
+    reasons = ["SOFT_CHAIN_EXHAUSTED"]
+    if pruned:
+        reasons = ["VERIFIED_COUNTEREXAMPLE"]
         if analysis.verified_counterexample:
             reasons.append(str(getattr(analysis.constraint, "observation_code", "") or "HARD_CE"))
-        else:
-            reasons.append("SUBGOAL_NOT_SATISFIED")
-        return _end_round_for_regen(ep, controller, reasons=reasons, feedback=feedback)
+        # Soft-exhaust the executed plan if it somehow remained active, then sibling.
+        if force_regen and not graph.active_plan_ids():
+            return _end_round_for_regen(
+                ep, controller, reasons=["ROUND_FEEDBACK_REGEN"] + reasons, feedback=feedback,
+            )
+        selection = graph.select_step1() if graph is not None else None
+        if selection is not None:
+            selected, coverage, eligible = selection
+            try:
+                _hypothesis_memory(controller).update_from_feedback(
+                    feedback, environment_fingerprint=_env_fingerprint(ep),
+                )
+            except Exception:
+                pass
+            session.log_selection(graph, selected, coverage, eligible)
+            node = graph.node(selected)
+            _store_graph_in_memory(ep, graph, selected_id=selected)
+            ep._cghe_graph_mode = "switch"
+            ep._cghe_directive = _directive_continue(
+                node,
+                f"sibling step1 coverage {coverage} after verified prune",
+                graph.round_id,
+            )
+            ep._cghe_directive["coverage"] = int(coverage)
+            return True
+        if _round_regen_enabled() or force_regen:
+            return _end_round_for_regen(
+                ep, controller, reasons=["ROUND_FEEDBACK_REGEN"] + reasons, feedback=feedback,
+            )
 
-    # Legacy same-DAG SELECT path (CGHE_ROUND_REGEN=0).
-    hyp_mem.update_from_feedback(feedback, environment_fingerprint=_env_fingerprint(ep))
-    decision, payload = session.next_decision()
-    if decision == "REGENERATE":
-        ep._cghe_graph_mode = "rebuild"
-        ep._cghe_pending_reasons = list(payload or [])
-        ep._cghe_directive = dict(_PEV_DIRECTIVE)
-        ep._cghe_directive["reason"] = "regeneration required after persisted step1 result"
-        return True
-    if decision != "SELECT":
-        ep._cghe_directive = dict(_PEV_DIRECTIVE)
-        ep._cghe_directive["reason"] = str(decision)
-        return True
-    selected, coverage, eligible = payload
-    session.log_selection(graph, selected, coverage, eligible)
-    node = graph.node(selected)
-    _store_graph_in_memory(ep, graph, selected_id=selected)
-    ep._cghe_graph_mode = "switch"
-    ep._cghe_directive = _directive_continue(
-        node,
-        f"step1 coverage {coverage} after unverified failure" if not pruned else f"step1 coverage {coverage} after verified prune",
-        graph.round_id,
+    if analysis.verified_counterexample:
+        reasons.append(str(getattr(analysis.constraint, "observation_code", "") or "HARD_CE"))
+    else:
+        reasons.append("SUBGOAL_NOT_SATISFIED")
+    return _soft_exhaust_sibling_or_regen(
+        ep,
+        controller,
+        node_id=node_id,
+        action=action,
+        reasons=reasons,
+        feedback=feedback,
+        label=label,
     )
-    return True
 
 
 def _lock_step1(ep: "Episode", graph: Any, node_id: str, coverage: int, reason: str) -> bool:
@@ -2619,16 +2869,70 @@ class EpisodeContext:
             else:
                 ep.final_output = str(ep.planner.generate_final_output(ep.question, None, ep.memory) or "")
                 ep.direct_output = str(ep.planner.generate_direct_output(ep.question, None, ep.memory) or "")
-            ep.json_data["final_output"] = ep.final_output
-            ep.json_data["direct_output"] = ep.direct_output
-            ep.json_data["cghe_evidence_sufficient"] = bool(evidence_ok)
-            ep.done = True
-            _complete_cghe_plans(ep)
             answer = wrap_answer(ep.direct_output, source=ep.source)
             if not answer and printed:
                 ep.direct_output = printed
-                ep.json_data["direct_output"] = printed
                 answer = wrap_answer(printed, source=ep.source)
+
+            # Abstention gate: refuse "does not contain" style finals while regen/step budget remains.
+            ctrl = ep.cghe_controller() if cghe_enabled() else None
+            session = None
+            if ctrl is not None:
+                try:
+                    from cghe_loop import session_for
+
+                    session = session_for(ctrl, cghe_settings())
+                except Exception:
+                    session = getattr(ctrl, "cghe_session", None)
+            regen_used = int(getattr(session, "regeneration_count", 0) or 0) if session is not None else 0
+            regen_cap = int(cghe_settings().get("max_regenerations") or 5)
+            can_regen = (
+                cghe_enabled()
+                and ctrl is not None
+                and not out_of_budget
+                and regen_used < regen_cap
+                and _looks_like_abstention(answer or ep.direct_output or ep.final_output or "")
+            )
+            if can_regen:
+                session_events = getattr(session, "events", None) if session is not None else None
+                if isinstance(session_events, list):
+                    session_events.append({
+                        "event": "abstention_rejected",
+                        "answer_preview": str(answer or "")[:160],
+                        "regen_used": regen_used,
+                        "regen_cap": regen_cap,
+                    })
+                node_id = ""
+                action_dict = action if isinstance(action, dict) else {}
+                if isinstance(action_dict, dict):
+                    node_id = str(action_dict.get("cghe_node_id") or "")
+                graph = getattr(ctrl, "graph", None)
+                if not node_id and graph is not None:
+                    try:
+                        cov = graph.compute_step1_coverage()
+                        node_id = next(iter(cov), "") if cov else ""
+                    except Exception:
+                        node_id = ""
+                _soft_exhaust_sibling_or_regen(
+                    ep,
+                    ctrl,
+                    node_id=node_id or "abstention",
+                    action=action_dict if isinstance(action_dict, dict) else {},
+                    reasons=["ABSTENTION_REJECT", "SOFT_CHAIN_EXHAUSTED"],
+                    feedback=None,
+                    label="ABSTENTION",
+                )
+                stop = False
+                conclusion = "CONTINUE"
+                answer = ""
+                ep.done = False
+                analysis = (str(analysis or "") + " | abstention_rejected_regen").strip(" |")
+            else:
+                ep.json_data["final_output"] = ep.final_output
+                ep.json_data["direct_output"] = ep.direct_output
+                ep.json_data["cghe_evidence_sufficient"] = bool(evidence_ok)
+                ep.done = True
+                _complete_cghe_plans(ep)
         return {
             "kind": "verify",
             "payload": {

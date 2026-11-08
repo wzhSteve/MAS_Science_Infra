@@ -55,11 +55,13 @@ def evaluate_step(
     *,
     coverage_misses: int = 0,
     high_grad_streak: int = 0,
+    relax_coverage: bool = False,
 ) -> Tuple[str, List[str], int, int]:
     """Return gate, reasons, and updated streaks.
 
-    STOP: NaN, leakage, cross-chain, infra drop >0.2, budget violation, two consecutive coverage misses.
-    WARN: no failure triggers, no valid pairs, Brier gradient dominates.
+    STOP: NaN, leakage, cross-chain, infra drop >0.2, budget violation;
+    and (unless relax_coverage) two consecutive coverage misses.
+    WARN: coverage miss (always when relax_coverage), no failure triggers, no valid pairs, Brier gradient dominates.
     """
     reasons: List[str] = []
     coverage = _num(row, "fcr/prediction_coverage")
@@ -96,17 +98,21 @@ def evaluate_step(
 
     next_coverage_misses = coverage_misses
     covered = True
+    cov_reasons: List[str] = []
     if coverage is not None and coverage < 0.99:
         covered = False
-        reasons.append(f"prediction_coverage={coverage:.3f}")
+        cov_reasons.append(f"prediction_coverage={coverage:.3f}")
     if labels is not None and labels < 0.99:
         covered = False
-        reasons.append(f"label_coverage={labels:.3f}")
-    next_coverage_misses = 0 if covered else coverage_misses + 1
-    if next_coverage_misses >= 2:
-        return "STOP", reasons + ["coverage_miss_streak=2"], next_coverage_misses, 0
+        cov_reasons.append(f"label_coverage={labels:.3f}")
+    if relax_coverage:
+        next_coverage_misses = 0
+    else:
+        next_coverage_misses = 0 if covered else coverage_misses + 1
+        if next_coverage_misses >= 2:
+            return "STOP", cov_reasons + ["coverage_miss_streak=2"], next_coverage_misses, 0
 
-    warn: List[str] = list(reasons)
+    warn: List[str] = list(cov_reasons)
     starvation = _num(row, "fcr/branch_starvation")
     if starvation is not None and starvation >= 1:
         warn.append("branch_starvation")
@@ -187,6 +193,11 @@ def main() -> int:
     parser.add_argument("--follow", action="store_true")
     parser.add_argument("--poll", type=float, default=5.0)
     parser.add_argument("--stop-on-stop", action="store_true")
+    parser.add_argument(
+        "--relax-coverage",
+        action="store_true",
+        help="Treat prediction/label coverage misses as WARN only (do not STOP on streak).",
+    )
     args = parser.parse_args()
     coverage_misses = 0
     high_grad = 0
@@ -200,7 +211,10 @@ def main() -> int:
             if not isinstance(row, dict):
                 continue
             gate, reasons, coverage_misses, high_grad = evaluate_step(
-                row, coverage_misses=coverage_misses, high_grad_streak=high_grad
+                row,
+                coverage_misses=coverage_misses,
+                high_grad_streak=high_grad,
+                relax_coverage=args.relax_coverage,
             )
             print(format_line(row, gate, reasons), flush=True)
             if gate == "STOP":

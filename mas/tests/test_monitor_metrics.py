@@ -55,7 +55,7 @@ class TestMonitorMetrics(unittest.TestCase):
             pinned = str(path.resolve())
             with patch(
                 "science_infra.control.services._metrics_candidate_paths",
-                return_value=([pinned], {pinned}),
+                return_value=([pinned], {pinned}, set()),
             ):
                 series = _agl_reward_series(
                     {
@@ -89,11 +89,61 @@ class TestMonitorMetrics(unittest.TestCase):
             foreign_s = str(foreign.resolve())
             with patch(
                 "science_infra.control.services._metrics_candidate_paths",
-                return_value=([foreign_s, owned_s], {owned_s}),
+                return_value=([foreign_s, owned_s], {owned_s}, set()),
             ):
                 series = _agl_reward_series({}, experiment_name="my_exp_grpo")
         self.assertEqual([row["reward"] for row in series["step_rewards"]], [0.2, 0.4])
         self.assertEqual(series["agl_source"], "offline_metrics_jsonl")
+
+    def test_exact_experiment_dir_beats_longer_prefixed_archive(self):
+        from science_infra.control.services import _select_metrics_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            exact = Path(tmp) / "fcr_branch_corr" / "metrics.jsonl"
+            archive = Path(tmp) / "fcr_branch_corr_batch2_20261106_125928" / "metrics.jsonl"
+            _write_jsonl(exact, [
+                {
+                    "step": 1,
+                    "training/reward": 0.1944,
+                    "val/reward": 0.2673,
+                    "fcr/R_answer_mean": 1.0,
+                    "fcr/R_correct_mean": 0.1181,
+                    "val/fcr/R_answer_mean": 0.3,
+                    "val/fcr/R_correct_mean": 0.1222,
+                    "actor/pg_loss": 0.01,
+                },
+                {
+                    "step": 2,
+                    "training/reward": 0.223,
+                    "val/reward": 0.2713,
+                    "fcr/R_answer_mean": 1.0,
+                    "fcr/R_correct_mean": 0.1793,
+                    "val/fcr/R_answer_mean": 0.3222,
+                    "val/fcr/R_correct_mean": 0.15,
+                    "actor/pg_loss": 0.02,
+                },
+            ])
+            _write_jsonl(archive, [
+                {"step": i, "training/reward": 0.01 * i, "val/reward": 0.02 * i, "actor/pg_loss": 0.001}
+                for i in range(1, 6)
+            ])
+            exact_s = str(exact.resolve())
+            archive_s = str(archive.resolve())
+            with patch(
+                "science_infra.control.services._metrics_candidate_paths",
+                return_value=([archive_s, exact_s], {archive_s, exact_s}, set()),
+            ):
+                selected = _select_metrics_file(experiment_name="fcr_branch_corr")
+            self.assertEqual(selected["path"], exact_s)
+            self.assertEqual([row["reward"] for row in selected["step_rewards"]], [0.1944, 0.223])
+            self.assertEqual(
+                [row["reward"] for row in selected["val_answer_rewards"]],
+                [0.3, 0.3222],
+            )
+            self.assertEqual(
+                [row["reward"] for row in selected["val_correct_rewards"]],
+                [0.1222, 0.15],
+            )
 
     def test_metrics_api_falls_back_when_store_is_down(self):
         from fastapi.testclient import TestClient
@@ -110,7 +160,7 @@ class TestMonitorMetrics(unittest.TestCase):
             pinned = str(path.resolve())
             with patch("httpx.AsyncClient", _DownClient), patch(
                 "science_infra.control.services._metrics_candidate_paths",
-                return_value=([pinned], set()),
+                return_value=([pinned], set(), set()),
             ):
                 with TestClient(create_app()) as client:
                     metrics = client.get("/v1/agl/metrics")

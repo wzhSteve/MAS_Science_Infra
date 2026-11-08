@@ -40,14 +40,23 @@ describe('MonitorPanel log', () => {
     render(<MonitorPanel {...props} trainLog="" model={{
       rewards: [],
       empty: false,
-      step_rewards: [{ index: 1, reward: 0.6 }, { index: 2, reward: 0 }],
-      val_rewards: [{ index: 0, reward: 0.4 }],
+      step_rewards: [
+        { index: 1, reward: 0.6, answer_reward: 0.5, correct_reward: 0.1 },
+        { index: 2, reward: 0, answer_reward: 0.4, correct_reward: 0.05 },
+      ],
+      val_rewards: [{ index: 0, reward: 0.4, answer_reward: 0.3, correct_reward: 0.12 }],
+      train_answer_rewards: [{ index: 1, reward: 0.5 }, { index: 2, reward: 0.4 }],
+      train_correct_rewards: [{ index: 1, reward: 0.1 }, { index: 2, reward: 0.05 }],
+      val_answer_rewards: [{ index: 0, reward: 0.3 }],
+      val_correct_rewards: [{ index: 0, reward: 0.12 }],
       step_losses: [{ index: 1, pg_loss: 0, entropy_loss: 0.11 }, { index: 2, pg_loss: 0, entropy_loss: 0.14 }],
       metrics_path: '/tmp/metrics.jsonl',
     }} />);
     expect(screen.getByText('训练集 step reward 记录数').parentElement?.textContent).toContain('2');
-    expect(screen.getByRole('heading', { name: '训练集 step reward' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '验证集 reward' })).toBeTruthy();
+    expect(screen.getByText('最新 val Ra').parentElement?.textContent).toContain('0.3000');
+    expect(screen.getByText('最新 val Rc').parentElement?.textContent).toContain('0.1200');
+    expect(screen.getByRole('heading', { name: '训练集 reward（total / Ra / Rc）' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '验证集 reward（total / Ra / Rc）' })).toBeTruthy();
     expect(screen.getByText('当前没有活动训练')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Loss' })).toBeTruthy();
     const link = screen.getAllByRole('link', { name: /AGL Metrics（历史）/ })[0];

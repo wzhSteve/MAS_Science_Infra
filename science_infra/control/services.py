@@ -1133,10 +1133,18 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
     val_rewards: List[Dict[str, Any]] = []
     critic_rewards: List[Dict[str, Any]] = []
     step_losses: List[Dict[str, Any]] = []
+    train_answer_rewards: List[Dict[str, Any]] = []
+    train_correct_rewards: List[Dict[str, Any]] = []
+    val_answer_rewards: List[Dict[str, Any]] = []
+    val_correct_rewards: List[Dict[str, Any]] = []
     last_reward: Optional[int] = None
     last_val: Optional[int] = None
     last_critic: Optional[int] = None
     last_loss: Optional[int] = None
+    last_train_ra: Optional[int] = None
+    last_train_rc: Optional[int] = None
+    last_val_ra: Optional[int] = None
+    last_val_rc: Optional[int] = None
     latest_algo: Optional[str] = None
     latest_branch: Optional[float] = None
     for rec in records:
@@ -1148,6 +1156,8 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
         reward = _metric_float(rec.get("training/reward"))
         if reward is None:
             reward = _metric_float(rec.get("critic/rewards/mean"))
+        train_ra = _metric_float(rec.get("fcr/R_answer_mean"))
+        train_rc = _metric_float(rec.get("fcr/R_correct_mean"))
         if reward is not None:
             index = _bump_index(_metric_step(rec, len(step_rewards) + 1), last_reward)
             last_reward = index
@@ -1157,11 +1167,33 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
                 "dataset": "train",
                 "dataset_label": "训练集",
             }
+            if train_ra is not None:
+                point["answer_reward"] = train_ra
+            if train_rc is not None:
+                point["correct_reward"] = train_rc
             branch = _metric_float(rec.get("training/branch_local_count"))
             if branch is not None:
                 point["branch_count"] = branch
                 latest_branch = branch
             step_rewards.append(point)
+        if train_ra is not None:
+            index = _bump_index(_metric_step(rec, len(train_answer_rewards) + 1), last_train_ra)
+            last_train_ra = index
+            train_answer_rewards.append({
+                "index": index,
+                "reward": train_ra,
+                "dataset": "train",
+                "dataset_label": "训练集 Answer",
+            })
+        if train_rc is not None:
+            index = _bump_index(_metric_step(rec, len(train_correct_rewards) + 1), last_train_rc)
+            last_train_rc = index
+            train_correct_rewards.append({
+                "index": index,
+                "reward": train_rc,
+                "dataset": "train",
+                "dataset_label": "训练集 Correct",
+            })
         critic = _metric_float(rec.get("critic/rewards/mean"))
         if critic is not None:
             index = _bump_index(_metric_step(rec, len(critic_rewards) + 1), last_critic)
@@ -1173,14 +1205,39 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
                 "dataset_label": "训练集",
             })
         val = _metric_float(rec.get("val/reward"))
+        val_ra = _metric_float(rec.get("val/fcr/R_answer_mean"))
+        val_rc = _metric_float(rec.get("val/fcr/R_correct_mean"))
         if val is not None:
             index = _bump_index(_metric_step(rec, len(val_rewards) + 1), last_val)
             last_val = index
-            val_rewards.append({
+            point = {
                 "index": index,
                 "reward": val,
                 "dataset": "val",
                 "dataset_label": "验证集",
+            }
+            if val_ra is not None:
+                point["answer_reward"] = val_ra
+            if val_rc is not None:
+                point["correct_reward"] = val_rc
+            val_rewards.append(point)
+        if val_ra is not None:
+            index = _bump_index(_metric_step(rec, len(val_answer_rewards) + 1), last_val_ra)
+            last_val_ra = index
+            val_answer_rewards.append({
+                "index": index,
+                "reward": val_ra,
+                "dataset": "val",
+                "dataset_label": "验证集 Answer",
+            })
+        if val_rc is not None:
+            index = _bump_index(_metric_step(rec, len(val_correct_rewards) + 1), last_val_rc)
+            last_val_rc = index
+            val_correct_rewards.append({
+                "index": index,
+                "reward": val_rc,
+                "dataset": "val",
+                "dataset_label": "验证集 Correct",
             })
         loss_point: Dict[str, Any] = {}
         for src, dest in _LOSS_FIELDS:
@@ -1197,6 +1254,10 @@ def _parse_metrics_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict
         "val_rewards": val_rewards,
         "critic_rewards": critic_rewards,
         "step_losses": step_losses,
+        "train_answer_rewards": train_answer_rewards,
+        "train_correct_rewards": train_correct_rewards,
+        "val_answer_rewards": val_answer_rewards,
+        "val_correct_rewards": val_correct_rewards,
         "tir_algo": latest_algo,
         "branch_local_count": latest_branch,
     }
@@ -1208,12 +1269,37 @@ def _empty_metrics() -> Dict[str, Any]:
         "val_rewards": [],
         "critic_rewards": [],
         "step_losses": [],
+        "train_answer_rewards": [],
+        "train_correct_rewards": [],
+        "val_answer_rewards": [],
+        "val_correct_rewards": [],
         "tir_algo": None,
         "branch_local_count": None,
         "rows": [],
         "path": None,
         "score": 0,
     }
+
+
+def _metrics_dir_match_rank(path: str, experiment_name: Optional[str]) -> int:
+    """Higher is better: exact dir name > prefixed archive > loose substring > none."""
+    if not experiment_name:
+        return 0
+    name = Path(path).parent.name
+    if name == experiment_name:
+        return 3
+    if name.startswith(f"{experiment_name}_"):
+        return 1
+    if experiment_name in name:
+        return 1
+    return 0
+
+
+def _default_local_metrics_path(default_local_dir: Optional[str]) -> Optional[str]:
+    if not default_local_dir:
+        return None
+    path = os.path.abspath(os.path.join(str(default_local_dir), "metrics.jsonl"))
+    return path if os.path.isfile(path) else None
 
 
 def _read_metrics_file(path: str, limit: int = 2000) -> Dict[str, Any]:
@@ -1263,17 +1349,26 @@ def _algo_from_metrics_path(path: str) -> Optional[str]:
 def _metrics_candidate_paths(
     experiment_id: Optional[str] = None,
     experiment_name: Optional[str] = None,
+    default_local_dir: Optional[str] = None,
 ) -> tuple:
-    """Return ``(ordered existing paths, pinned paths)``.
+    """Return ``(ordered existing paths, pinned paths, active_run_pins)``.
 
-    Pinned paths belong to this experiment: stdout ``AGL_METRICS_JSONL=`` lines
-    and checkpoint dirs whose name contains ``experiment_name``.
+    Pinned paths belong to this experiment: ``default_local_dir/metrics.jsonl``,
+    stdout ``AGL_METRICS_JSONL=`` lines, and checkpoint dirs matching
+    ``experiment_name`` (exact name preferred over prefixed archives).
     """
     import glob as _glob
     import re as _re
 
     candidates: List[str] = []
     pinned: set = set()
+    active_pins: set = set()
+    preferred_path = _default_local_metrics_path(default_local_dir)
+    if preferred_path:
+        candidates.append(preferred_path)
+        pinned.add(preferred_path)
+        active_pins.add(preferred_path)
+
     pat = _re.compile(r"^AGL_METRICS_JSONL=(\S+)", _re.MULTILINE)
     runs = [r for r in PROCS.list_runs(experiment_id) if r.get("kind") == "train"]
     runs = sorted(runs, key=lambda r: float(r.get("started_at") or 0.0), reverse=True)
@@ -1292,6 +1387,8 @@ def _metrics_candidate_paths(
                 continue
             candidates.append(path)
             pinned.add(path)
+            if row.get("running") or row.get("state") == "running":
+                active_pins.add(path)
 
     env_path = os.environ.get("AGL_METRICS_JSONL", "").strip()
     if env_path:
@@ -1305,10 +1402,16 @@ def _metrics_candidate_paths(
         reverse=True,
     )
     if experiment_name:
-        preferred = [p for p in globbed if experiment_name in Path(p).parent.name]
-        for path in preferred:
+        exact = [p for p in globbed if Path(p).parent.name == experiment_name]
+        prefixed = [
+            p for p in globbed
+            if Path(p).parent.name.startswith(f"{experiment_name}_")
+            or (experiment_name in Path(p).parent.name and Path(p).parent.name != experiment_name)
+        ]
+        for path in exact + prefixed:
             pinned.add(os.path.abspath(path))
-        candidates.extend(preferred)
+        candidates.extend(exact)
+        candidates.extend(prefixed)
     candidates.extend(globbed)
 
     ordered: List[str] = []
@@ -1320,21 +1423,25 @@ def _metrics_candidate_paths(
             continue
         seen.add(cand)
         ordered.append(cand)
-    return ordered, pinned
+    return ordered, pinned, active_pins
 
 
 def _select_metrics_file(
     *,
     experiment_id: Optional[str] = None,
     experiment_name: Optional[str] = None,
+    default_local_dir: Optional[str] = None,
     limit: int = 2000,
 ) -> Dict[str, Any]:
-    """Pick the fullest metrics.jsonl for this experiment.
+    """Pick the metrics.jsonl for this experiment.
 
-    A named experiment never falls through to another experiment's file.
-    Among pinned files, the one with the most reward/loss points wins.
+    Prefer ``default_local_dir`` / exact ``experiment_name`` directory over
+    longer prefixed archives (e.g. ``name_batch2_...``). Among equal match
+    rank, prefer an active-run pin, then score, then mtime.
     """
-    ordered, pinned = _metrics_candidate_paths(experiment_id, experiment_name)
+    ordered, pinned, active_pins = _metrics_candidate_paths(
+        experiment_id, experiment_name, default_local_dir=default_local_dir
+    )
     if experiment_name or pinned:
         pool = [path for path in ordered if path in pinned] if experiment_name else ordered
         if experiment_name and not pool:
@@ -1349,7 +1456,12 @@ def _select_metrics_file(
             mtime = os.path.getmtime(path)
         except OSError:
             mtime = 0.0
-        key = (int(parsed["score"]), mtime)
+        key = (
+            _metrics_dir_match_rank(path, experiment_name),
+            1 if path in active_pins else 0,
+            int(parsed["score"]),
+            mtime,
+        )
         if best is None or best_key is None or key > best_key:
             best = parsed
             best_key = key
@@ -1362,7 +1474,7 @@ def _select_recent_metrics(*, limit: int = 2000) -> Dict[str, Any]:
     A one-line file touched last must not hide the completed run beside it,
     and an older unrelated file with more rows must not win on length alone.
     """
-    ordered, _pinned = _metrics_candidate_paths()
+    ordered, _pinned, _active = _metrics_candidate_paths()
     parsed: List[Dict[str, Any]] = []
     for path in ordered:
         item = _read_metrics_file(path, limit=limit)
@@ -1401,6 +1513,7 @@ def _agl_reward_series(
     *,
     experiment_id: Optional[str] = None,
     experiment_name: Optional[str] = None,
+    default_local_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Episode rewards from the store; step reward/loss from the fuller series.
 
@@ -1425,7 +1538,11 @@ def _agl_reward_series(
         )
     live_steps = [step for step in (agl.get("training_steps") or []) if isinstance(step, dict)]
     live = _parse_metrics_records(live_steps)
-    disk = _select_metrics_file(experiment_id=experiment_id, experiment_name=experiment_name)
+    disk = _select_metrics_file(
+        experiment_id=experiment_id,
+        experiment_name=experiment_name,
+        default_local_dir=default_local_dir,
+    )
     live_score = len(live["step_rewards"]) + len(live["val_rewards"]) + len(live["step_losses"])
     use_disk = int(disk["score"]) > 0 and int(disk["score"]) >= live_score
     chosen = disk if use_disk else live
@@ -1443,6 +1560,10 @@ def _agl_reward_series(
         "val_rewards": chosen["val_rewards"],
         "critic_rewards": chosen.get("critic_rewards") or [],
         "step_losses": chosen["step_losses"],
+        "train_answer_rewards": chosen.get("train_answer_rewards") or [],
+        "train_correct_rewards": chosen.get("train_correct_rewards") or [],
+        "val_answer_rewards": chosen.get("val_answer_rewards") or [],
+        "val_correct_rewards": chosen.get("val_correct_rewards") or [],
         "tir_algo": chosen.get("tir_algo"),
         "branch_local_count": chosen.get("branch_local_count"),
         "metrics_path": disk.get("path") if use_disk else None,
@@ -1469,16 +1590,18 @@ def local_training_metrics(
             bundle = load_bundle(experiment_id)
             trainer = (bundle.get("rl") or {}).get("trainer") or {}
             experiment_name = str(trainer.get("experiment_name") or "") or None
+            default_local_dir = str(trainer.get("default_local_dir") or "") or None
             disk = _select_metrics_file(
                 experiment_id=experiment_id,
                 experiment_name=experiment_name,
+                default_local_dir=default_local_dir,
                 limit=step_limit,
             )
         except Exception:
             disk = _empty_metrics()
     if int(disk.get("score") or 0) <= 0:
         disk = _select_recent_metrics(limit=step_limit)
-    ordered, _pinned = _metrics_candidate_paths(experiment_id if experiment_id else None)
+    ordered, _pinned, _active = _metrics_candidate_paths(experiment_id if experiment_id else None)
     rows = list(disk["rows"][-step_limit:]) if disk.get("rows") else []
     # A restarted run can append step 1 again. The dashboard charts key on `step`,
     # so keep that field monotonic or the last update plots on top of step 1.
@@ -1613,14 +1736,19 @@ def monitor_model(exp_id: str) -> Dict[str, Any]:
     bundle = load_bundle(exp_id)
     rl_cfg = bundle.get("rl") if isinstance(bundle, dict) else {}
     experiment_name = None
+    default_local_dir = None
     try:
-        experiment_name = str((rl_cfg.get("trainer") or {}).get("experiment_name") or "") or None
+        trainer = (rl_cfg.get("trainer") or {}) if isinstance(rl_cfg, dict) else {}
+        experiment_name = str(trainer.get("experiment_name") or "") or None
+        default_local_dir = str(trainer.get("default_local_dir") or "") or None
     except AttributeError:
         experiment_name = None
+        default_local_dir = None
     agl_series = _agl_reward_series(
         fetch_agl_training_metrics(),
         experiment_id=exp_id,
         experiment_name=experiment_name,
+        default_local_dir=default_local_dir,
     )
     if not cpath.is_file():
         model: Dict[str, Any] = {

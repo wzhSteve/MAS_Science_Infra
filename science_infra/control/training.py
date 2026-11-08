@@ -171,14 +171,16 @@ def _rl_contract_violations(rl: dict[str, Any]) -> list[dict[str, str]]:
     # names are rejected here — the permanent CLI/applyWorkflowSampling face
     # only ever carries the eight freezing names (A9).
     if rl.get("algo") is not None or algorithm.get("tir_algo") is not None:
-        if algo not in ("grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae", "flow_grpo"):
+        if algo not in (
+            "grpo", "arpo", "appo", "aepo", "igpo", "gigpo", "rae", "flow_grpo", "fcr_grpo"
+        ):
             violations.append(
                 {
                     "rule": "V2",
                     "field": "algo" if rl.get("algo") is not None else "algorithm.tir_algo",
                     "detail": (
                         f"未知训练算法 {algo!r}；v1 单选合法域: "
-                        "grpo/arpo/appo/aepo/igpo/gigpo/rae/flow_grpo (A9 永久保留)"
+                        "grpo/arpo/appo/aepo/igpo/gigpo/rae/flow_grpo/fcr_grpo"
                     ),
                 }
             )

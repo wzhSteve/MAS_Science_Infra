@@ -159,10 +159,21 @@ def config_train_a800_2gpu() -> Dict[str, Any]:
 def resolve_workflow_spec_path(
     rl_path: Optional[str] = None, workflow_path: Optional[str] = None
 ) -> Optional[str]:
-    """Explicit ``--workflow-yaml``, otherwise the sibling of the rl yaml."""
+    """Explicit ``--workflow-yaml``, otherwise the sibling of the rl yaml.
+
+    An explicit ``--workflow-yaml`` that is missing must not silently fall back
+    to ``hub_react`` (max_feedback_hops=1, no AgentFlow) — that collapses FCR
+    prediction_coverage and turn counts (see fcr_branch_corr n8 rerun).
+    """
     if workflow_path:
         wf = Path(workflow_path).expanduser().resolve()
-        return str(wf) if wf.is_file() else None
+        if not wf.is_file():
+            raise SystemExit(
+                f"--workflow-yaml not found: {wf}\n"
+                "Refusing to train with the default hub_react spec "
+                "(would drop simple_pev / prediction_events)."
+            )
+        return str(wf)
     if not rl_path:
         return None
     wf = Path(rl_path).expanduser().resolve().parent / "workflow.yaml"
@@ -346,12 +357,15 @@ def _load_workflow_sampling(
     """Load the explicit run snapshot, or the legacy sibling workflow."""
     import yaml  # type: ignore
 
+    explicit = bool(workflow_path)
     wf = (
         Path(workflow_path).expanduser().resolve()
         if workflow_path
         else Path(rl_path).expanduser().resolve().parent / "workflow.yaml"
     )
     if not wf.is_file():
+        if explicit:
+            raise SystemExit(f"--workflow-yaml not found: {wf}")
         return None
     raw = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):

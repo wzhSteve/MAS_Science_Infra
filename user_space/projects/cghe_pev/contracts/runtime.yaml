@@ -34,6 +34,8 @@ cghe:
   max_total_step1_attempts: 12
   max_verified_snippet_prunes_per_episode: 2
   max_inherited_ce: 32
+  # Soft-Bing: at most one soft-advance entry per plan (Bing soft→Fetch); leaf fail soft-exhausts.
+  max_soft_advances_per_plan: 1
   round_regen: true
   selection:
     strategy: max_step1_path_coverage

@@ -8,6 +8,8 @@ export interface ChartPoint {
   i: number;
   reward?: number;
   val?: number;
+  answer_reward?: number;
+  correct_reward?: number;
   pg_loss?: number;
   entropy_loss?: number;
   kl_loss?: number;

@@ -90,6 +90,9 @@ class PlanStatus(str, Enum):
     COMPLETED = "completed"
     PRUNED = "pruned"
     ABANDONED = "abandoned"
+    # Soft-Bing chain reached a leaf (or soft-advance budget) without satisfaction.
+    # Dropped from SELECT coverage without a hard SnippetsSufficient prune.
+    SOFT_EXHAUSTED = "soft_exhausted"
     # Legacy logs only. New CGHE writes use PRUNED or ABANDONED.
     RETIRED = "retired"
 

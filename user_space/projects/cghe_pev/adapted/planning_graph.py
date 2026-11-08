@@ -115,6 +115,8 @@ class PlanningGraph:
         self.regeneration_count = 0
         self.attempt_history: list = []
         self._step1_attempts: dict[str, int] = {}
+        # Soft-Bing: count soft advances per plan so the same outline cannot loop forever.
+        self._soft_advance_counts: dict[str, int] = {}
         self.protect_children_of = ""
         self._build(copied)
 
@@ -240,6 +242,38 @@ class PlanningGraph:
     def mark_failed(self, node_id: str) -> None:
         self._nodes[node_id].status = NodeStatus.FAILED
 
+    def soft_advance_count(self, plan_id: str) -> int:
+        return int(self._soft_advance_counts.get(plan_id, 0) or 0)
+
+    def note_soft_advance(self, plan_ids: Iterable[str]) -> None:
+        """Increment soft-advance counters for the plans that continued after an unverified miss."""
+        for plan_id in plan_ids:
+            if not plan_id or plan_id not in self._plans:
+                continue
+            self._soft_advance_counts[plan_id] = self.soft_advance_count(plan_id) + 1
+
+    def plans_containing(self, node_id: str, *, active_only: bool = True) -> tuple[str, ...]:
+        found: list[str] = []
+        for plan_id in self._plan_order:
+            if active_only and self._plans[plan_id].status != PlanStatus.ACTIVE:
+                continue
+            if node_id in (self._plan_nodes.get(plan_id) or ()):
+                found.append(plan_id)
+        return tuple(found)
+
+    def mark_soft_exhausted(
+        self,
+        plan_ids: Iterable[str],
+        *,
+        reason: str = "soft_chain_exhausted",
+    ) -> tuple[str, ...]:
+        """Retire plans from SELECT coverage after Soft-Bing chain dead-end (not a hard CE)."""
+        return self.retire_plans(
+            plan_ids,
+            status=PlanStatus.SOFT_EXHAUSTED,
+            prune_reason=reason,
+        )
+
     def active_successors(self, node_id: str) -> tuple[str, ...]:
         """Distinct PENDING direct successors still used by active outlines."""
         found: list[str] = []
@@ -335,7 +369,7 @@ class PlanningGraph:
             if plan is None or plan.status != PlanStatus.ACTIVE:
                 continue
             plan.status = status
-            if prune_reason and status == PlanStatus.PRUNED:
+            if prune_reason and status in (PlanStatus.PRUNED, PlanStatus.SOFT_EXHAUSTED, PlanStatus.ABANDONED):
                 plan.prune_reason = str(prune_reason)
             changed.append(plan_id)
         self.refresh_orphans()
