@@ -1,0 +1,8 @@
+supervisor_enabled: true
+web_tools: false
+manager_max_steps: 12
+worker_max_steps: 20
+verifier_max_steps: 4
+max_tokens: 4096
+temperature: 0.0
+request_timeout: 45

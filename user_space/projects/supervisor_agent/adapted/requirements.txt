@@ -1,0 +1,10 @@
+# Dependencies for the vendored Smolagents fork and the optional web tools.
+huggingface-hub>=0.31.2
+requests>=2.32.3
+rich>=13.9.4
+jinja2>=3.1.4
+pillow>=10.0.1
+python-dotenv
+PyYAML>=6
+openai>=1.58.1
+markdownify>=0.14.1

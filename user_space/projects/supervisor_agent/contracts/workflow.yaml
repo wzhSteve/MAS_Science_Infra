@@ -1,0 +1,18 @@
+schema_version: '0.3'
+topology: centralized
+entry_agent: planner
+hub:
+  role: planner
+agents:
+- id: planner
+  kind: planner
+  role: planner
+  label: SupervisorAgent
+  trainable: false
+  profile:
+    backend: user_space
+    user_project: supervisor_agent
+  meta:
+    origin: user
+    user_project: supervisor_agent
+edges: []

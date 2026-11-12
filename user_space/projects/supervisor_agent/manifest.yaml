@@ -1,0 +1,16 @@
+id: supervisor_agent
+title: SupervisorAgent (Smolagents)
+mode: native_mas
+status: ready
+entry: adapted/entry.py:UserAgent
+experiment_id: ''
+agent_ids:
+- planner
+tool_ids: []
+writable_root:
+- adapted
+- contracts
+- artifacts
+source: upload/SupervisorAgent/smolagents_SMAS
+upstream_url: https://github.com/LINs-lab/SupervisorAgent
+upstream_commit: ab116b557b095ae8d45bdf2d61057ce19519d4ff

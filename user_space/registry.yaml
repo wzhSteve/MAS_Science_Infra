@@ -30,3 +30,8 @@ projects:
   mode: native_mas
   status: ready
   experiment_id: ''
+- id: supervisor_agent
+  title: SupervisorAgent (Smolagents)
+  mode: native_mas
+  status: ready
+  experiment_id: ''
