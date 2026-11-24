@@ -13,6 +13,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 TRACKED = (
     "fcr/prediction_coverage",
     "fcr/label_coverage",
+    "fcr/pred_parse_rate",
+    "fcr/score_drop_rate",
+    "fcr/verifier_unlabeled_rate",
+    "fcr/false_correction_rate",
     "fcr/leakage_count",
     "fcr/cross_chain_pair_count",
     "fcr/budget_violation_count",
@@ -27,6 +31,7 @@ TRACKED = (
     "fcr/nonzero_token_reward_frac",
     "fcr/mean_abs_score_nonfinal",
     "fcr/n_corr_hits",
+    "fcr/reward_identity_gap",
     "actor/fcr_brier_loss",
     "actor/fcr_grad_norm_ratio",
     "actor/fcr_grad_cosine",
@@ -59,9 +64,13 @@ def evaluate_step(
 ) -> Tuple[str, List[str], int, int]:
     """Return gate, reasons, and updated streaks.
 
-    STOP: NaN, leakage, cross-chain, infra drop >0.2, budget violation;
-    and (unless relax_coverage) two consecutive coverage misses.
-    WARN: coverage miss (always when relax_coverage), no failure triggers, no valid pairs, Brier gradient dominates.
+    STOP: NaN, leakage, cross-chain, infra drop >0.2, budget violation,
+    label_coverage <0.6, reward_identity_gap >1e-6; and (unless relax_coverage)
+    two consecutive coverage misses.
+    WARN: coverage miss (always when relax_coverage), pred_parse_rate <0.9,
+    score_drop_rate >0.05, label_coverage <0.8 twice in a row,
+    false_correction_rate >0.3, no failure triggers, no valid pairs,
+    Brier gradient dominates.
     """
     reasons: List[str] = []
     coverage = _num(row, "fcr/prediction_coverage")
@@ -93,6 +102,18 @@ def evaluate_step(
         reasons.append(f"infra_drop_rate={infra:.3f}")
     if grad_ratio is not None and grad_ratio > 50:
         reasons.append(f"grad_explosion={grad_ratio:.3g}")
+    # Ledger bookkeeping must be exact: R_i == w_a·Ra + w_c·Rc + Rf row-wise.
+    # Any drift means a component got dropped or double counted (the r3 bug
+    # class), so the run stops instead of training on an unaccounted reward.
+    identity_gap = _num(row, "fcr/reward_identity_gap")
+    if identity_gap is not None and identity_gap > 1e-6:
+        reasons.append(f"reward_identity_gap={identity_gap:.2e}")
+    # Verifier substrate death (run 9a45bbd456ad: 0.999 -> 0.370 while the
+    # actor trained on). Below 0.6 the Correct pattern has too few labeled
+    # (t, t+1) pairs for Rc to be a meaningful signal — stop regardless of
+    # --relax-coverage, which only softens the generic 0.99 miss streak.
+    if labels is not None and labels < 0.6:
+        reasons.append(f"label_collapse={labels:.3f}")
     if reasons:
         return "STOP", reasons, 0, 0
 
@@ -106,13 +127,35 @@ def evaluate_step(
         covered = False
         cov_reasons.append(f"label_coverage={labels:.3f}")
     if relax_coverage:
-        next_coverage_misses = 0
+        # Coverage misses never STOP under --relax-coverage. Reuse the streak
+        # counter to escalate a persistently LOW label_coverage (<0.8) into a
+        # WARN after 2 consecutive steps: one noisy batch is not actionable,
+        # two is a degrading verifier.
+        low = labels is not None and labels < 0.8
+        next_coverage_misses = coverage_misses + 1 if low else 0
+        if next_coverage_misses >= 2:
+            cov_reasons.append(f"label_coverage_low_streak=2 ({labels:.3f})")
     else:
         next_coverage_misses = 0 if covered else coverage_misses + 1
         if next_coverage_misses >= 2:
             return "STOP", cov_reasons + ["coverage_miss_streak=2"], next_coverage_misses, 0
 
     warn: List[str] = list(cov_reasons)
+    # Leading substrate indicators: pred_parse_rate drops BEFORE label_coverage
+    # does (a step that cannot be scored has already lost its p, the verifier
+    # label may still arrive). r3 only flagged the collapse one step late.
+    parse = _num(row, "fcr/pred_parse_rate")
+    if parse is not None and parse < 0.9:
+        warn.append(f"pred_parse_rate={parse:.3f}")
+    score_drop = _num(row, "fcr/score_drop_rate")
+    if score_drop is not None and score_drop > 0.05:
+        warn.append(f"score_drop_rate={score_drop:.3f}")
+    false_corr = _num(row, "fcr/false_correction_rate")
+    if false_corr is not None and false_corr > 0.3:
+        warn.append(f"false_correction_rate={false_corr:.3f}")
+    unlabeled = _num(row, "fcr/verifier_unlabeled_rate")
+    if unlabeled is not None and unlabeled > 0.05:
+        warn.append(f"verifier_unlabeled_rate={unlabeled:.3f}")
     starvation = _num(row, "fcr/branch_starvation")
     if starvation is not None and starvation >= 1:
         warn.append("branch_starvation")
@@ -139,9 +182,14 @@ def format_line(row: Dict[str, Any], gate: str, reasons: Iterable[str]) -> str:
         "critic/score/mean",
         "fcr/prediction_coverage",
         "fcr/label_coverage",
+        "fcr/pred_parse_rate",
+        "fcr/score_drop_rate",
+        "fcr/verifier_unlabeled_rate",
+        "fcr/false_correction_rate",
         "fcr/failure_confirmed_rate",
         "fcr/error_step_repair_rate",
         "fcr/accuracy",
+        "fcr/accuracy_mean",
         "fcr/brier",
         "fcr/nonzero_token_reward_frac",
         "fcr/n_corr_hits",
@@ -149,7 +197,11 @@ def format_line(row: Dict[str, Any], gate: str, reasons: Iterable[str]) -> str:
         "fcr/weak_event_count",
         "fcr/R_answer_mean",
         "fcr/R_correct_mean",
+        "fcr/Rf_mean",
+        "fcr/em_mean",
+        "fcr/outcome_mean",
         "fcr/R_total_mean",
+        "fcr/reward_identity_gap",
         "fcr/mean_p",
         "fcr/bss",
         "fcr/quad_unexpected",

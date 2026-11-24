@@ -138,11 +138,15 @@ class TestOutcomeReward(unittest.TestCase):
         r = compute_outcome_reward("<answer><think>cut", "Prussian", **self._kwargs())
         self.assertEqual(r, 0.0)
 
-    def test_format_fail_negative(self) -> None:
+    def test_format_fail_does_not_force_answer_minus_one(self) -> None:
+        """Format failure must not replace answer reward with -1 (O = accuracy only)."""
         kw = self._kwargs()
         kw["format_ok"] = False
         r = compute_outcome_reward("no tags at all", "Prussian", **kw)
-        self.assertEqual(r, -1.0)
+        self.assertEqual(r, 0.0)
+        # Correct answer text still scores even when format_ok is False.
+        r_ok = compute_outcome_reward("Prussian", "Prussian", **kw)
+        self.assertAlmostEqual(r_ok, 1.0)
 
     def test_empty_prediction_zero(self) -> None:
         self.assertEqual(compute_outcome_reward("", "Prussian", **self._kwargs()), 0.0)
@@ -429,7 +433,8 @@ class TestRewardSectionWiring(unittest.TestCase):
         section = cfg["algorithm"]["reward"]
         self.assertEqual(section["outcome"], "llm_binary")
         by_id = {c["id"]: c for c in section["components"]}
-        self.assertTrue(by_id["format_penalty"]["enabled"])
+        # format_penalty default OFF: answer reward must not be gated by format.
+        self.assertFalse(by_id["format_penalty"]["enabled"])
         self.assertTrue(by_id["accuracy_reward"]["enabled"])
         self.assertTrue(by_id["multi_tool_bonus"]["enabled"])
         self.assertEqual(by_id["multi_tool_bonus"]["weight"], 0.1)  # DEFAULT_TIR 值接通

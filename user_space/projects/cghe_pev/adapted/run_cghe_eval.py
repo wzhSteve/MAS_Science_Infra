@@ -123,6 +123,14 @@ def main() -> None:
     nonempty = 0
     errors = 0
     max_steps = int(os.environ.get("AGENTFLOW_MAX_STEPS") or 10)
+    # Dedup refunds give back steps spent on cached no-op calls, so the live
+    # step counter can lag the driver iterations. Allow up to the refund cap of
+    # extra iterations to guarantee out_of_budget/force-answer still fires.
+    try:
+        refund_cap = int((context_mod.cghe_settings() or {}).get("max_dedup_refunds_per_episode") or 0)
+    except Exception:
+        refund_cap = 0
+    loop_limit = max_steps + max(0, refund_cap)
     with out.open("w") as handle:
         for index, row in enumerate(rows):
             question = str(row.get("question") or row.get("query") or "").split("When ready")[0].strip()
@@ -139,7 +147,7 @@ def main() -> None:
             all_events: list = []
             role_counts: dict = {}
             try:
-                for _ in range(max_steps):
+                for _ in range(loop_limit):
                     plan = ctx.plan_window({"dst": "planner", "kind": "plan_step", "payload": payload})
                     body = plan.get("payload") or {}
                     for item in ((body.get("trace") or {}).get("llm_calls") or {}).get("calls") or []:

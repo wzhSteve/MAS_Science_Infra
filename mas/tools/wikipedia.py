@@ -7,39 +7,19 @@ import os
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-from .search import _cache_query_key, truncate_description, wiki_get, wiki_proxy_map
-from .search_cache import GAP_SENTINEL, cache_lookup, cache_store
+from .search import truncate_description, wiki_get, wiki_proxy_map
 
 _TOP_K = int(os.getenv("TIR_WIKI_TOP_K", "10"))
 
 
 def _cache_consume_query(query: str) -> Optional[str]:
-    """Cache-first lookup mirroring search.py's three-branch pattern.
-
-    hit -> cached text verbatim; gap -> clean sentinel WITHOUT a network
-    retry (the producer already recorded this query as network-failed);
-    miss -> None (existing network logic runs).
-    """
-    try:
-        if not os.getenv("MAS_SEARCH_CACHE", "").strip():
-            return None
-        text, hit_type = cache_lookup("query", _cache_query_key(query))
-        if hit_type == "hit":
-            return text
-        if hit_type == "gap":
-            return f"search_unavailable: {GAP_SENTINEL}"
-        return None
-    except Exception:
-        return None
+    """REMOVED cache (r7): hard miss — always run the live wiki path."""
+    return None
 
 
 def _cache_store_query(query: str, value: str) -> None:
-    try:
-        if not os.getenv("MAS_SEARCH_CACHE", "").strip():
-            return
-        cache_store("query", _cache_query_key(query), value)
-    except Exception:
-        pass
+    """REMOVED cache (r7): no write-back."""
+    return None
 
 
 def wikipedia_search(query: str, top_k: int = _TOP_K) -> str:

@@ -15,12 +15,33 @@ SATISFY = "YES"
 UNSATISFY = "NO"
 LABELS = (SATISFY, UNSATISFY)
 
-_PREDICTION_QUOTE = re.compile(r'"prediction"\s*:\s*"')
+# Lenient prediction anchor: the value may be quoted OR bare (``"prediction":
+# NO`` -- invalid JSON the drifted policy emits at increasing rates).  The
+# first capture group is the opening quote when present; the second is the
+# bare label token.  ``Ġ`` is the vLLM/GPT2 piece for a leading space, so the
+# bare alternation also matches logprob piece reconstructions.
+_PREDICTION_ANCHOR = re.compile(
+    r'"prediction"\s*:\s*("?)\s*Ġ?(YES|NO|满足|不满足)(?![A-Za-z])',
+    re.IGNORECASE,
+)
+
+
+def prediction_anchor(completion: str) -> Optional[re.Match]:
+    """Match the prediction value wherever it starts, quoted or bare.
+
+    ``group(1)`` is the opening quote when present; ``match.end(1)`` is the
+    index the label token starts at (echo stem boundary). ``group(2)`` is the
+    written label word.
+    """
+    return _PREDICTION_ANCHOR.search(str(completion or ""))
 
 
 def written_prediction(completion: str) -> str:
     match = re.search(r'"prediction"\s*:\s*"([^"]*)"', str(completion or ""))
-    raw = match.group(1).strip() if match else ""
+    if match:
+        return canonical_prediction(match.group(1).strip())
+    match = prediction_anchor(completion)
+    raw = match.group(2) if match else ""
     return canonical_prediction(raw)
 
 
@@ -39,11 +60,16 @@ def canonical_prediction(value: Any) -> str:
 
 
 def prediction_prefix(completion: str) -> Optional[str]:
-    """Completion text up to and including the opening quote of ``prediction``."""
-    match = _PREDICTION_QUOTE.search(str(completion or ""))
+    """Completion text up to (not including) the prediction value token.
+
+    Quoted form keeps the opening quote; bare form ``"prediction": NO`` keeps
+    the whitespace after the colon, so the echoed stem matches the context the
+    policy actually scored against.
+    """
+    match = prediction_anchor(completion)
     if not match:
         return None
-    return str(completion)[: match.end()]
+    return str(completion)[: match.start(2)]
 
 
 def binary_softmax(score_satisfy: float, score_unsatisfy: float) -> tuple[float, float]:

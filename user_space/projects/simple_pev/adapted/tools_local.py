@@ -167,12 +167,12 @@ def run_python_locally(query: str) -> str:
             [PYTHON_BIN, "-c", code],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=60,
             stdin=subprocess.DEVNULL,
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return "Error: Execution timed out after 10 seconds"
+        return "Error: Execution timed out after 60 seconds"
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "python failed").strip()
         return f"Error: {err[:2000]}"

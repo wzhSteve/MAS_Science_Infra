@@ -396,28 +396,25 @@ def compute_outcome_reward(
             return float(scored["score"])
         from rl.rewards.deep_research import multi_tool_ok
 
-        # format_penalty: gate BEFORE accuracy unless switched off.
-        if format_ok:
-            gained = accuracy(prediction, gold, source=source, aliases=aliases)
-        else:
-            if not spec.is_enabled("format_penalty"):
-                gained = accuracy(prediction, gold, source=source, aliases=aliases)
-            else:
-                return float(-1.0 * spec.weight_of("format_penalty"))
+        # Answer reward (accuracy) is independent of format. Optional
+        # format_penalty is an explicit opt-in add-on, not a gate that replaces
+        # O with -1 (format signal belongs in Rf / scoreable_rate).
+        gained = accuracy(prediction, gold, source=source, aliases=aliases)
+        fmt_pen = 0.0
+        if (not format_ok) and spec.is_enabled("format_penalty"):
+            fmt_pen = -1.0 * spec.weight_of("format_penalty")
         if gained <= 0:
-            return 0.0
+            return float(fmt_pen) if fmt_pen != 0.0 else 0.0
         bonus = 0.0
         if spec.is_enabled("multi_tool_bonus") and multi_tool_ok(
             n_search=n_search, n_python=n_python, n_fetch=n_fetch
         ):
             bonus = spec.weight_of("multi_tool_bonus")
-        return float(gained + bonus)
+        return float(gained + bonus + fmt_pen)
 
-    # --- literal path (v1 default; byte-identical when n_fetch=0) -------------
+    # --- literal path: O = answer only (no format→-1 conflation) -------------
     from rl.rewards.deep_research import multi_tool_ok
 
-    if not format_ok:
-        return -1.0
     acc = accuracy(prediction, gold, source=source, aliases=aliases)
     if acc <= 0:
         return 0.0

@@ -231,6 +231,23 @@ def extract_tir_meta_from_spans(spans: List[Any]) -> Dict[str, Any]:
     return meta
 
 
+def judge_correct_flag(meta: Dict[str, Any], reward: Any) -> bool:
+    """Strict judge verdict (0/1) for one rollout, shared by train and val.
+
+    ``tir.judge_correct`` is binary_correct from the LLM judge. When the field
+    is absent (older events), fall back to ``reward > 0`` -- never to
+    ``format_ok``, which is a format rate and made train R_answer_mean a
+    constant 1.0 (the r3 bug). See rl/REWARD.md.
+    """
+    raw = meta.get("judge_correct")
+    if raw is None:
+        return isinstance(reward, (int, float)) and not isinstance(reward, bool) and float(reward) > 0.0
+    try:
+        return float(raw) >= 0.5
+    except (TypeError, ValueError):
+        return False
+
+
 def binary_prediction_metrics(rows: List[Dict[str, Any]]) -> Dict[str, float]:
     """Calibration/classification metrics over complete serving-side prediction rows."""
     predicted = [row for row in rows if row.get("prediction_event_id")]
@@ -244,6 +261,47 @@ def binary_prediction_metrics(rows: List[Dict[str, Any]]) -> Dict[str, float]:
         "prediction_coverage": float(len(predicted) / len(rows)) if rows else 0.0,
         "label_coverage": float(len(labeled) / len(predicted)) if predicted else 0.0,
     }
+    # Leading indicators for the p_satisfy substrate itself, so drift is
+    # visible BEFORE label_coverage collapses:
+    #  pred_parse_rate  = share of planner steps that are format-scoreable
+    #    (planner_scoreable when present; older events fall back to
+    #    "has p_satisfy", which is exactly what the scoring anchor produces).
+    #  score_drop_rate  = share of steps that WROTE a prediction but got no
+    #    p_satisfy (the silent-except path that starved Correct pairs in
+    #    run 9a45bbd456ad). Distinct from verifier_unlabeled_rate below.
+    if predicted:
+        scored_share = 0
+        dropped = 0
+        for row in predicted:
+            flag = row.get("planner_scoreable")
+            if flag is None:
+                ok = isinstance(row.get("p_satisfy"), (int, float)) and np.isfinite(
+                    float(row["p_satisfy"])
+                )
+            else:
+                ok = bool(flag)
+            if ok:
+                scored_share += 1
+            if row.get("prediction") and not isinstance(row.get("p_satisfy"), (int, float)):
+                dropped += 1
+        out["pred_parse_rate"] = float(scored_share / len(predicted))
+        out["score_drop_rate"] = float(dropped / len(predicted))
+    else:
+        out["pred_parse_rate"] = 0.0
+        out["score_drop_rate"] = 0.0
+    # Verifier UNKNOWN share among steps that DO have a prediction probability:
+    # exactly the rows whose label timed out and therefore break Correct pairs.
+    scored = [
+        row for row in predicted
+        if isinstance(row.get("p_satisfy"), (int, float))
+        and np.isfinite(float(row["p_satisfy"]))
+    ]
+    unlabeled_scored = [
+        row for row in scored if not isinstance(row.get("actual_satisfied"), (bool, np.bool_))
+    ]
+    out["verifier_unlabeled_rate"] = (
+        float(len(unlabeled_scored) / len(scored)) if scored else 0.0
+    )
     if not labeled:
         return out
     probs = np.asarray([float(row["p_satisfy"]) for row in labeled], dtype=np.float64)
@@ -1102,6 +1160,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
         data_ids: List[str] = []
         event_lists: List[Any] = []
         answers: Dict[str, float] = {}
+        outcomes: Dict[str, float] = {}
+        rates: Dict[str, float] = {}
         for rid, rollout in self._completed_rollouts_v0.items():
             meta = self._rollout_meta.get(rid) or self._rollout_meta.get(str(rid)) or {}
             try:
@@ -1116,7 +1176,25 @@ class TirAgentModeDaemon(AgentModeDaemon):
             data_ids.append(str(sample.get("data_id") or ""))
             event_lists.append(events)
             reward = getattr(rollout, "final_reward", None)
-            answers[rid_s] = 1.0 if isinstance(reward, (int, float)) and float(reward) > 0 else 0.0
+            # acc = judge verdict (same semantics as the train ledger); the
+            # old path used final_reward>0, which conflated format and bonus.
+            answers[rid_s] = 1.0 if judge_correct_flag(meta, reward) else 0.0
+            # Match val/reward fillna=0 (agentlightning daemon): missing O must
+            # not drag outcome_mean with -1 while val/reward stays near Ra.
+            try:
+                raw_o = meta.get("reward")
+                if raw_o is None:
+                    outcomes[rid_s] = (
+                        float(reward) if isinstance(reward, (int, float)) else 0.0
+                    )
+                else:
+                    outcomes[rid_s] = float(raw_o)
+            except (TypeError, ValueError):
+                outcomes[rid_s] = float(reward) if isinstance(reward, (int, float)) else 0.0
+            try:
+                rates[rid_s] = float(meta.get("scoreable_rate"))
+            except (TypeError, ValueError):
+                rates[rid_s] = 0.0
         metrics.update(_recovery_rates(event_lists, prefix="val/fcr"))
         # Split val reward into answer vs Correct (same N_i/N_max rule as train).
         # val/reward from the trainer stays outcome-only; these keys are explicit.
@@ -1128,18 +1206,48 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 prediction_events=event_lists,
                 group_ids=data_ids,
                 threshold=float(self.tir_config.get("fcr_threshold", 0.5)),
+                # Mirror the train-side reward so Rc_val is comparable across
+                # steps once require_prev_fail/soft denominators are configured.
+                require_prev_fail=bool(self.tir_config.get("fcr_pattern_require_prev_fail", False)),
+                soft_denominator=bool(self.tir_config.get("fcr_pattern_soft_denominator", False)),
             )
             r_correct_vals = [float(value) for value in pattern_rewards]
-            r_answer_vals = [float(answers.get(rid, 0.0)) for rid in rollout_ids]
-            r_answer_mean = float(np.mean(r_answer_vals)) if r_answer_vals else 0.0
+            # Ra = soft F1 (outcomes / tir.reward); EM = binary_correct (answers).
+            outcome_mean = float(np.mean(list(outcomes.values()))) if outcomes else 0.0
+            em_mean = float(np.mean(list(answers.values()))) if answers else 0.0
+            r_answer_mean = outcome_mean
             r_correct_mean = float(np.mean(r_correct_vals)) if r_correct_vals else 0.0
+            ra_w = float(self.tir_config.get("fcr_ra_weight", 0.5) or 0.0)
+            rc_w = float(self.tir_config.get("fcr_rc_weight", 0.5) or 0.0)
+            rf_weight = float(self.tir_config.get("fcr_format_weight", 0.1) or 0.0)
+            rf_on = bool(self.tir_config.get("fcr_format_enabled", False)) and rf_weight > 0.0
+            rf_mean = (
+                float(np.mean([rf_weight * v for v in rates.values()])) if rf_on and rates else 0.0
+            )
+            r_total = ra_w * r_answer_mean + rc_w * r_correct_mean + rf_mean
             metrics["val/fcr/R_answer_mean"] = r_answer_mean
+            metrics["val/fcr/accuracy_mean"] = r_answer_mean
+            metrics["val/fcr/em_mean"] = em_mean
+            metrics["val/fcr/outcome_mean"] = outcome_mean
+            metrics["val/fcr/Rf_mean"] = rf_mean
             metrics["val/fcr/R_correct_mean"] = r_correct_mean
-            metrics["val/fcr/R_total_mean"] = r_answer_mean + r_correct_mean
+            metrics["val/fcr/R_total_mean"] = r_total
+            # Headline matches historical soft-F1 val/reward (= Ra).
+            metrics["val/reward"] = r_answer_mean
             metrics["val/fcr/correct_pattern_n_max"] = float(n_max)
             metrics["val/fcr/correct_reward_positive_frac"] = float(
                 sum(1 for value in r_correct_vals if value > 0.0) / max(1, len(r_correct_vals))
             )
+        # Val substrate: same leading indicators as train (pred_parse_rate is
+        # the early-warning gate that fires before label_coverage collapses).
+        flat_val: List[Dict[str, Any]] = []
+        for events in event_lists:
+            for event in events or []:
+                if isinstance(event, dict):
+                    flat_val.append(event)
+        if flat_val:
+            for key, value in binary_prediction_metrics(flat_val).items():
+                metrics[f"val/fcr/{key}"] = float(value)
         event_log = str(os.environ.get("FCR_EVENT_LOG") or "").strip()
         if event_log:
             step = int(getattr(self, "_val_dump_step", 0)) + 1
@@ -1250,6 +1358,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 "executed_at_list": ("executed_at", float("nan")),
                 "actual_satisfied_list": ("actual_satisfied", None),
                 "verifier_reason_list": ("verifier_reason", ""),
+                "verifier_label_missing_list": ("verifier_label_missing", False),
                 "failure_confirmed_list": ("failure_confirmed", False),
                 "recovery_chain_id_list": ("recovery_chain_id", ""),
                 "parent_prediction_event_id_list": ("parent_prediction_event_id", ""),
@@ -1257,6 +1366,8 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 "satisfy_token_ids_list": ("satisfy_token_ids", []),
                 "unsatisfy_token_ids_list": ("unsatisfy_token_ids", []),
                 "prediction_token_start_list": ("prediction_token_start", -1),
+                "planner_scoreable_list": ("planner_scoreable", False),
+                "prediction_unscoreable_list": ("prediction_unscoreable", False),
             }
             for column, (field, default) in event_columns.items():
                 values = [
@@ -1266,6 +1377,21 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 array = np.empty(len(values), dtype=object)
                 array[:] = values
                 data_proto.non_tensor_batch[column] = array
+            # Per-rollout planner format rate + soft-F1 answer score for inject.
+            rate_values: List[float] = []
+            answer_scores: List[float] = []
+            for rid in rollout_ids:
+                meta = self._rollout_meta.get(str(rid)) or {}
+                try:
+                    rate_values.append(float(meta.get("scoreable_rate")))
+                except (TypeError, ValueError):
+                    rate_values.append(0.0)
+                try:
+                    answer_scores.append(float(meta.get("reward")))
+                except (TypeError, ValueError):
+                    answer_scores.append(0.0)
+            data_proto.non_tensor_batch["scoreable_rate_list"] = np.asarray(rate_values, dtype=np.float64)
+            data_proto.non_tensor_batch["answer_score_list"] = np.asarray(answer_scores, dtype=np.float64)
             events_array = np.empty(len(prediction_event_lists), dtype=object)
             events_array[:] = prediction_event_lists
             data_proto.non_tensor_batch["prediction_events_list"] = events_array
@@ -1298,10 +1424,10 @@ class TirAgentModeDaemon(AgentModeDaemon):
                     rewards_row = float(meta.get("reward") if meta.get("reward") is not None else -1.0)
                 except (TypeError, ValueError):
                     rewards_row = -1.0
-                fmt_ok = meta.get("format_ok")
-                if fmt_ok is None:
-                    fmt_ok = rewards_row >= 0.5
-                successes.append(bool(fmt_ok) if rewards_row < 0 else bool(rewards_row > 0))
+                # EM / successes = binary judge (tir.judge_correct). Soft-F1
+                # Ra for R / R_answer_mean comes from meta.reward via
+                # answer_score_list — do not conflate the two.
+                successes.append(judge_correct_flag(meta, rewards_row))
                 try:
                     bounds.append(int(meta.get("resume_boundary") or sample.get("resume_boundary") or 0))
                 except (TypeError, ValueError):
@@ -1407,6 +1533,11 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 actual_satisfied=[row.get("actual_satisfied") for row in prediction_rows],
                 prediction_events=prediction_event_lists,
                 threshold=float(self.tir_config.get("fcr_threshold", 0.5)),
+                # Track the SAME rule the trainer injects, otherwise
+                # fcr/n_corr_hits silently reports weak-pattern counts while
+                # the batch trains on strict hits.
+                require_prev_fail=bool(self.tir_config.get("fcr_pattern_require_prev_fail", False)),
+                soft_denominator=bool(self.tir_config.get("fcr_pattern_soft_denominator", False)),
             )
             n_rollouts = max(1, len(set(str(rid) for rid in rollout_ids)))
             data_metrics["fcr/pair_valid_rate"] = float(
@@ -1520,12 +1651,20 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 for i, rid in enumerate(rollout_ids)
                 if i < len(outcomes)
             }
-            answer_by_rollout: Dict[str, float] = {}
+            # EM (binary) for diagnostics; soft-F1 Ra comes from tir.reward.
+            em_by_rollout: Dict[str, float] = {}
             for rid, ok in zip(rollout_ids, successes):
-                answer_by_rollout[str(rid)] = max(
-                    answer_by_rollout.get(str(rid), 0.0),
+                em_by_rollout[str(rid)] = max(
+                    em_by_rollout.get(str(rid), 0.0),
                     1.0 if ok else 0.0,
                 )
+            answer_by_rollout: Dict[str, float] = {}
+            for rid in rollout_ids:
+                meta = self._rollout_meta.get(str(rid)) or {}
+                try:
+                    answer_by_rollout[str(rid)] = float(meta.get("reward"))
+                except (TypeError, ValueError):
+                    answer_by_rollout[str(rid)] = 0.0
             from rl.hooks.advantage import correction_diagnostics
 
             data_metrics.update(correction_diagnostics(
@@ -1535,13 +1674,47 @@ class TirAgentModeDaemon(AgentModeDaemon):
                 p_satisfy=[row.get("p_satisfy") for row in prediction_rows],
                 actual_satisfied=[row.get("actual_satisfied") for row in prediction_rows],
                 prediction_events=prediction_event_lists,
-                answer_by_rollout=answer_by_rollout,
+                answer_by_rollout=em_by_rollout,
                 threshold=float(self.tir_config.get("fcr_threshold", 0.5)),
                 require_prev_fail=bool(self.tir_config.get("fcr_pattern_require_prev_fail", False)),
+                soft_denominator=bool(self.tir_config.get("fcr_pattern_soft_denominator", False)),
                 labeled_steps=int(n),
                 mean_p=data_metrics.get("fcr/mean_p"),
                 failure_confirmed_rate=data_metrics.get("fcr/failure_confirmed_rate"),
             ))
+            # ---- Reward ledger: R = w_a·Ra + w_c·Rc + w_f·rate ----
+            # Ra = soft F1 (tir.reward); Rc = pattern; Rf = w_f·scoreable_rate;
+            # EM = binary_correct (fcr/em_mean only).
+            unique_rids = list(dict.fromkeys(str(rid) for rid in rollout_ids))
+            outcome_by_rid: Dict[str, float] = dict(answer_by_rollout)
+            for rid in unique_rids:
+                outcome_by_rid.setdefault(str(rid), 0.0)
+            rc_by_rid: Dict[str, float] = {}
+            for rid, value in zip(rollout_ids, corr_rewards):
+                rc_by_rid[str(rid)] = max(rc_by_rid.get(str(rid), 0.0), float(value))
+            ra_w = float(self.tir_config.get("fcr_ra_weight", 0.5) or 0.0)
+            rc_w = float(self.tir_config.get("fcr_rc_weight", 0.5) or 0.0)
+            rf_weight = float(self.tir_config.get("fcr_format_weight", 0.1) or 0.0)
+            rf_on = bool(self.tir_config.get("fcr_format_enabled", False)) and rf_weight > 0.0
+            rf_by_rid: Dict[str, float] = {}
+            for rid, rate in zip(rollout_ids, rate_values):
+                rf_by_rid[str(rid)] = max(rf_by_rid.get(str(rid), 0.0), rf_weight * float(rate))
+            denom = max(1, len(unique_rids))
+            outcome_mean = sum(outcome_by_rid.get(rid, 0.0) for rid in unique_rids) / denom
+            rc_mean = sum(rc_by_rid.get(rid, 0.0) for rid in unique_rids) / denom
+            rf_mean = sum(rf_by_rid.get(rid, 0.0) for rid in unique_rids) / denom if rf_on else 0.0
+            ra_mean = outcome_mean
+            em_mean = sum(em_by_rollout.get(rid, 0.0) for rid in unique_rids) / denom
+            data_metrics["fcr/outcome_mean"] = outcome_mean
+            data_metrics["fcr/accuracy_mean"] = ra_mean
+            data_metrics["fcr/em_mean"] = em_mean
+            data_metrics["fcr/Rf_mean"] = rf_mean
+            data_metrics["fcr/R_answer_mean"] = ra_mean
+            data_metrics["fcr/R_correct_mean"] = rc_mean
+            data_metrics["fcr/R_total_mean"] = ra_w * ra_mean + rc_w * rc_mean + rf_mean
+            row_outcomes = list(by_rid.values())
+            row_outcome_mean = sum(row_outcomes) / max(1, len(row_outcomes))
+            data_metrics["fcr/ledger_row_vs_rollout_gap"] = abs(row_outcome_mean - outcome_mean)
             data_metrics["fcr/branch_count"] = float(sum(
                 len(child_ids) for child_ids in children_by_parent.values()
             ))
@@ -1577,7 +1750,7 @@ class TirAgentModeDaemon(AgentModeDaemon):
                     rollout_ids=rollout_ids,
                     data_ids=data_ids_nt,
                     outcomes=by_rid,
-                    answers=answer_by_rollout,
+                    answers=em_by_rollout,
                     event_lists=prediction_event_lists,
                 )
             data_metrics.update(_recovery_rates(prediction_event_lists, prefix="fcr"))

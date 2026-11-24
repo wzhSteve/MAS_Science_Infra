@@ -608,6 +608,9 @@ def kl_penalty(logprob: torch.FloatTensor, ref_logprob: torch.FloatTensor, kl_pe
     # # URL http://joschu.net/blog/kl-approx.html.
     if kl_penalty in ("low_var_kl", "k3"):
         kl = ref_logprob - logprob
+        # Clamp before exp so a large actor↔ref gap cannot produce inf/NaN grads
+        # through exp; output clamp alone does not protect the backward path.
+        kl = torch.clamp(kl, min=-10, max=10)
         ratio = torch.exp(kl)
         kld = (ratio - kl - 1).contiguous()
         return torch.clamp(kld, min=-10, max=10)

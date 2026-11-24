@@ -795,6 +795,28 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def load_checkpoint(self, local_path, hdfs_path=None, del_local_after_load=False):
+        # Dedicated Role.RefPolicy workers only own ref_module_fsdp (no actor
+        # checkpoint_manager). Mid-run KL enable / resume must load actor (or
+        # dedicated ref) shards here; otherwise ref stays at base HF weights and
+        # low_var_kl saturates → NaN grads.
+        if self._is_ref and not self._is_actor:
+            from verl.utils.checkpoint.fsdp_checkpoint_manager import FSDPCheckpointManager
+
+            if self._is_offload_param:
+                load_fsdp_model_to_gpu(self.ref_module_fsdp)
+            ref_ckpt = FSDPCheckpointManager(
+                model=self.ref_module_fsdp,
+                optimizer=None,
+                lr_scheduler=None,
+                processing_class=self.processor if self.processor is not None else self.tokenizer,
+            )
+            ref_ckpt.load_checkpoint(
+                local_path=local_path, hdfs_path=hdfs_path, del_local_after_load=del_local_after_load
+            )
+            if self._is_offload_param:
+                offload_fsdp_model_to_cpu(self.ref_module_fsdp)
+            return
+
         if self._is_offload_param:
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
 

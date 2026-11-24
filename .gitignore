@@ -45,6 +45,13 @@ artifacts/
 /experiments/fcr_short/archive_*/
 /experiments/fcr_short/offline_pred/
 /experiments/fcr_short/*.nohup.out
+/archive/
+/experiments/**/*.out
+/experiments/**/events/*.jsonl
+/experiments/**/*.watch.log
+/experiments/**/*.log
+/experiments/**/artifacts/
+/experiments/**/artifacts.bad-run*/
 /experiments/fcr_short/valid16.parquet
 
 # Python

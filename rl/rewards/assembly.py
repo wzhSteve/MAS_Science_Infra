@@ -8,7 +8,8 @@ reward_spec is None (the default for every v1 caller); a provided RewardSpec
 routes the same hierarchy through per-component switch/weight application.
 
 Component registry (RL_design §3.2.1):
-- format_penalty   — format bad → -1 * weight (may be turned off → no penalty)
+- format_penalty   — optional add-on on O when enabled (default OFF); format
+                     bad → subtract weight (does not replace accuracy with -1)
 - accuracy_reward  — QA token-F1 / GSM8K numeric 0-1 (NOT switchable — the
                      main reward; spec validation rejects enabled=False)
 - multi_tool_bonus — both tool families used → +0.1 * weight (switchable)
@@ -89,14 +90,16 @@ class RewardComponent(BaseModel):
 
 
 def default_reward_components() -> List[RewardComponent]:
-    """Snapshot of the status-quo literal hierarchy as components (byte-equal defaults).
+    """Default hierarchy components: answer (accuracy) separate from format.
 
-    format_penalty on (weight 1.0 → -1.0), accuracy_reward on (不可关),
-    multi_tool_bonus on (weight 0.1 = the hardcoded default param of
-    compute_outcome_reward), cost_penalty present but disabled (预留位).
+    format_penalty is present but **off** by default — format failure must not
+    replace answer reward with -1 (use Rf / scoreable_rate for format). Opt in
+    via enabled=True when an explicit format penalty on O is desired.
+    accuracy_reward on (不可关), multi_tool_bonus on (weight 0.1), cost_penalty
+    reserved disabled.
     """
     return [
-        RewardComponent(id=FORMAT_PENALTY, weight=DEFAULT_FORMAT_PENALTY_WEIGHT, enabled=True),
+        RewardComponent(id=FORMAT_PENALTY, weight=DEFAULT_FORMAT_PENALTY_WEIGHT, enabled=False),
         RewardComponent(id=ACCURACY_REWARD, weight=1.0, enabled=True),
         RewardComponent(id=MULTI_TOOL_BONUS, weight=DEFAULT_MULTI_TOOL_BONUS_WEIGHT, enabled=True),
         RewardComponent(id=COST_PENALTY, weight=0.0, enabled=False),

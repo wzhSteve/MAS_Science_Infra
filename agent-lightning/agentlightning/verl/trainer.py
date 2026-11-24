@@ -162,6 +162,14 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True, suffix: str 
             "fcr/nonzero_token_reward_frac",
             "fcr/mean_abs_score_nonfinal",
             "fcr/n_corr_hits",
+            # Reward ledger written by rl/hooks/advantage.py's inject step.
+            "fcr/row_outcome_mean",
+            "fcr/row_Rc_mean",
+            "fcr/row_Rf_mean",
+            "fcr/row_injected_total_mean",
+            "fcr/reward_identity_gap",
+            "fcr/unscoreable_batch_advantage_zeroed",
+            "fcr_batch_scored_ratio",
         ):
             value = meta.get(key)
             if value is not None:
@@ -390,21 +398,33 @@ class AgentLightningTrainer(RayPPOTrainer):
                 batch.batch["is_drop_mask"].shape[0] - keep_indices.shape[0]
             )
             batch = batch[keep_indices]
-            # Floor to ppo_mini_batch_size * rollout.n. The FSDP worker multiplies
-            # the yaml mini-batch by rollout.n and then divides by the GPU count
-            # before DP_COMPUTE_PROTO shards the batch. The global row count has
-            # to be a multiple of yaml_mini * n, or update_actor's split raises.
+            # Floor to ppo_mini_batch_size * rollout.n when the step is large
+            # enough for that many rows. A shorter step still updates: keep a
+            # multiple of world_size * micro so each rank runs one Adam step.
+            # Dropping the whole step left global_step_12 unsaved and untrained.
+            from rl.hooks.actor_batch import actor_batch_keep_count
+
             rollout_n = max(1, int(self.config.actor_rollout_ref.rollout.n))
             mini_batch_size = int(self.config.actor_rollout_ref.actor.ppo_mini_batch_size) * rollout_n
+            world_size = int(self.config.trainer.n_gpus_per_node) * int(self.config.trainer.get("nnodes", 1))
+            micro = int(self.config.actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu)
             n_transition = len(batch)
             random_indices = list(range(n_transition))
             random.shuffle(random_indices)
             batch.reorder(torch.tensor(random_indices).type(torch.int32))
-            n_remained_transition = n_transition // mini_batch_size * mini_batch_size
+            n_remained_transition = actor_batch_keep_count(
+                n_transition, mini_batch_size, world_size, micro
+            )
             if n_remained_transition <= 0:
                 raise RuntimeError(
                     f"flooring {n_transition} triplets to a multiple of {mini_batch_size} "
                     "left an empty actor batch"
+                )
+            if n_remained_transition < mini_batch_size:
+                print(
+                    f"actor batch {n_transition} kept {n_remained_transition} "
+                    f"for one update (full mini is {mini_batch_size})",
+                    flush=True,
                 )
             batch = batch[list(range(n_remained_transition))]
             metrics["training/n_triplets_dropped_remainder"] = n_transition - n_remained_transition

@@ -117,6 +117,8 @@ class PlanningGraph:
         self._step1_attempts: dict[str, int] = {}
         # Soft-Bing: count soft advances per plan so the same outline cannot loop forever.
         self._soft_advance_counts: dict[str, int] = {}
+        # Leaf extract misses before Soft-Exhaust (Deepen-then-Explore).
+        self._leaf_fail_counts: dict[str, int] = {}
         self.protect_children_of = ""
         self._build(copied)
 
@@ -251,6 +253,16 @@ class PlanningGraph:
             if not plan_id or plan_id not in self._plans:
                 continue
             self._soft_advance_counts[plan_id] = self.soft_advance_count(plan_id) + 1
+
+    def leaf_fail_count(self, plan_id: str) -> int:
+        return int(self._leaf_fail_counts.get(plan_id, 0) or 0)
+
+    def note_leaf_fail(self, plan_ids: Iterable[str]) -> None:
+        """Count extract/leaf verifier misses before Soft-Exhaust (Deepen-then-Explore)."""
+        for plan_id in plan_ids:
+            if not plan_id or plan_id not in self._plans:
+                continue
+            self._leaf_fail_counts[plan_id] = self.leaf_fail_count(plan_id) + 1
 
     def plans_containing(self, node_id: str, *, active_only: bool = True) -> tuple[str, ...]:
         found: list[str] = []

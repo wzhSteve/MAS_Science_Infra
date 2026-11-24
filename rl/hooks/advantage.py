@@ -87,8 +87,10 @@ def apply_tir_advantages(
 
     spec = resolve_pipeline_spec(config)
 
-    if any(op.id == "failure_reallocation" for op in spec.operators):
+    fcr_split = any(op.id == "failure_reallocation" for op in spec.operators)
+    if fcr_split:
         batch = inject_failure_reallocation_rewards(batch, tir)
+        batch = apply_fcr_split_advantage(batch, tir)
     batch = record_reward_density(batch)
     density_meta = {
         key: value
@@ -100,23 +102,48 @@ def apply_tir_advantages(
             "fcr_correction_hits",
             "fcr/adv_within_response_std",
             "fcr/adv_within_response_max_std",
+            # Reward ledger (R_i = O_i + Rc_i + Rf_i) exported to metrics.jsonl
+            "fcr/row_outcome_mean",
+            "fcr/row_Rc_mean",
+            "fcr/row_Rf_mean",
+            "fcr/row_injected_total_mean",
+            "fcr/reward_identity_gap",
+            "fcr/unscoreable_batch_advantage_zeroed",
+            "fcr_batch_scored_ratio",
+            "fcr/n_traj_ac_nonzero",
+            "fcr/n_rc_credit_tokens",
         )
     }
-    batch = compute_advantage(
-        batch,
-        adv_estimator=adv_estimator,
-        gamma=gamma,
-        lam=lam,
-        num_repeat=num_repeat,
-        norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
-        config=config,
-    )
+    if not fcr_split:
+        batch = compute_advantage(
+            batch,
+            adv_estimator=adv_estimator,
+            gamma=gamma,
+            lam=lam,
+            num_repeat=num_repeat,
+            norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+            config=config,
+        )
 
     base_fn = _BASES[spec.base]
     batch = base_fn(batch, tir, spec.base_params)
     for op in spec.operators:
         op_fn = _OPERATORS[op.id]
         batch = op_fn(batch, op.params, tir)
+    # fcr_drop_unscoreable_batch: the inject step flagged this batch as mostly
+    # un-scoreable (planner format drift). Only the planner is trained, so
+    # zeroing every response-token advantage after all reshaping means "no
+    # update" for the batch -- better a skipped step than a step that trains
+    # against a broken substrate (run fcr_step5_to10 step 7 was exactly that).
+    if bool((getattr(batch, "meta_info", None) or {}).get("fcr_unscoreable_batch_masked")):
+        zeroed = 0.0
+        for key in ("advantages", "returns"):
+            if key in batch.batch:
+                batch.batch[key] = batch.batch[key] * 0.0
+                zeroed = 1.0
+        masked_meta = dict(getattr(batch, "meta_info", None) or {})
+        masked_meta["fcr/unscoreable_batch_advantage_zeroed"] = zeroed
+        batch.meta_info = masked_meta
     batch = record_advantage_locality(batch)
     n_flat = count_zero_variance_groups(batch)
     meta = dict(getattr(batch, "meta_info", None) or {})
@@ -638,10 +665,11 @@ def correct_pattern_hits(
 ) -> List[int]:
     """Return planner_step ids of Correct hits: mismatch at t, then p>τ and Y=1 at t+1.
 
-    ``require_prev_fail`` is accepted for call-site compatibility but ignored: the
-    reward pattern is always the design mismatch→success rule.
+    ``require_prev_fail`` selects the strict variant: the previous step must be a
+    confirmed execution failure ``(p<τ) ∧ Y=0`` rather than any p-vs-Y mismatch.
+    The strict rule kills self-correct false alarms (p rose across τ with no real
+    failure behind it), which dominated val Correct hits late in training.
     """
-    del require_prev_fail
     rows = [item for item in (events or []) if isinstance(item, dict)]
     ordered = sorted(
         enumerate(rows),
@@ -649,11 +677,27 @@ def correct_pattern_hits(
     )
     hits: List[int] = []
     for (_, prev), (_, cur) in zip(ordered, ordered[1:]):
+        p_prev = _as_float(prev.get("p_satisfy"))
+        y_prev = prev.get("actual_satisfied")
+        p_cur = _as_float(cur.get("p_satisfy"))
+        y_cur = cur.get("actual_satisfied")
+        if require_prev_fail:
+            strict_prev = (
+                p_prev is not None
+                and isinstance(y_prev, (bool, np.bool_))
+                and float(p_prev) < float(threshold)
+                and not bool(y_prev)
+            )
+            if not strict_prev:
+                continue
+            if p_cur is not None and isinstance(y_cur, (bool, np.bool_)) and float(p_cur) > float(threshold) and bool(y_cur):
+                hits.append(_as_step(cur.get("planner_step"), -1))
+            continue
         if _correct_adjacent_hit(
-            _as_float(prev.get("p_satisfy")),
-            prev.get("actual_satisfied"),
-            _as_float(cur.get("p_satisfy")),
-            cur.get("actual_satisfied"),
+            p_prev,
+            y_prev,
+            p_cur,
+            y_cur,
             threshold=threshold,
         ):
             hits.append(_as_step(cur.get("planner_step"), -1))
@@ -693,6 +737,76 @@ def false_correction_stats(
     }
 
 
+def _unique_steps(steps: Sequence[int]) -> List[int]:
+    seen: List[int] = []
+    for step in steps:
+        if step not in seen:
+            seen.append(int(step))
+    return seen
+
+
+def _rollout_hit_steps(
+    *,
+    rollout_ids: Sequence[Any],
+    planner_steps: Sequence[Any] = (),
+    p_satisfy: Sequence[Any] = (),
+    actual_satisfied: Sequence[Any] = (),
+    prediction_events: Sequence[Any] = (),
+    threshold: float = 0.5,
+    require_prev_fail: bool = False,
+) -> Dict[str, List[int]]:
+    """Planner steps that hit Correct Pattern, in order, per rollout."""
+    by_rollout: Dict[str, List[int]] = defaultdict(list)
+    for i in range(len(rollout_ids)):
+        by_rollout[str(rollout_ids[i] if i < len(rollout_ids) else i)].append(i)
+    hits: Dict[str, List[int]] = {}
+    for rid, idxs in by_rollout.items():
+        event_lists = [
+            prediction_events[i]
+            for i in idxs
+            if i < len(prediction_events) and isinstance(prediction_events[i], list)
+        ]
+        long_events = max(event_lists, key=len) if event_lists else []
+        if len(long_events) >= 2:
+            hits[rid] = _unique_steps(
+                correct_pattern_hits(
+                    long_events, threshold=threshold, require_prev_fail=require_prev_fail,
+                )
+            )
+            continue
+        ordered = sorted(
+            idxs,
+            key=lambda i: (_as_step(planner_steps[i] if i < len(planner_steps) else i, i), i),
+        )
+        steps: List[int] = []
+        for prev, cur in zip(ordered, ordered[1:]):
+            p_prev = _as_float(p_satisfy[prev] if prev < len(p_satisfy) else None)
+            p_cur = _as_float(p_satisfy[cur] if cur < len(p_satisfy) else None)
+            y_prev = actual_satisfied[prev] if prev < len(actual_satisfied) else None
+            y_cur = actual_satisfied[cur] if cur < len(actual_satisfied) else None
+            step = _as_step(planner_steps[cur] if cur < len(planner_steps) else cur, cur)
+            if require_prev_fail:
+                strict_prev = (
+                    p_prev is not None
+                    and isinstance(y_prev, (bool, np.bool_))
+                    and float(p_prev) < float(threshold)
+                    and not bool(y_prev)
+                )
+                cur_hit = (
+                    p_cur is not None
+                    and isinstance(y_cur, (bool, np.bool_))
+                    and float(p_cur) > float(threshold)
+                    and bool(y_cur)
+                )
+                if strict_prev and cur_hit:
+                    steps.append(step)
+                continue
+            if _correct_adjacent_hit(p_prev, y_prev, p_cur, y_cur, threshold=threshold):
+                steps.append(step)
+        hits[rid] = _unique_steps(steps)
+    return hits
+
+
 def _rollout_pattern_counts(
     *,
     rollout_ids: Sequence[Any],
@@ -704,35 +818,18 @@ def _rollout_pattern_counts(
     require_prev_fail: bool = False,
 ) -> Dict[str, int]:
     """Integer Correct-event counts per rollout (not yet normalized)."""
-    _ = require_prev_fail  # ignored; pattern is always mismatch→success
-    by_rollout: Dict[str, List[int]] = defaultdict(list)
-    for i in range(len(rollout_ids)):
-        by_rollout[str(rollout_ids[i] if i < len(rollout_ids) else i)].append(i)
-    counts: Dict[str, int] = {}
-    for rid, idxs in by_rollout.items():
-        event_lists = [
-            prediction_events[i]
-            for i in idxs
-            if i < len(prediction_events) and isinstance(prediction_events[i], list)
-        ]
-        long_events = max(event_lists, key=len) if event_lists else []
-        if len(long_events) >= 2:
-            counts[rid] = len(correct_pattern_hits(long_events, threshold=threshold))
-            continue
-        ordered = sorted(
-            idxs,
-            key=lambda i: (_as_step(planner_steps[i] if i < len(planner_steps) else i, i), i),
-        )
-        count = 0
-        for prev, cur in zip(ordered, ordered[1:]):
-            p_prev = _as_float(p_satisfy[prev] if prev < len(p_satisfy) else None)
-            p_cur = _as_float(p_satisfy[cur] if cur < len(p_satisfy) else None)
-            y_prev = actual_satisfied[prev] if prev < len(actual_satisfied) else None
-            y_cur = actual_satisfied[cur] if cur < len(actual_satisfied) else None
-            if _correct_adjacent_hit(p_prev, y_prev, p_cur, y_cur, threshold=threshold):
-                count += 1
-        counts[rid] = count
-    return counts
+    return {
+        rid: len(steps)
+        for rid, steps in _rollout_hit_steps(
+            rollout_ids=rollout_ids,
+            planner_steps=planner_steps,
+            p_satisfy=p_satisfy,
+            actual_satisfied=actual_satisfied,
+            prediction_events=prediction_events,
+            threshold=threshold,
+            require_prev_fail=require_prev_fail,
+        ).items()
+    }
 
 
 def correct_pattern_rewards(
@@ -745,11 +842,17 @@ def correct_pattern_rewards(
     group_ids: Sequence[Any] = (),
     threshold: float = 0.5,
     require_prev_fail: bool = False,
+    soft_denominator: bool = False,
 ) -> tuple[List[float], List[bool], int]:
     """Trajectory Correct reward ``N_i / N_max`` inside each question group.
 
-    Pattern = prev ``(p>=τ)≠Y`` then cur ``p>τ`` and ``Y=1``. ``require_prev_fail``
-    is ignored. The scalar sits on the last row. ``N_max=0`` yields zeros.
+    Pattern = prev ``(p>=τ)≠Y`` then cur ``p>τ`` and ``Y=1``; with
+    ``require_prev_fail=True`` the prev leg tightens to confirmed failure
+    ``(p<τ) ∧ Y=0``. ``soft_denominator`` uses ``1+N_max``, so a group whose best
+    rollout has a single hit scores ½ instead of the full 1.0: on sparse batches
+    (94% of groups had ``N_max=0`` in run 9a45bbd456ad) the hard ``N_i/N_max``
+    pin the only-hitting trajectory to ±1 and dominate the advantage.
+    The scalar sits on the last row. ``N_max=0`` yields zeros.
     Missing ``group_ids`` treats the whole batch as one group.
     """
     size = len(rollout_ids)
@@ -780,8 +883,9 @@ def correct_pattern_rewards(
         local = [int(counts.get(rid, 0)) for rid in rids]
         n_max = max(local) if local else 0
         n_max_global = max(n_max_global, n_max)
+        denom = float(1 + n_max) if soft_denominator else float(n_max)
         for rid, n_i in zip(rids, local):
-            reward_by_rid[rid] = (float(n_i) / float(n_max)) if n_max > 0 else 0.0
+            reward_by_rid[rid] = (float(n_i) / denom) if denom > 0 else 0.0
     rewards = [0.0] * size
     valid = [False] * size
     if n_max_global <= 0:
@@ -813,6 +917,7 @@ def correction_diagnostics(
     labeled_steps: int = 0,
     mean_p: Optional[float] = None,
     failure_confirmed_rate: Optional[float] = None,
+    soft_denominator: bool = False,
 ) -> Dict[str, float]:
     """Step-level monitors for correction reward, not a training signal."""
     weak = _rollout_pattern_counts(
@@ -847,9 +952,14 @@ def correction_diagnostics(
         n_max = max(local) if local else 0
         if n_max <= 0:
             zero_groups += 1
+        # Match the injected reward exactly: fcr_pattern_soft_denominator
+        # switches the trainer between n_i/n_max and n_i/(1+n_max). The old
+        # diagnostic always used the hard denominator, so the metric disagreed
+        # with the signal actually trained on.
+        denom = float(1 + n_max) if soft_denominator else float(n_max)
         for rid, n_i in zip(rids, local):
             n_values.append(float(n_i))
-            r_c = (float(n_i) / float(n_max)) if n_max > 0 else 0.0
+            r_c = (float(n_i) / denom) if denom > 0 else 0.0
             r_correct[rid] = r_c
             if n_max > 0 and n_i == n_max:
                 hack_denom += 1
@@ -1027,29 +1137,93 @@ def branch_repair_rewards(
     return credits, int(sum(1 for value in credits if value > 0))
 
 
-def inject_failure_reallocation_rewards(batch: DataProto, tir: Dict[str, Any]) -> DataProto:
-    """Add pattern and/or branch-repair credit, then GRPO.
+def planner_format_rewards(
+    batch: DataProto, tir: Dict[str, Any]
+) -> Tuple[List[float], float]:
+    """Per-row planner format reward Rf_i = w_f * scoreable_rate_i.
 
-    Terminal 0/1 answer reward is already in ``token_level_*``.
+    ``scoreable_rate`` is emitted per rollout by the agent (``tir.scoreable_rate``
+    = share of that rollout's planner steps that parse + pick a real tool + write
+    a canonical YES/NO prediction) and travels as a non-tensor column. It needs
+    neither the verifier nor logprobs, so it stays truthful exactly when the
+    p_satisfy substrate has collapsed. w_f defaults to 0.05 (far below the 0/1
+    answer reward, so format gains cannot outvote correctness).
+
+    Returns ``(rewards, weight)`` with an all-zero list when the column is
+    absent, so callers can keep the ledger identity meaningful.
+    """
+    ntb = batch.non_tensor_batch
+    n = len(_as_list(ntb.get("rollout_id_list")))
+    weight = float(tir.get("fcr_format_weight", 0.05) or 0.0)
+    rates = ntb.get("scoreable_rate_list")
+    if rates is None or weight <= 0.0:
+        return [0.0] * n, 0.0
+    if isinstance(rates, np.ndarray):
+        rates = rates.tolist()
+    out = [0.0] * n
+    for i, raw in enumerate(rates[:n]):
+        try:
+            rate = float(raw)
+        except (TypeError, ValueError):
+            rate = 0.0
+        if rate > 0.0:
+            out[i] = weight * max(0.0, min(1.0, rate))
+    return out, weight
+
+
+def _population_z(values: Sequence[float]) -> List[float]:
+    """Group z-score with the population standard deviation (divide by N)."""
+    if not values:
+        return []
+    arr = np.asarray(values, dtype=np.float64)
+    sigma = float(arr.std())
+    if sigma <= 0.0:
+        return [0.0] * len(values)
+    mean = float(arr.mean())
+    return [float((value - mean) / sigma) for value in values]
+
+
+def _last_response_index(response_mask: torch.Tensor, row: int) -> Optional[int]:
+    positions = torch.nonzero(response_mask[row] > 0, as_tuple=False).flatten()
+    if not len(positions):
+        return None
+    return int(positions[-1].item())
+
+
+def inject_failure_reallocation_rewards(batch: DataProto, tir: Dict[str, Any]) -> DataProto:
+    """Write unweighted Ra on the final planner step and Rc/m on each repair step.
+
+    Ra is soft F1. Rc is the within-question pattern ratio. Format rate is
+    logged by the daemon and is not added into these tokens. Weights in tir
+    are ignored so Ra and Rc enter separate GRPO channels at full scale.
     """
     pattern_on = bool(tir.get("fcr_pattern_enabled", True))
     repair_on = bool(tir.get("fcr_repair_enabled", False))
-    if not pattern_on and not repair_on:
+    format_on = bool(tir.get("fcr_format_enabled", False))
+    ra_w = float(tir.get("fcr_ra_weight", 0.5) or 0.0)
+    rc_w = float(tir.get("fcr_rc_weight", 0.5) or 0.0)
+    if not pattern_on and not repair_on and not format_on and ra_w <= 0.0:
         return batch
     ntb = batch.non_tensor_batch
-    required = ("rollout_id_list", "p_satisfy_list", "actual_satisfied_list")
-    missing = [key for key in required if key not in ntb]
-    if missing:
-        _noop_bump(f"failure_reallocation:missing={','.join(missing)}")
+    if "rollout_id_list" not in ntb:
+        _noop_bump("failure_reallocation:missing=rollout_id_list")
         return batch
-    rewards = [0.0] * len(_as_list(ntb.get("rollout_id_list")))
-    valid = [False] * len(rewards)
+    if pattern_on:
+        required = ("p_satisfy_list", "actual_satisfied_list")
+        missing = [key for key in required if key not in ntb]
+        if missing:
+            _noop_bump(f"failure_reallocation:missing={','.join(missing)}")
+            return batch
+    rid_list = [str(x) for x in _as_list(ntb.get("rollout_id_list"))]
+    n = len(rid_list)
+    valid = [False] * n
     n_max = 0
     repair_hits = 0
+    rc_raw = [0.0] * n
     group_ids = _as_list(ntb.get("data_id_list") if "data_id_list" in ntb else ntb.get("uid"))
     if pattern_on:
         pattern_rewards, valid, n_max = correct_pattern_rewards(
-            rollout_ids=_as_list(ntb.get("rollout_id_list")),
+            rollout_ids=rid_list,
             planner_steps=_as_list(ntb.get("planner_step_list")),
             p_satisfy=_as_list(ntb.get("p_satisfy_list")),
             actual_satisfied=_as_list(ntb.get("actual_satisfied_list")),
@@ -1057,18 +1231,55 @@ def inject_failure_reallocation_rewards(batch: DataProto, tir: Dict[str, Any]) -
             group_ids=group_ids,
             threshold=float(tir.get("fcr_threshold", 0.5)),
             require_prev_fail=bool(tir.get("fcr_pattern_require_prev_fail", False)),
+            soft_denominator=bool(tir.get("fcr_pattern_soft_denominator", False)),
         )
-        rewards = [float(a) + float(b) for a, b in zip(rewards, pattern_rewards)]
+        min_cov = float(tir.get("fcr_pattern_min_label_coverage", 0.0) or 0.0)
+        if min_cov > 0.0:
+            labeled_actual = _as_list(ntb.get("actual_satisfied_list"))
+            prob_values = _as_list(ntb.get("p_satisfy_list"))
+            scored_rows = 0
+            labeled_rows = 0
+            for value, prob in zip(labeled_actual, prob_values):
+                if prob is None or (isinstance(prob, float) and not np.isfinite(prob)):
+                    continue
+                scored_rows += 1
+                if isinstance(value, (bool, np.bool_)):
+                    labeled_rows += 1
+            coverage = float(labeled_rows / scored_rows) if scored_rows else 0.0
+            if coverage < min_cov:
+                meta_skip = dict(getattr(batch, "meta_info", None) or {})
+                meta_skip["fcr_pattern_coverage_masked"] = True
+                meta_skip["fcr_pattern_batch_label_coverage"] = coverage
+                batch.meta_info = meta_skip
+                _noop_bump(f"failure_reallocation:coverage_masked={coverage:.3f}")
+                pattern_rewards = [0.0] * len(pattern_rewards)
+                valid = [False] * len(valid)
+        rc_raw = [float(value) for value in pattern_rewards]
     if repair_on:
         repair_rewards, repair_hits = branch_repair_rewards(
-            rollout_ids=_as_list(ntb.get("rollout_id_list")),
+            rollout_ids=rid_list,
             roles=_as_list(ntb.get("rollout_role")),
             parent_ids=_as_list(ntb.get("resume_parent_id")),
             actual_satisfied=_as_list(ntb.get("actual_satisfied_list")),
         )
-        rewards = [float(a) + float(b) for a, b in zip(rewards, repair_rewards)]
-    ntb["fcr_correction_reward"] = np.array(rewards, dtype=np.float64)
-    ntb["correction_valid_list"] = np.array(valid, dtype=object)
+        rc_raw = [float(a) + float(b) for a, b in zip(rc_raw, repair_rewards)]
+    rf_part = [0.0] * n
+    format_weight = 0.0
+    if format_on:
+        rf_part, format_weight = planner_format_rewards(batch, tir)
+        if bool(tir.get("fcr_drop_unscoreable_batch", False)):
+            scored = _as_list(ntb.get("scoreable_rate_list"))
+            try:
+                scored_ratio = float(np.mean([float(x or 0.0) for x in scored])) if scored else 0.0
+            except (TypeError, ValueError):
+                scored_ratio = 0.0
+            if scored_ratio < 0.5:
+                ntb["fcr_drop_unscoreable_batch"] = np.array([True] * n, dtype=object)
+                meta_drop = dict(getattr(batch, "meta_info", None) or {})
+                meta_drop["fcr_unscoreable_batch_masked"] = True
+                meta_drop["fcr_batch_scored_ratio"] = scored_ratio
+                batch.meta_info = meta_drop
+                _noop_bump(f"failure_reallocation:unscoreable_batch={scored_ratio:.3f}")
     target_key = "token_level_rewards" if "token_level_rewards" in batch.batch else "token_level_scores"
     if target_key not in batch.batch:
         _noop_bump("failure_reallocation:missing=token_level_rewards|token_level_scores")
@@ -1077,23 +1288,206 @@ def inject_failure_reallocation_rewards(batch: DataProto, tir: Dict[str, Any]) -
     response_mask = batch.batch.get("response_mask")
     if response_mask is None:
         response_mask = torch.ones_like(target)
-    for i, reward in enumerate(rewards):
-        if not reward:
-            continue
+    # Soft-F1 Ra: prefer explicit list; else fall back to pre-inject row sum (legacy O).
+    pre_totals = [float(value) for value in target.sum(dim=-1).tolist()]
+    answer_raw = _as_list(ntb.get("answer_score_list"))
+    ra_raw = [0.0] * n
+    for i in range(n):
+        if i < len(answer_raw) and answer_raw[i] is not None:
+            try:
+                ra_raw[i] = float(answer_raw[i])
+            except (TypeError, ValueError):
+                ra_raw[i] = float(pre_totals[i])
+        else:
+            ra_raw[i] = float(pre_totals[i])
+    planner_steps = _as_list(ntb.get("planner_step_list"))
+    coverage_masked = bool((getattr(batch, "meta_info", None) or {}).get("fcr_pattern_coverage_masked"))
+    hit_steps = (
+        {}
+        if (not pattern_on or coverage_masked)
+        else _rollout_hit_steps(
+            rollout_ids=rid_list,
+            planner_steps=planner_steps,
+            p_satisfy=_as_list(ntb.get("p_satisfy_list")),
+            actual_satisfied=_as_list(ntb.get("actual_satisfied_list")),
+            prediction_events=_as_list(ntb.get("prediction_events_list")),
+            threshold=float(tir.get("fcr_threshold", 0.5)),
+            require_prev_fail=bool(tir.get("fcr_pattern_require_prev_fail", False)),
+        )
+    )
+    by_rollout: Dict[str, List[int]] = defaultdict(list)
+    for i, rid in enumerate(rid_list):
+        by_rollout[rid].append(i)
+    last_row = {
+        rid: max(idxs, key=lambda i: (_as_step(planner_steps[i] if i < len(planner_steps) else i, i), i))
+        for rid, idxs in by_rollout.items()
+    }
+    step_row: Dict[tuple, int] = {}
+    for i, rid in enumerate(rid_list):
+        step_row[(rid, _as_step(planner_steps[i] if i < len(planner_steps) else i, i))] = i
+    traj_ra = [0.0] * n
+    traj_rc = [0.0] * n
+    for rid, idxs in by_rollout.items():
+        last = last_row[rid]
+        answer = float(ra_raw[last])
+        correct = float(rc_raw[last]) if last < len(rc_raw) else 0.0
+        for i in idxs:
+            traj_ra[i] = answer
+            traj_rc[i] = correct
+    for i in range(n):
         positions = torch.nonzero(response_mask[i] > 0, as_tuple=False).flatten()
         if len(positions):
-            # One scalar per rollout, on its last row's last token, so the
-            # trajectory sum is R_answer + R_correct (not length times R).
-            target[i, int(positions[-1].item())] += float(reward)
+            target[i, positions] = 0
+    for rid, last in last_row.items():
+        token = _last_response_index(response_mask, last)
+        if token is None:
+            continue
+        target[last, token] = target[last, token] + float(traj_ra[last])
+        steps = hit_steps.get(rid) or []
+        correct = float(traj_rc[last])
+        if steps and correct > 0.0:
+            share = correct / float(len(steps))
+            for step in steps:
+                row = step_row.get((rid, int(step)))
+                if row is None:
+                    continue
+                repair_token = _last_response_index(response_mask, row)
+                if repair_token is None:
+                    continue
+                target[row, repair_token] = target[row, repair_token] + share
     batch.batch[target_key] = target
+    ntb["fcr_answer_reward"] = np.array(traj_ra, dtype=np.float64)
+    ntb["fcr_pattern_reward"] = np.array(traj_rc, dtype=np.float64)
+    ntb["fcr_format_reward"] = np.array([0.0] * n, dtype=np.float64)
+    ntb["fcr_correction_reward"] = np.array(
+        [float(a) + float(c) for a, c in zip(traj_ra, traj_rc)], dtype=np.float64
+    )
+    ntb["correction_valid_list"] = np.array(valid, dtype=object)
     meta = dict(getattr(batch, "meta_info", None) or {})
     meta.update({
         "fcr_reward_injected": True,
-        "fcr_valid_pairs": int(sum(valid)),
-        "fcr_correction_hits": int(sum(1 for value in rewards if value > 0)),
+        "fcr_valid_pairs": int(sum(1 for v in valid if v)),
+        "fcr_correction_hits": int(sum(1 for rid, steps in hit_steps.items() if steps and traj_rc[last_row[rid]] > 0)),
         "fcr_correct_pattern_n_max": int(n_max),
         "fcr_repair_hits": int(repair_hits),
+        "fcr_format_enabled": bool(format_on),
+        "fcr_format_weight": float(format_weight),
+        "fcr_ra_weight": 1.0,
+        "fcr_rc_weight": 1.0,
+        "fcr_format_in_advantage": False,
     })
+    injected_by_rid: Dict[str, float] = {}
+    for rid in by_rollout:
+        total = 0.0
+        for i in by_rollout[rid]:
+            total += float(target[i].sum().item())
+        injected_by_rid[rid] = total
+    n_rid = len(last_row)
+    if n_rid:
+        ra_mean = sum(traj_ra[last_row[rid]] for rid in last_row) / n_rid
+        rc_mean = sum(traj_rc[last_row[rid]] for rid in last_row) / n_rid
+        injected_mean = sum(injected_by_rid.values()) / n_rid
+        meta["fcr/row_Ra_mean"] = ra_mean
+        meta["fcr/row_outcome_mean"] = ra_mean
+        meta["fcr/row_Rc_mean"] = rc_mean
+        meta["fcr/row_Rf_mean"] = 0.0
+        meta["fcr/row_injected_total_mean"] = injected_mean
+        meta["fcr/reward_identity_gap"] = abs(injected_mean - (ra_mean + rc_mean))
+    batch.meta_info = meta
+    # rf_part is computed so unscoreable batches can still be flagged; it is not written.
+    del rf_part
+    return batch
+
+
+def apply_fcr_split_advantage(batch: DataProto, tir: Optional[Dict[str, Any]] = None) -> DataProto:
+    """Separate population-std GRPO for Ra and Rc, placed on the decision rows.
+
+    Skips stock per-row GRPO. Advantages are constant on the response mask of
+    the final planner row (Aa) and of each repair row (Ac / m). Other planner
+    rows stay at 0.
+    """
+    if not bool((getattr(batch, "meta_info", None) or {}).get("fcr_reward_injected")):
+        return batch
+    ntb = batch.non_tensor_batch
+    if "token_level_rewards" in batch.batch:
+        template = batch.batch["token_level_rewards"]
+    elif "token_level_scores" in batch.batch:
+        template = batch.batch["token_level_scores"]
+    else:
+        return batch
+    response_mask = batch.batch.get("response_mask")
+    if response_mask is None:
+        response_mask = torch.ones_like(template)
+    rid_list = [str(x) for x in _as_list(ntb.get("rollout_id_list"))]
+    n = len(rid_list)
+    if n == 0:
+        return batch
+    planner_steps = _as_list(ntb.get("planner_step_list"))
+    group_ids = _as_list(ntb.get("data_id_list") if "data_id_list" in ntb else ntb.get("uid"))
+    ra_rows = _as_list(ntb.get("fcr_answer_reward"))
+    rc_rows = _as_list(ntb.get("fcr_pattern_reward"))
+    by_rollout: Dict[str, List[int]] = defaultdict(list)
+    for i, rid in enumerate(rid_list):
+        by_rollout[rid].append(i)
+    last_row = {
+        rid: max(idxs, key=lambda i: (_as_step(planner_steps[i] if i < len(planner_steps) else i, i), i))
+        for rid, idxs in by_rollout.items()
+    }
+    step_row: Dict[tuple, int] = {}
+    rid_group: Dict[str, str] = {}
+    for i, rid in enumerate(rid_list):
+        step_row[(rid, _as_step(planner_steps[i] if i < len(planner_steps) else i, i))] = i
+        if group_ids and i < len(group_ids) and str(group_ids[i] or ""):
+            rid_group[rid] = str(group_ids[i])
+        else:
+            rid_group.setdefault(rid, "__batch__")
+    tir = tir or {}
+    coverage_masked = bool((getattr(batch, "meta_info", None) or {}).get("fcr_pattern_coverage_masked"))
+    hit_steps = {} if coverage_masked else _rollout_hit_steps(
+        rollout_ids=rid_list,
+        planner_steps=planner_steps,
+        p_satisfy=_as_list(ntb.get("p_satisfy_list")),
+        actual_satisfied=_as_list(ntb.get("actual_satisfied_list")),
+        prediction_events=_as_list(ntb.get("prediction_events_list")),
+        threshold=float(tir.get("fcr_threshold", 0.5)),
+        require_prev_fail=bool(tir.get("fcr_pattern_require_prev_fail", False)),
+    )
+    groups: Dict[str, List[str]] = defaultdict(list)
+    for rid, group in rid_group.items():
+        groups[group].append(rid)
+    aa: Dict[str, float] = {}
+    ac: Dict[str, float] = {}
+    for rids in groups.values():
+        ra_vals = [float(ra_rows[last_row[rid]]) if last_row[rid] < len(ra_rows) else 0.0 for rid in rids]
+        rc_vals = [float(rc_rows[last_row[rid]]) if last_row[rid] < len(rc_rows) else 0.0 for rid in rids]
+        for rid, answer_adv, correct_adv in zip(rids, _population_z(ra_vals), _population_z(rc_vals)):
+            aa[rid] = answer_adv
+            ac[rid] = correct_adv
+    advantages = torch.zeros_like(template)
+    credit_tokens = 0
+    ac_nonzero = 0
+    for rid, last in last_row.items():
+        mask = response_mask[last] > 0
+        if bool(mask.any()):
+            advantages[last] = advantages[last] + mask.to(advantages.dtype) * float(aa.get(rid, 0.0))
+        correct_adv = float(ac.get(rid, 0.0))
+        if correct_adv != 0.0:
+            ac_nonzero += 1
+        steps = hit_steps.get(rid) or []
+        if steps and correct_adv != 0.0:
+            share = correct_adv / float(len(steps))
+            for step in steps:
+                row = step_row.get((rid, int(step)))
+                if row is None:
+                    continue
+                row_mask = response_mask[row] > 0
+                credit_tokens += int(row_mask.sum().item())
+                advantages[row] = advantages[row] + row_mask.to(advantages.dtype) * share
+    batch.batch["advantages"] = advantages
+    batch.batch["returns"] = advantages.clone()
+    meta = dict(getattr(batch, "meta_info", None) or {})
+    meta["fcr/n_traj_ac_nonzero"] = float(ac_nonzero)
+    meta["fcr/n_rc_credit_tokens"] = float(credit_tokens)
     batch.meta_info = meta
     return batch
 

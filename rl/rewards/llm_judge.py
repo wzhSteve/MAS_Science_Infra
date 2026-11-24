@@ -31,6 +31,29 @@ _MEMORY_CACHE: Dict[str, float] = {}
 _CLIENT = None
 _CLIENT_KEY: Optional[Tuple[str, str, str]] = None
 
+# r6 observability: judge failures are silent (return 0.0), which previously
+# made it impossible to attribute a val collapse to judge-API drift vs real
+# policy regression. Counters are process-local; reset via reset_judge_stats()
+# and read via judge_stats() (also exported through lit_tir_agent's tir.* span
+# attributes as tir.judge_calls / tir.judge_fails).
+_STATS_LOCK = threading.Lock()
+_JUDGE_CALLS = 0  # cache-missing API attempts (network verdicts)
+_JUDGE_FAILS = 0  # attempts that returned 0.0 without a verdict (error/parse/missing creds)
+
+
+def judge_stats() -> Dict[str, int]:
+    """Snapshot of judge call/failure counters (process-local, thread-safe)."""
+    with _STATS_LOCK:
+        return {"calls": _JUDGE_CALLS, "fails": _JUDGE_FAILS}
+
+
+def reset_judge_stats() -> None:
+    """Zero the counters (per-episode / per-val boundary instrumentation)."""
+    global _JUDGE_CALLS, _JUDGE_FAILS
+    with _STATS_LOCK:
+        _JUDGE_CALLS = 0
+        _JUDGE_FAILS = 0
+
 
 def _load_dotenv() -> None:
     """Best-effort .env load without importing mas (rl must stay free of workflow)."""
@@ -202,6 +225,7 @@ def llm_judge_correct(
     model: Optional[str] = None,
 ) -> float:
     """Return 1.0 if the judge says True, else 0.0 (including on errors)."""
+    global _JUDGE_CALLS, _JUDGE_FAILS
     q = str(question or "")
     g = str(groundtruth or "")
     a = str(answer_extracted or "")
@@ -212,6 +236,8 @@ def llm_judge_correct(
     use_model = (model or env_model or "gpt-4o").strip()
     if not base_url:
         _LOG.warning("llm_judge: EVALUATION_MODEL_API_BASE unset; score=0")
+        with _STATS_LOCK:
+            _JUDGE_FAILS += 1
         return 0.0
 
     prompt = build_judge_prompt(q, g, a)
@@ -220,6 +246,8 @@ def llm_judge_correct(
     if cached is not None:
         return cached
 
+    with _STATS_LOCK:
+        _JUDGE_CALLS += 1
     try:
         client = _get_client(api_key, base_url)
         resp = client.chat.completions.create(
@@ -235,12 +263,16 @@ def llm_judge_correct(
         if verdict is None:
             _LOG.warning("llm_judge: unparseable verdict from %s; score=0", use_model)
             score = 0.0
+            with _STATS_LOCK:
+                _JUDGE_FAILS += 1
         else:
             score = 1.0 if verdict else 0.0
         _cache_put(ck, score)
         return score
     except Exception as exc:
         _LOG.warning("llm_judge: call failed (%s); score=0", type(exc).__name__)
+        with _STATS_LOCK:
+            _JUDGE_FAILS += 1
         return 0.0
 
 

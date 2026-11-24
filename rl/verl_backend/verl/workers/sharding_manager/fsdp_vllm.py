@@ -109,6 +109,10 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         if is_version_ge(pkg='vllm', minver='0.7.3'):
             VLLMHijack.hijack()
 
+    def _world_barrier(self) -> None:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.barrier()
+
     @GPUMemoryLogger(role="fsdp vllm sharding_manager", logger=logger)
     def __enter__(self):
         def __collect_lora_params()->OrderedDict:
@@ -155,6 +159,12 @@ class FSDPVLLMShardingManager(BaseShardingManager):
                         lora_params[name] = param.detach().cpu()
                     model = model.to(orig_dev)
             return lora_params
+
+        # Frozen executor/verifier must be awake before the planner pool is mapped,
+        # and only when FCR_FROZEN_VLLM_URL is set. Rank 0 issues the HTTP call.
+        from rl.hooks.frozen_vllm import before_planner_wake
+
+        before_planner_wake(self.tp_rank, self._world_barrier)
 
         # NOTE: Basically, we only need `get_torch_device().empty_cache()` before vllm wake_up and
         # after vllm sleep, since vllm has its own caching memory allocator CuMemAllocator.
@@ -220,9 +230,20 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         ):
             self.inference_engine.offload_model_weights()
         else:
-            self.inference_engine.sleep(level=1)
+            from rl.hooks.frozen_vllm import planner_sleep_level
+
+            # Finish the last generate kernels before level-2 unmaps their memory.
+            # Unmapping under a live kernel is the illegal access that aborted
+            # save_checkpoint before torch.save.
+            get_torch_device().synchronize()
+            self.inference_engine.sleep(level=planner_sleep_level())
+            get_torch_device().synchronize()
 
         self.module.train()
+
+        from rl.hooks.frozen_vllm import after_planner_sleep
+
+        after_planner_sleep(self.tp_rank, self._world_barrier)
 
         # add empty cache after each compute
         get_torch_device().empty_cache()

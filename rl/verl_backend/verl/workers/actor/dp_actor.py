@@ -360,11 +360,19 @@ class DataParallelPPOActor(BasePPOActor):
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
+        from rl.hooks.actor_batch import effective_ppo_mini_batch_size
+
+        n_rows = int(data.batch.batch_size[0])
+        mini_size = effective_ppo_mini_batch_size(
+            n_rows,
+            int(self.config.ppo_mini_batch_size),
+            int(self.config.ppo_micro_batch_size_per_gpu),
+        )
         if non_tensor_select_keys:
-            num_mini_batches = data.batch.batch_size[0] // self.config.ppo_mini_batch_size
+            num_mini_batches = n_rows // mini_size
             dataloader = data.select(select_keys, non_tensor_select_keys).chunk(num_mini_batches)
         else:
-            dataloader = batch.split(self.config.ppo_mini_batch_size)
+            dataloader = batch.split(mini_size)
 
         metrics = {}
         fcr_gradient_diagnostic_done = False
@@ -373,14 +381,14 @@ class DataParallelPPOActor(BasePPOActor):
                 # split batch into micro_batches
                 mini_batch = data
                 if non_tensor_select_keys:
-                    self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
+                    self.gradient_accumulation = mini_size // self.config.ppo_micro_batch_size_per_gpu
                     num_micro_batches = mini_batch.batch.batch_size[0] // self.config.ppo_micro_batch_size_per_gpu
                     micro_batches = data.select(select_keys, non_tensor_select_keys).chunk(num_micro_batches)
                 elif self.config.use_dynamic_bsz:
                     max_token_len = self.config.ppo_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
                     micro_batches, _ = rearrange_micro_batches(batch=mini_batch, max_token_len=max_token_len)
                 else:
-                    self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
+                    self.gradient_accumulation = mini_size // self.config.ppo_micro_batch_size_per_gpu
                     # split batch into micro_batches
                     micro_batches = mini_batch.split(self.config.ppo_micro_batch_size_per_gpu)
 

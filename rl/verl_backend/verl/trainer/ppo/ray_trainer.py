@@ -1198,7 +1198,15 @@ class RayPPOTrainer:
         #    ppo_mini_batch_size is divisible by ppo_micro_batch_size
         #    ppo_micro_batch_size * sequence_parallel_size >= n_gpus
         if not config.actor_rollout_ref.actor.use_dynamic_bsz:
-            assert config.data.train_batch_size >= config.actor_rollout_ref.actor.ppo_mini_batch_size
+            # Agent mode updates triplet rows, not the prompt batch. The worker
+            # later multiplies this mini-batch by rollout.n, so compare against
+            # the prompt batch times n (32×8=256) rather than the raw 32.
+            prompt_rows = config.data.train_batch_size * config.actor_rollout_ref.rollout.n
+            assert prompt_rows >= config.actor_rollout_ref.actor.ppo_mini_batch_size, (
+                f"train_batch_size ({config.data.train_batch_size}) * rollout.n "
+                f"({config.actor_rollout_ref.rollout.n}) = {prompt_rows} must be >= "
+                f"ppo_mini_batch_size ({config.actor_rollout_ref.actor.ppo_mini_batch_size})"
+            )
             sp_size = config.actor_rollout_ref.actor.get("ulysses_sequence_parallel_size", 1)
             if config.actor_rollout_ref.actor.ppo_micro_batch_size is not None:
                 assert config.actor_rollout_ref.actor.ppo_mini_batch_size % config.actor_rollout_ref.actor.ppo_micro_batch_size == 0
@@ -1797,6 +1805,19 @@ class RayPPOTrainer:
         # load critic
         if self.use_critic:
             self.critic_wg.load_checkpoint(critic_path, del_local_after_load=self.config.trainer.del_local_ckpt_after_load)
+        # Ref starts from base HF unless we load shards. When enabling use_kl_loss
+        # mid-run there is usually no ref/ dir — fall back to actor so KL is vs
+        # the resumed policy, not the pretrained base (which NaNs low_var_kl).
+        if self.use_reference_policy and not self.ref_in_actor:
+            ref_path = os.path.join(global_step_folder, "ref")
+            ref_load_path = ref_path if os.path.isdir(ref_path) else actor_path
+            print(
+                f"Loading ref policy from {ref_load_path}"
+                + (" (fallback to actor; no ref/ checkpoint)" if ref_load_path == actor_path else "")
+            )
+            self.ref_policy_wg.load_checkpoint(
+                ref_load_path, del_local_after_load=self.config.trainer.del_local_ckpt_after_load
+            )
 
         # load dataloader,
         # TODO: from remote not implemented yet

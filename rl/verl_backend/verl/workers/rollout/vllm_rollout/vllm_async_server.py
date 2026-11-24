@@ -43,6 +43,38 @@ from verl.workers.rollout.async_server import AsyncServerBase
 logger = logging.getLogger(__file__)
 
 
+async def drain_then_sleep(engine, timeout: float = 90.0) -> None:
+    """Abort leftover requests, wait until they are gone, then sleep.
+
+    Returning after a timeout lets the trainer load FSDP weights onto a GPU
+    whose KV pool was unmapped under a live kernel. That is the step-12
+    illegal memory access. Raise instead.
+    """
+    import asyncio
+
+    output_processor = getattr(engine, "output_processor", None)
+    if output_processor is not None:
+        states = getattr(output_processor, "request_states", None) or {}
+        request_ids = list(states.keys()) if hasattr(states, "keys") else list(states)
+        for request_id in request_ids:
+            await engine.abort(request_id)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        has_unfinished = getattr(output_processor, "has_unfinished_requests", None)
+        while has_unfinished is not None and has_unfinished():
+            if loop.time() > deadline:
+                raise RuntimeError(
+                    "vLLM still has unfinished requests; refusing to sleep and save"
+                )
+            await asyncio.sleep(0.05)
+    try:
+        await asyncio.wait_for(engine.sleep(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(
+            "vLLM sleep timed out; refusing to update or save on a live engine"
+        ) from exc
+
+
 class ExternalRayDistributedExecutor(Executor):
     """An executor that engines are launched by external ray actors."""
 
@@ -318,25 +350,7 @@ class AsyncvLLMServer(AsyncServerBase):
 
     async def sleep(self):
         # A leftover request makes engine.sleep() wait forever
-        # (https://github.com/vllm-project/vllm/issues/17103). Abort first,
-        # then bound the pause so the actor update can start.
-        import asyncio
-
-        output_processor = getattr(self.engine, "output_processor", None)
-        request_ids = []
-        if output_processor is not None:
-            states = getattr(output_processor, "request_states", None) or {}
-            request_ids = list(states.keys()) if hasattr(states, "keys") else list(states)
-        for request_id in request_ids:
-            try:
-                await self.engine.abort(request_id)
-            except Exception:
-                logger.exception("abort request %s before sleep failed", request_id)
-        try:
-            await asyncio.wait_for(self.engine.reset_prefix_cache(), timeout=30)
-        except Exception:
-            logger.exception("reset_prefix_cache before sleep failed")
-        try:
-            await asyncio.wait_for(self.engine.sleep(), timeout=90)
-        except asyncio.TimeoutError:
-            logger.error("vLLM sleep timed out after 90s; continuing so the actor update is not blocked")
+        # (https://github.com/vllm-project/vllm/issues/17103) and a level-2
+        # unmap while that request's kernel is still running corrupts CUDA.
+        # Drain first. A timeout must raise so the driver does not save.
+        await drain_then_sleep(self.engine)

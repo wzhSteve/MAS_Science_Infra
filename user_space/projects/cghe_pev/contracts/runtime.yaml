@@ -34,8 +34,14 @@ cghe:
   max_total_step1_attempts: 12
   max_verified_snippet_prunes_per_episode: 2
   max_inherited_ce: 32
-  # Soft-Bing: at most one soft-advance entry per plan (Bing soft→Fetch); leaf fail soft-exhausts.
-  max_soft_advances_per_plan: 1
+  # Soft-Bing: allow a few Bing soft→Fetch entries per plan before soft-exhaust.
+  # Leaf extract fails deepen once; soft-exhaust only after leaf_fail_count >= 2.
+  max_soft_advances_per_plan: 3
+  max_leaf_fails_before_exhaust: 2
+  # Dedup refund: give back steps spent on cached no-op repeats (bounded/episode).
+  # DISABLED (0) after smoke20_dedup_20261109: refunds turned into free churn
+  # (acc 0.40/0.50 vs deepen 0.45/0.60; 24 eps churned after soft-exhaust).
+  max_dedup_refunds_per_episode: 0
   round_regen: true
   selection:
     strategy: max_step1_path_coverage

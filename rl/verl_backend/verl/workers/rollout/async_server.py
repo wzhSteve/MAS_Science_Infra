@@ -337,18 +337,20 @@ class AsyncLLMServerManager:
         ray.get([server.wake_up.remote() for server in self.async_llm_servers])
 
     def sleep(self):
-        """Sleep all vllm instances. Do not wait forever if one engine is wedged."""
+        """Sleep all vllm instances.
+
+        Do not cancel a rank that is still inside the collective, and do not
+        continue into checkpoint save after a partial sleep. That split is
+        what timed out the step-12 allgather before any shard was written.
+        """
         refs = [server.sleep.remote() for server in self.async_llm_servers]
-        ready, pending = ray.wait(refs, num_returns=len(refs), timeout=120)
+        ready, pending = ray.wait(refs, num_returns=len(refs), timeout=180)
         if pending:
-            print(f"vLLM sleep timed out on {len(pending)} server(s); cancelling")
-            for ref in pending:
-                ray.cancel(ref, force=True)
-        if ready:
-            try:
-                ray.get(ready)
-            except Exception as exc:
-                print(f"vLLM sleep failed ({type(exc).__name__}: {exc}); continuing")
+            raise RuntimeError(
+                f"vLLM sleep still running on {len(pending)} rank(s); "
+                "refusing to cancel a collective and save"
+            )
+        ray.get(ready)
 
     def submit_chat_completions(
         self,

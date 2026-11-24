@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
@@ -230,6 +231,105 @@ def window_agent_match(spec_path: Optional[str], active_agents: list[str]) -> Op
     return agent_span_pattern(active_agents)
 
 
+def apply_rl_env(config: Dict[str, Any]) -> Dict[str, str]:
+    """Push rl.yaml top-level ``env:`` into os.environ (and return what changed).
+
+    The block is YAML metadata that VERL never reads, so keys like
+    ``FCR_EVENT_LOG`` and ``AGENTFLOW_FIXED_BASE_URL`` used to die at the config
+    loader: run 9a45bbd456ad produced zero event files even though rl.yaml
+    asked for them. Absolute relative paths resolve against REPO_ROOT so the
+    value matches the Control-side artifact directory.
+    """
+    applied: Dict[str, str] = {}
+    raw = config.get("env")
+    if not isinstance(raw, dict):
+        return applied
+    for key, value in raw.items():
+        name = str(key)
+        text = str(value)
+        if text.startswith("experiments/") or text.startswith("./experiments/"):
+            text = str(REPO_ROOT / text.removeprefix("./"))
+        os.environ[name] = text
+        applied[name] = text
+    # Per-run isolation: Control exports TIR_RUN_ID/TIR_ROLLOUT_TREE_DIR for
+    # every launched run. Prefer the run's artifact directory so events from
+    # concurrent or resumed runs never append into the same jsonl.
+    event_log = str(os.environ.get("FCR_EVENT_LOG") or "").strip()
+    run_id = str(os.environ.get("TIR_RUN_ID") or "").strip()
+    trees_dir = str(os.environ.get("TIR_ROLLOUT_TREE_DIR") or "").strip()
+    if trees_dir and event_log:
+        run_dir = str(Path(trees_dir).parent)
+        exp_id = str(os.environ.get("TIR_EXPERIMENT_ID") or "experiment").strip()
+        event_log = str(Path(run_dir) / "events" / f"fcr_events.{exp_id}.jsonl")
+        os.environ["FCR_EVENT_LOG"] = event_log
+        applied["FCR_EVENT_LOG"] = event_log
+    if event_log and run_id and f".{run_id}." not in event_log:
+        stamped = event_log
+        if stamped.endswith(".jsonl"):
+            stamped = stamped[: -len(".jsonl")] + f".{run_id}.jsonl"
+        os.environ["FCR_EVENT_LOG"] = stamped
+        applied["FCR_EVENT_LOG"] = stamped
+    _require_dedicated_frozen_server()
+    print(f"rl.yaml env → {applied}")
+    return applied
+
+
+def _require_dedicated_frozen_server() -> None:
+    """Fail fast unless the dedicated verifier can actually *generate*.
+
+    A TCP connect is NOT enough. Run fcr-step5-test hit a vLLM whose HTTP front
+    end kept accepting connections while its EngineCore subprocess was already a
+    zombie -> every frozen-role request hung until timeout -> all verifier labels
+    missing -> Correct-pattern starved (the exact 9a45bbd456ad collapse, and the
+    reason the first attempt here produced 0 usable labels). So we require a real
+    1-token chat completion before training starts.
+    """
+    base = str(os.environ.get("AGENTFLOW_FIXED_BASE_URL") or "").strip()
+    if not base:
+        return
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = base.rstrip("/") + "/chat/completions"
+    model = str(os.environ.get("AGENTFLOW_FIXED_MODEL") or "Qwen3-4B")
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+    ).encode("utf-8")
+    deadline = time.time() + 20.0
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=6.0) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            if payload.get("choices"):
+                print(f"dedicated frozen-role server generating: {url}")
+                return
+            last_error = "response had no choices"
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            last_error = str(error)
+        time.sleep(1.0)
+    raise SystemExit(
+        f"AGENTFLOW_FIXED_BASE_URL={base} is reachable but NOT generating "
+        f"({last_error}).\n"
+        "A port that answers while its EngineCore is a zombie silently drops "
+        "every verifier label. Restart a healthy dedicated verifier:\n"
+        "  ./scripts/serve_fcr_verifier.sh\n"
+        "or unset AGENTFLOW_FIXED_BASE_URL to share the rollout engine again "
+        "(not recommended: shared-engine timeouts drop verifier labels)."
+    )
+
+
 def train(
     config: Dict[str, Any],
     n_runners: int,
@@ -240,6 +340,7 @@ def train(
 
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
+    apply_rl_env(config)
     from science_infra.control.task_files import load_task_rows
     from tir_agent import LitTirAgent
 

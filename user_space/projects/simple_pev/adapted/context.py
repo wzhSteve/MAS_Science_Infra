@@ -286,6 +286,7 @@ class Episode:
                 "p_unsatisfy", "s_satisfy", "s_unsatisfy", "prediction_mismatch",
                 "satisfy_token_ids", "unsatisfy_token_ids",
                 "prediction_token_start",
+                "prediction_unscoreable", "prediction_score_failure", "planner_scoreable",
                 "actual_satisfied", "verifier_reason", "recovery_chain_id",
                 "parent_prediction_event_id", "failure_confirmed",
             ):
@@ -336,6 +337,7 @@ class Episode:
                 "p_unsatisfy", "s_satisfy", "s_unsatisfy", "prediction_mismatch",
                 "satisfy_token_ids", "unsatisfy_token_ids",
                 "prediction_token_start",
+                "prediction_unscoreable", "prediction_score_failure", "planner_scoreable",
                 "actual_satisfied", "verifier_reason", "recovery_chain_id",
                 "parent_prediction_event_id", "failure_confirmed",
             ):
@@ -595,6 +597,13 @@ class EpisodeContext:
                 action["prediction_reason"] = reason
             if tool_input:
                 action["tool_input"] = tool_input
+            # Explicit bool copy: the generic loop above keeps only
+            # non-empty values, but scoreable=False is the signal we need.
+            action["planner_scoreable"] = bool(plan.get("planner_scoreable"))
+            if plan.get("prediction_unscoreable"):
+                action["prediction_unscoreable"] = True
+            if plan.get("prediction_score_failure"):
+                action["prediction_score_failure"] = str(plan["prediction_score_failure"])
             action["actual"] = actual_label(result)
             action["executed_at"] = executed_at
         output = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
@@ -648,6 +657,11 @@ class EpisodeContext:
                     and satisfied == "NO"
                     and not action["tool_fault"]
                 )
+            else:
+                # UNKNOWN / missing label: the Correct pattern needs the label on
+                # BOTH adjacent steps, so each miss silently drops up to 2 pairs.
+                # Counted here so daemon metrics expose the loss directly.
+                action["verifier_label_missing"] = True
             action["verifier_reason"] = str(verdict.get("reason") or "")
         _analysis, _token = ep.verifier.extract_conclusion(stop_verification)
         conclusion = verdict["conclusion"]

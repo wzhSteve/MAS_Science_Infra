@@ -45,11 +45,25 @@ DEFAULT_TIR: Dict[str, Any] = {
     "fcr_brier_beta": 0.1,
     "fcr_pattern_enabled": True,
     "fcr_pattern_require_prev_fail": False,
+    "fcr_pattern_soft_denominator": False,
     "fcr_repair_enabled": False,
     "fcr_hard_beam_cap": False,
     "fcr_brier_mode": "magnitude",
     "fcr_brier_enabled": False,
     "fcr_max_branches_per_episode": 1,
+    "fcr_pattern_min_label_coverage": 0.0,
+    # R = fcr_ra_weight·Ra(soft F1) + fcr_rc_weight·Rc + fcr_format_weight·rate.
+    "fcr_ra_weight": 0.5,
+    "fcr_rc_weight": 0.5,
+    # Planner format Rf = fcr_format_weight * scoreable_rate (default on at 0.1).
+    "fcr_format_enabled": True,
+    "fcr_format_weight": 0.1,
+    # Zero the planner-token advantage when a batch is mostly un-scoreable.
+    # Off until the r4 smoke proves the Rf gradient direction.
+    "fcr_drop_unscoreable_batch": False,
+    # Resend a prediction-only request to the frozen server after a scoring
+    # failure (approximate p, different engine). Off by default.
+    "fcr_rescore_fallback": False,
 }
 
 FCR_SITES = [{
@@ -357,6 +371,17 @@ def _apply_algo_actor_loss(cfg: Dict[str, Any], algo: str) -> None:
         actor["entropy_coeff"] = float(actor.get("entropy_coeff") or 0.0)
         actor["clip_ratio_low"] = 0.2
         actor["clip_ratio_high"] = 0.28
+    elif algo == "fcr_grpo":
+        # Match GRPO KL brake; keep yaml entropy (do not force 0) so high-Ra
+        # steps do not collapse tool-calling into a near-deterministic mode.
+        # An explicit yaml false (val-only) stays off so Ref is not loaded.
+        if actor.get("use_kl_loss") is not False:
+            actor["use_kl_loss"] = True
+        actor["kl_loss_coef"] = float(actor.get("kl_loss_coef") or 0.001)
+        actor["entropy_coeff"] = float(actor.get("entropy_coeff") or 0.0)
+        actor.setdefault("kl_loss_type", "low_var_kl")
+        actor.setdefault("clip_ratio_low", 0.2)
+        actor.setdefault("clip_ratio_high", 0.3)
     roll["actor"] = actor
     cfg["actor_rollout_ref"] = roll
 
@@ -418,6 +443,8 @@ def apply_train_signal(config: Dict[str, Any], signal: "TrainSignal") -> Dict[st
     algo = str(signal.advantage.name or "grpo").lower()
     cfg = apply_algo_overlay(config, algo)
     actor = dict(cfg.get("actor_rollout_ref", {}).get("actor") or {})
+    # LossSpec defaults entropy/kl to 0; fcr_grpo keeps yaml entropy after re-apply.
+    yaml_entropy = actor.get("entropy_coeff")
     actor["clip_ratio_low"] = float(signal.loss.clip_ratio_low)
     actor["clip_ratio_high"] = float(signal.loss.clip_ratio_high)
     actor["entropy_coeff"] = float(signal.loss.entropy_coeff)
@@ -428,6 +455,11 @@ def apply_train_signal(config: Dict[str, Any], signal: "TrainSignal") -> Dict[st
     # Re-apply source-aligned KL/clip after LossSpec merge so presets win.
     _apply_algo_actor_loss(cfg, algo)
     actor = dict(cfg.get("actor_rollout_ref", {}).get("actor") or {})
+    if algo == "fcr_grpo" and yaml_entropy is not None:
+        actor["entropy_coeff"] = float(yaml_entropy)
+        roll = dict(cfg.get("actor_rollout_ref") or {})
+        roll["actor"] = actor
+        cfg["actor_rollout_ref"] = roll
     tir = dict(cfg["algorithm"].get("tir") or {})
     tir["gamma"] = float(signal.advantage.gamma)
     tir["reward_scale_discount"] = float(signal.advantage.reward_scale_discount)

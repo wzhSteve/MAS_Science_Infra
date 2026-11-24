@@ -424,6 +424,29 @@ def normalize_prediction(value: Any) -> str:
     return token if token in _PREDICTIONS else ""
 
 
+def planner_step_scoreable(raw: Any, plan: Optional[Dict[str, Any]] = None) -> bool:
+    """True when one planner step is scoreable for the FCR format reward Rf.
+
+    Three conditions, all self-verifiable without a verifier or logprobs:
+    1. the payload parses (JSON or the three-line fallback);
+    2. it selects exactly one registered tool with a non-empty, non-placeholder
+       ``tool_input``;
+    3. ``prediction`` canonicalizes to YES/NO (bare or quoted).
+
+    ``plan`` may be the already-parsed payload; ``raw`` is the model text.
+    """
+    payload = plan if isinstance(plan, dict) and plan else parse_planner_payload(str(raw or ""))
+    if not isinstance(payload, dict) or not payload:
+        return False
+    tool = payload.get("tool_name") or payload.get("selected_tool")
+    if not tool or str(tool) not in _tool_names():
+        return False
+    tool_input = str(payload.get("tool_input") or "").strip()
+    if not tool_input or _is_planner_placeholder(tool_input):
+        return False
+    return bool(normalize_prediction(payload.get("prediction")))
+
+
 def actual_label(result: Any) -> str:
     """Tool success is not subgoal success. Non-empty output stays partial."""
     text = str(result if result is not None else "").strip()
@@ -1047,6 +1070,18 @@ Tool Name: <query or one URL>
         ):
             if key in scored:
                 self._last_plan[key] = scored[key]
+    if isinstance(self._last_plan, dict):
+        self._last_plan["planner_scoreable"] = bool(planner_step_scoreable(raw, self._last_plan))
+        if (
+            self._last_plan.get("prediction")
+            and "p_satisfy" not in (scored if isinstance(scored, dict) else {})
+        ):
+            # The step wrote a prediction but neither scoring path produced a
+            # probability: substrate loss, must be counted, never silent.
+            self._last_plan["prediction_unscoreable"] = True
+            reason = str(getattr(self.llm_engine, "last_score_failure", "") or "")
+            if reason:
+                self._last_plan["prediction_score_failure"] = reason
     next_step = _planner_for_parser(raw)
     if json_data is not None:
         json_data[f"action_predictor_{step_count}_prompt"] = prompt

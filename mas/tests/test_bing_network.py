@@ -94,7 +94,9 @@ class TestBingBrightDataOnly(unittest.TestCase):
         self.assertTrue(out.startswith("search_unavailable:"), out)
         self.assertIn("empty", out)
 
-    def test_success_stores_cache_second_call_skips_network(self) -> None:
+    def test_success_live_path_second_call_still_hits_network(self) -> None:
+        # r7: tool-layer cache is a hard pass-through; MAS_SEARCH_CACHE is
+        # ignored and every bing_search must hit Bright Data again.
         organic = {
             "body": json.dumps({
                 "organic": [{
@@ -124,7 +126,7 @@ class TestBingBrightDataOnly(unittest.TestCase):
             req.post.reset_mock()
             second = bing_search("Ada Lovelace")
         self.assertEqual(first, second)
-        req.post.assert_not_called()
+        req.post.assert_called_once()
 
     def test_denied_falls_back_to_html_in_auto_mode(self) -> None:
         envelope = {
@@ -205,7 +207,8 @@ class TestBingBrightDataOnly(unittest.TestCase):
         self.assertIn("empty_serp", out)
         self.assertTrue(out.startswith("search_unavailable:"), out)
 
-    def test_timeout_disables_brightdata_for_later_auto_calls(self) -> None:
+    def test_timeout_does_not_disable_brightdata_for_later_auto_calls(self) -> None:
+        """Transient ReadTimeout must not set _BD_ZONE_DENIED (infra_drop snowball)."""
         html = "<html><body><ol id=\"b_results\"><li class=\"b_no\">There are no results</li></ol></body></html>"
         with mock.patch.dict(
             os.environ,
@@ -222,6 +225,32 @@ class TestBingBrightDataOnly(unittest.TestCase):
             search_mod, "_request", return_value=(html, "")
         ), mock.patch.object(search_mod, "_wikipedia_search_hits", return_value=[]):
             req.post.side_effect = TimeoutError("timed out")
+            reload_search_cache()
+            first = bing_search("Ada Lovelace")
+            self.assertIn("search_unavailable:", first)
+            self.assertFalse(search_mod._BD_ZONE_DENIED)
+            req.post.reset_mock()
+            req.post.side_effect = TimeoutError("timed out")
+            bing_search("Grace Hopper")
+        self.assertGreaterEqual(req.post.call_count, 1)
+
+    def test_zone_denied_still_disables_brightdata(self) -> None:
+        html = "<html><body><ol id=\"b_results\"><li class=\"b_no\">There are no results</li></ol></body></html>"
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TIR_OFFLINE_SEARCH": "0",
+                "BRIGHT_DATA_API_KEY": "test-key",
+                "BRIGHT_DATA_MODE": "auto",
+                "BRIGHT_DATA_MAX_RETRIES": "1",
+                "MAS_SEARCH_CACHE": str(self.cache_path),
+                "TIR_BING_MIN_INTERVAL": "0",
+            },
+            clear=False,
+        ), mock.patch.object(search_mod, "requests") as req, mock.patch.object(
+            search_mod, "_request", return_value=(html, "")
+        ), mock.patch.object(search_mod, "_wikipedia_search_hits", return_value=[]):
+            req.post.return_value = _FakeResp(407, text="zone denied")
             reload_search_cache()
             first = bing_search("Ada Lovelace")
             self.assertIn("search_unavailable:", first)

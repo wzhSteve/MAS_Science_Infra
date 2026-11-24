@@ -174,6 +174,11 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
         "fcr/adv_within_response_std",
         "fcr/adv_within_response_max_std",
         "fcr/false_correction_rate",
+        "fcr/row_outcome_mean",
+        "fcr/row_Rc_mean",
+        "fcr/row_Rf_mean",
+        "fcr/row_injected_total_mean",
+        "fcr/reward_identity_gap",
     ):
         value = meta.get(key)
         if value is not None:

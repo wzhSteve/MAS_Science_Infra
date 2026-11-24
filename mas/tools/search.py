@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 from bs4 import BeautifulSoup
 
-from .search_cache import GAP_SENTINEL, cache_lookup, cache_store  # noqa: E402
+from .search_cache import GAP_SENTINEL  # noqa: E402,F401  # kept for build-script contract only; tool layer no longer reads the cache
 
 _MAX_SNIPPET_CHARS = int(os.getenv("TIR_SEARCH_MAX_CHARS", "2000"))
 _MAX_RESULTS = int(os.getenv("TIR_SEARCH_MAX_RESULTS", "10"))
@@ -587,81 +587,51 @@ def _cache_query_key(query: str) -> str:
     return out or q
 
 
+# --- Search-result cache: REMOVED (r7) --------------------------------------
+#
+# User decision 2026-11-13: all tool calls must hit the network dynamically.
+# The valcheck experiment proved the cached layer biased val down by ~0.13
+# (gap sentinels + SERP drift), so the entire cache-first wiring is now a
+# hard pass-through: every consumer always "misses" and nothing is written
+# back. The call sites below keep their structure (cheap no-ops) so the
+# network paths remain byte-identical to the pre-cache era. The kernel
+# (mas/tools/search_cache.py) and data/search_cache.json are kept on disk
+# untouched for scripts/build_search_cache.py and historical analysis only.
+#
+# Kept for reference: MAS_SEARCH_CACHE env is now ignored by the tool layer.
+_VAL_MODE_MARKER: Optional[str] = None
+
+
+def set_search_cache_mode(mode: Optional[str]) -> None:
+    """Deprecated no-op. Cache layer is removed; kept so agent code that
+    marks per-rollout train/val mode does not break."""
+    global _VAL_MODE_MARKER
+    _VAL_MODE_MARKER = mode
+
+
 def _cache_active() -> bool:
-    """Cache layer on/off: ONLY the MAS_SEARCH_CACHE env var decides."""
-    return bool(os.getenv("MAS_SEARCH_CACHE", "").strip())
+    """Always False: the cache layer is removed (r7)."""
+    return False
 
 
 def _cache_consume_query(query: str) -> Optional[str]:
-    """Three-branch cache consumption for SERP queries. Never raises.
-
-    hit -> cached text verbatim.
-    gap -> clean "search_unavailable: <sentinel>" WITHOUT retrying the
-           network: the producer already recorded this query as
-           network-failed, and burning proxy-hops on a known failure is
-           exactly what the cache exists to prevent.
-    miss -> None (call existing network logic).
-    """
-    try:
-        if not _cache_active():
-            return None
-        text, hit_type = cache_lookup("query", _cache_query_key(query))
-        if hit_type == "hit":
-            return text
-        if hit_type == "gap":
-            return f"search_unavailable: {GAP_SENTINEL}"
-        return None
-    except Exception:
-        # Cache failure must never break a live search.
-        return None
+    """REMOVED cache: hard miss, caller always runs the live network path."""
+    return None
 
 
 def _cache_consume_url(url: str) -> Optional[str]:
-    """Cached page body on hit; None on miss; gap short-circuits (see above).
-
-    NOTE: returns the body text WITHOUT the "url: <url>" header — the
-    header is added by fetch_page so cached and fresh outputs are
-    byte-identical.
-    """
-    try:
-        if not _cache_active():
-            return None
-        text, hit_type = cache_lookup("url", url)
-        if hit_type == "hit":
-            return text
-        if hit_type == "gap":
-            return f"fetch_unavailable: {GAP_SENTINEL}"
-        return None
-    except Exception:
-        return None
+    """REMOVED cache: hard miss, caller always runs the live network path."""
+    return None
 
 
 def _cache_store_query(query: str, value: str) -> None:
-    """Write-back a successful fresh SERP result. Never store failures as gaps."""
-    try:
-        if not _cache_active():
-            return
-        text = str(value or "")
-        low = text.lower()
-        if (
-            not text
-            or text == GAP_SENTINEL
-            or low.startswith(("search_unavailable", "bing unreachable", "error"))
-        ):
-            return
-        cache_store("query", _cache_query_key(query), text)
-    except Exception:
-        pass
+    """REMOVED cache: no write-back."""
+    return None
 
 
 def _cache_store_url(url: str, value: str) -> None:
-    """Write-back a successful fresh page body under "url::<url>"."""
-    try:
-        if not _cache_active():
-            return
-        cache_store("url", url, value)
-    except Exception:
-        pass
+    """REMOVED cache: no write-back."""
+    return None
 
 
 # --- Google-style SERP kernels (DuckDuckGo endpoints; Bing removed) ---------
@@ -834,12 +804,12 @@ def bing_search(query: str, top_k: int = _MAX_RESULTS) -> str:
             return out
         bd_err = err or "brightdata_failed"
         mode = (os.getenv("BRIGHT_DATA_MODE", "") or BRIGHT_DATA_MODE or "auto").strip().lower()
-        # 407 is a zone denial. Timeouts are the same for this process:
-        # retrying api.brightdata.com on every query stalls the rollout.
+        # Only permanent zone denial (407 / denied) disables BD for this process.
+        # Transient timeout/connection errors must NOT flip _BD_ZONE_DENIED: with
+        # 24 runners a single 15s ReadTimeout otherwise permanently routes the
+        # worker onto bad Bing-direct HTML and inflates infra_drop.
         low_err = bd_err.lower()
-        if mode == "auto" and any(
-            marker in low_err for marker in ("407", "denied", "timeout", "connectionerror")
-        ):
+        if mode == "auto" and any(marker in low_err for marker in ("407", "denied")):
             global _BD_ZONE_DENIED
             _BD_ZONE_DENIED = True
         if mode in ("force", "1", "true", "yes", "on"):

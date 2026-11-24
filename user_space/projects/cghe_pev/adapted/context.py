@@ -82,7 +82,9 @@ RUNTIME_DEFAULTS: Dict[str, Any] = {
         "max_total_step1_attempts": 12,
         "max_verified_snippet_prunes_per_episode": 2,
         "max_inherited_ce": 32,
-        "max_soft_advances_per_plan": 1,
+        "max_soft_advances_per_plan": 3,
+        "max_leaf_fails_before_exhaust": 2,
+        "max_dedup_refunds_per_episode": 0,
         "round_regen": True,
         "selection": {"strategy": "max_step1_path_coverage"},
         "pruning_gates": {
@@ -268,7 +270,9 @@ def cghe_settings() -> Dict[str, Any]:
         "max_total_step1_attempts": positive("max_total_step1_attempts", 12),
         "max_verified_snippet_prunes_per_episode": positive("max_verified_snippet_prunes_per_episode", 2),
         "max_inherited_ce": positive("max_inherited_ce", 32),
-        "max_soft_advances_per_plan": positive("max_soft_advances_per_plan", 1),
+        "max_soft_advances_per_plan": positive("max_soft_advances_per_plan", 3),
+        "max_leaf_fails_before_exhaust": positive("max_leaf_fails_before_exhaust", 2),
+        "max_dedup_refunds_per_episode": positive("max_dedup_refunds_per_episode", 3),
         "round_regen": round_regen,
         "max_regenerations": positive("max_regenerations", 5 if round_regen else 2),
         "selection": merged.get("selection") if isinstance(merged.get("selection"), dict) else {
@@ -479,6 +483,9 @@ class Episode:
         self.done = False
         self.direct_output = ""
         self.final_output = ""
+        self._cghe_dedup_hit = False
+        self._cghe_dedup_fingerprint = ""
+        self._cghe_dedup_refunds = 0
 
     def export_state(self, *, replay_plan: bool = False) -> Dict[str, Any]:
         """Serializable Memory + step so a branch can continue this episode.
@@ -964,8 +971,8 @@ def _authorize_cghe_call(controller: Any, tool_name: str, command: str):
     )
 
 
-def _preserved_tool_result(ep: "Episode", tool_name: str, command: str, reason: str) -> Any:
-    """Keep the original tool result when recovery refuses to run the call again."""
+def _cached_tool_result(ep: "Episode", tool_name: str, command: str) -> tuple[bool, Any]:
+    """Return ``(found, value)`` for a prior identical (tool, command) result."""
     actions = ep.memory.get_actions() if ep.memory is not None else {}
     for action in reversed(list((actions or {}).values())):
         if not isinstance(action, dict):
@@ -975,9 +982,17 @@ def _preserved_tool_result(ep: "Episode", tool_name: str, command: str, reason: 
         if str(action.get("command") or "") != str(command or ""):
             continue
         if "raw_tool_result" in action:
-            return action.get("raw_tool_result")
+            return True, action.get("raw_tool_result")
         if action.get("result") not in (None, ""):
-            return action.get("result")
+            return True, action.get("result")
+    return False, None
+
+
+def _preserved_tool_result(ep: "Episode", tool_name: str, command: str, reason: str) -> Any:
+    """Keep the original tool result when recovery refuses to run the call again."""
+    found, value = _cached_tool_result(ep, tool_name, command)
+    if found:
+        return value
     return f"recovery refused to replay {tool_name}: {reason}"
 
 
@@ -988,6 +1003,32 @@ def _mark_directive_node_failed(ep: "Episode", controller: Any) -> None:
         return
     if any(node.node_id == node_id for node in graph.nodes()):
         graph.mark_failed(node_id)
+
+
+def _apply_dedup_refund(ep: "Episode", *, stop: bool) -> bool:
+    """Give back the step spent on a cached, refused repeat call.
+
+    Returns True when a refund was applied. The refund is skipped when the
+    episode is stopping (a real answer must keep its step) and once
+    ``max_dedup_refunds_per_episode`` is reached, so the loop always terminates
+    and ``out_of_budget``/``budget_force_answer`` still fire.
+    """
+    if stop or not bool(getattr(ep, "_cghe_dedup_hit", False)):
+        return False
+    cap = int(cghe_settings().get("max_dedup_refunds_per_episode") or 0)
+    if cap <= 0:
+        return False
+    if int(getattr(ep, "_cghe_dedup_refunds", 0) or 0) >= cap:
+        return False
+    if int(getattr(ep, "step_count", 0) or 0) <= 0:
+        return False
+    wasted_key = f"Action Step {ep.step_count}"
+    actions = getattr(ep.memory, "actions", None)
+    if isinstance(actions, dict):
+        actions.pop(wasted_key, None)
+    ep.step_count -= 1
+    ep._cghe_dedup_refunds = int(getattr(ep, "_cghe_dedup_refunds", 0) or 0) + 1
+    return True
 
 
 def _execute_authorized(ep: "Episode", tool_name: str, command: str) -> Any:
@@ -1004,7 +1045,13 @@ def _execute_authorized(ep: "Episode", tool_name: str, command: str) -> Any:
     }
     if not auth.allowed:
         _mark_directive_node_failed(ep, controller)
-        return _preserved_tool_result(ep, tool_name, command, auth.reason)
+        found, value = _cached_tool_result(ep, tool_name, command)
+        # A refused repeat whose cached result we return is a pure no-op:
+        # no network call, no tool budget, no new information. Flag it so
+        # verify_window can refund the spent step (bounded by a per-episode cap).
+        ep._cghe_dedup_hit = bool(found)
+        ep._cghe_dedup_fingerprint = str(getattr(auth, "fingerprint", "") or "")
+        return value if found else _preserved_tool_result(ep, tool_name, command, auth.reason)
     result = ep.executor.execute_tool_command(tool_name, command)
     controller.commit_tool_call(auth)
     if not bool(getattr(auth, "replay", False)):
@@ -1534,7 +1581,50 @@ def _round_regen_enabled() -> bool:
 
 
 def _max_soft_advances_per_plan() -> int:
-    return max(1, int(cghe_settings().get("max_soft_advances_per_plan") or 1))
+    return max(1, int(cghe_settings().get("max_soft_advances_per_plan") or 3))
+
+
+def _max_leaf_fails_before_exhaust() -> int:
+    return max(1, int(cghe_settings().get("max_leaf_fails_before_exhaust") or 2))
+
+
+def _episode_pages(ep: "Episode", controller: Any = None) -> list[str]:
+    pages = list(getattr(ep, "_cghe_pages", None) or [])
+    graph = getattr(controller, "graph", None) if controller is not None else _graph_for(ep)
+    if graph is not None and hasattr(graph, "collected_page_texts"):
+        for page in graph.collected_page_texts():
+            if page and page not in pages:
+                pages.append(page)
+    return pages
+
+
+def _should_brake_regen(ep: "Episode", controller: Any) -> bool:
+    """Stop opening new DAGs near budget end or after enough regens with evidence."""
+    runtime = load_runtime()
+    max_steps = int(runtime.get("max_steps") or 10)
+    step = int(getattr(ep, "step_count", 0) or 0)
+    if step >= max(1, max_steps - 1):
+        return True
+    session = None
+    try:
+        from cghe_loop import session_for
+
+        session = session_for(controller, cghe_settings())
+    except Exception:
+        session = getattr(controller, "cghe_session", None)
+    regen_used = int(getattr(session, "regeneration_count", 0) or 0) if session is not None else 0
+    if regen_used >= 2 and _episode_pages(ep, controller):
+        return True
+    return False
+
+
+def _directive_hold_for_answer(ep: "Episode", reason: str) -> bool:
+    """Do not rebuild; let the next verifier tick force a final answer."""
+    ep._cghe_graph_mode = "switch"
+    ep._cghe_directive = dict(_PEV_DIRECTIVE)
+    ep._cghe_directive["decision"] = "continue_pev"
+    ep._cghe_directive["reason"] = reason
+    return True
 
 
 def _active_plans_for_action(graph: Any, action: Dict[str, Any], node_id: str) -> list[str]:
@@ -1663,6 +1753,14 @@ def _soft_exhaust_sibling_or_regen(
             ep._cghe_directive["coverage"] = int(coverage)
             return True
 
+    if _should_brake_regen(ep, controller):
+        session.events.append({
+            "event": "regen_braked",
+            "reasons": list(reasons or []),
+            "step": int(getattr(ep, "step_count", 0) or 0),
+        })
+        return _directive_hold_for_answer(ep, "regen braked; hold for budget-force answer")
+
     regen_reasons = list(reasons or ["SOFT_CHAIN_EXHAUSTED"])
     if "SOFT_CHAIN_EXHAUSTED" not in regen_reasons:
         regen_reasons.insert(0, "SOFT_CHAIN_EXHAUSTED")
@@ -1698,6 +1796,22 @@ def _end_round_for_regen(
 ) -> bool:
     """Seal current DAG and request a NEW planning DAG (round-based regeneration)."""
     from cghe_loop import session_for
+
+    if _should_brake_regen(ep, controller):
+        session = session_for(controller, cghe_settings())
+        if feedback is not None:
+            try:
+                _hypothesis_memory(controller).update_from_feedback(
+                    feedback, environment_fingerprint=_env_fingerprint(ep),
+                )
+            except Exception:
+                pass
+        session.events.append({
+            "event": "regen_braked",
+            "reasons": list(reasons or []),
+            "step": int(getattr(ep, "step_count", 0) or 0),
+        })
+        return _directive_hold_for_answer(ep, "regen braked; hold for budget-force answer")
 
     session = session_for(controller, cghe_settings())
     memory = _hypothesis_memory(controller)
@@ -1846,7 +1960,7 @@ def _switch_after_graph_failure(
                 pass
             return True
     if soft_miss and not successors:
-        # Leaf of a Soft-Bing chain failed → exhaust plan, try sibling / regen.
+        # Leaf fail: deepen on the same DAG first; soft-exhaust only after threshold.
         try:
             from hypothesis_round_memory import build_verifier_feedback
 
@@ -1889,6 +2003,47 @@ def _switch_after_graph_failure(
                 )
             except Exception:
                 pass
+        leaf_plans = soft_plans or _active_plans_for_action(graph, action, node_id)
+        if leaf_plans and hasattr(graph, "note_leaf_fail"):
+            graph.note_leaf_fail(leaf_plans)
+        leaf_count = 0
+        if leaf_plans and hasattr(graph, "leaf_fail_count"):
+            leaf_count = max(graph.leaf_fail_count(pid) for pid in leaf_plans)
+        elif leaf_plans:
+            leaf_count = 1
+        threshold = _max_leaf_fails_before_exhaust()
+        if leaf_count < threshold:
+            # Deepen: keep plan active, re-SELECT another Step-1 / path on this DAG.
+            try:
+                if fb_leaf is not None:
+                    _hypothesis_memory(controller).update_from_feedback(
+                        fb_leaf, environment_fingerprint=_env_fingerprint(ep),
+                    )
+            except Exception:
+                pass
+            selection = graph.select_step1() if graph is not None else None
+            if selection is not None:
+                selected, coverage, eligible = selection
+                session.log_selection(graph, selected, coverage, eligible)
+                node = graph.node(selected)
+                _store_graph_in_memory(ep, graph, selected_id=selected)
+                ep._cghe_graph_mode = "switch"
+                ep._cghe_directive = _directive_continue(
+                    node,
+                    f"deepen_after_leaf_fail coverage {coverage} (leaf_fail={leaf_count}/{threshold})",
+                    graph.round_id,
+                )
+                ep._cghe_directive["coverage"] = int(coverage)
+                session.events.append({
+                    "event": "leaf_deepen",
+                    "node_id": node_id,
+                    "plan_ids": list(leaf_plans),
+                    "leaf_fail_count": leaf_count,
+                    "threshold": threshold,
+                    "selected": selected,
+                })
+                return True
+            # No executable Step-1 left → fall through to soft-exhaust / regen.
         return _soft_exhaust_sibling_or_regen(
             ep,
             controller,
@@ -2629,6 +2784,8 @@ class EpisodeContext:
         ep = self.episode(_payload(message))
         executed_at = time.time()
         ep._cghe_last_auth = None
+        ep._cghe_dedup_hit = False
+        ep._cghe_dedup_fingerprint = ""
         self.pin_engines()
         from sft_prompts import last_python_error, repeated_python_program
 
@@ -2835,6 +2992,26 @@ class EpisodeContext:
             conclusion = "CONTINUE"
             analysis = (str(analysis or "") + " | blocked_stop_without_sufficient_evidence").strip(" |")
         answer = ""
+        # Budget exhausted: always force a final answer (never hang on rebuild / empty).
+        if out_of_budget and cghe_enabled():
+            stop = True
+            force_empty = bool(no_evidence and not has_any_observation)
+            ep._cghe_graph_mode = "switch"
+            try:
+                from cghe_loop import session_for
+
+                sess = session_for(ep.cghe_controller(), cghe_settings()) if ep.cghe_controller() else None
+                if sess is not None and isinstance(getattr(sess, "events", None), list):
+                    sess.events.append({
+                        "event": "budget_force_answer",
+                        "step": int(ep.step_count),
+                        "has_observation": has_any_observation,
+                        "force_empty": force_empty,
+                    })
+            except Exception:
+                pass
+            analysis = (str(analysis or "") + " | budget_force_answer").strip(" |")
+
         if stop and force_empty:
             ep.final_output = ""
             ep.direct_output = ""
@@ -2873,8 +3050,14 @@ class EpisodeContext:
             if not answer and printed:
                 ep.direct_output = printed
                 answer = wrap_answer(printed, source=ep.source)
+            # Prefer nonempty when we had any observation but model returned blank.
+            if out_of_budget and not answer and has_any_observation:
+                fallback = obtained_text.strip() or (pages[0][:200] if pages else "") or "unknown"
+                ep.direct_output = fallback
+                answer = wrap_answer(fallback, source=ep.source)
+                analysis = (str(analysis or "") + " | budget_nonempty_fallback").strip(" |")
 
-            # Abstention gate: refuse "does not contain" style finals while regen/step budget remains.
+            # Abstention gate: only when ≥2 steps remain (never on last steps / budget end).
             ctrl = ep.cghe_controller() if cghe_enabled() else None
             session = None
             if ctrl is not None:
@@ -2886,10 +3069,12 @@ class EpisodeContext:
                     session = getattr(ctrl, "cghe_session", None)
             regen_used = int(getattr(session, "regeneration_count", 0) or 0) if session is not None else 0
             regen_cap = int(cghe_settings().get("max_regenerations") or 5)
+            remaining_steps = int(runtime["max_steps"]) - int(ep.step_count)
             can_regen = (
                 cghe_enabled()
                 and ctrl is not None
                 and not out_of_budget
+                and remaining_steps >= 2
                 and regen_used < regen_cap
                 and _looks_like_abstention(answer or ep.direct_output or ep.final_output or "")
             )
@@ -2901,6 +3086,7 @@ class EpisodeContext:
                         "answer_preview": str(answer or "")[:160],
                         "regen_used": regen_used,
                         "regen_cap": regen_cap,
+                        "remaining_steps": remaining_steps,
                     })
                 node_id = ""
                 action_dict = action if isinstance(action, dict) else {}
@@ -2933,6 +3119,28 @@ class EpisodeContext:
                 ep.json_data["cghe_evidence_sufficient"] = bool(evidence_ok)
                 ep.done = True
                 _complete_cghe_plans(ep)
+        # Dedup refund: a refused repeat that returned cached evidence is a
+        # pure no-op (no network, no tool budget, no new information). Give the
+        # spent step back so the agent takes a real action instead of burning
+        # the max_steps budget on identical calls. Bounded per episode; once the
+        # cap is hit, repeats count normally and force-answer still guards the
+        # empty-output case.
+        if cghe_enabled() and _apply_dedup_refund(ep, stop=stop):
+            analysis = (str(analysis or "") + " | call_dedup_refund").strip(" |")
+            try:
+                from cghe_loop import session_for
+
+                sess = session_for(ep.cghe_controller(), cghe_settings()) if ep.cghe_controller() else None
+                if sess is not None and isinstance(getattr(sess, "events", None), list):
+                    sess.events.append({
+                        "event": "call_dedup",
+                        "step": int(ep.step_count) + 1,
+                        "refunded": True,
+                        "noop_refunds": int(ep._cghe_dedup_refunds),
+                        "fingerprint": str(getattr(ep, "_cghe_dedup_fingerprint", "") or "")[:80],
+                    })
+            except Exception:
+                pass
         return {
             "kind": "verify",
             "payload": {

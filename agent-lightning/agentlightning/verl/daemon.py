@@ -1068,7 +1068,11 @@ class AgentModeDaemon:
             position_ids = torch.clamp(torch.cumsum(attention_mask, dim=-1) - 1, min=0)
 
         is_drop_mask = torch.BoolTensor(is_drop_list).to(device)
-        scores = torch.tensor(reward_list, dtype=torch.bfloat16).to(device)
+        # fp32 (not bf16): the token-level score tensor is the substrate for the
+        # FCR reward ledger identity R_i = O_i + Rc_i + Rf_i. bf16 has ULP~0.016
+        # at outcome magnitude ~2, which alone exceeds the 1e-6 identity-gap
+        # STOP gate and masks real component drops (verified on r4 smoke step 5).
+        scores = torch.tensor(reward_list, dtype=torch.float32).to(device)
 
         # Create token-level scores by placing the final reward at the last token position
         token_level_scores = torch.zeros_like(attention_mask, dtype=scores.dtype)

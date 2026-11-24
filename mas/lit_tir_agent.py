@@ -58,6 +58,7 @@ def prediction_events_from_messages(messages: Any) -> List[Dict[str, Any]]:
                 "p_satisfy", "p_unsatisfy", "prediction_mismatch", "actual_satisfied",
                 "satisfy_token_ids", "unsatisfy_token_ids",
                 "prediction_token_start",
+                "prediction_unscoreable", "prediction_score_failure", "planner_scoreable",
                 "verifier_reason", "failure_confirmed", "tool_fault", "recovery_chain_id",
                 "parent_prediction_event_id",
                 "tool_name", "command",
@@ -299,7 +300,43 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
         traj = episode_to_trajectory(
             task_run, raw, arch, collector="lit_tir_agent", spec=self.spec, memory=mem
         )
+        # r6: bracket this rollout's judge usage. default_reward_fn (and the
+        # binary_correct readout below) are the only judge call sites here;
+        # snapshotting before/after attributes the counters to this episode.
+        from rl.rewards.llm_judge import judge_stats as _judge_stats_fn
+
+        _judge_stats_before = _judge_stats_fn()
         reward = float(default_reward_fn(traj, task_run))
+        # Reward ledger: O_i is answer-only hierarchical outcome (F1/EM + optional
+        # multi_tool; format failure does NOT force O=-1 — format is Rf).
+        # acc_i is the strict 0/1 verdict (binary_correct on extracted answer).
+        from rl.rewards.outcome import binary_correct, parse_alias_field
+
+        _gold = str(task_run.get("answer") or task_run.get("result") or "")
+        _source = str(task_run.get("source") or "gsm8k")
+        _aliases = parse_alias_field(task_run.get("answers"))
+        judge_correct = float(
+            binary_correct(traj.final_answer, _gold, source=_source, aliases=_aliases)
+        )
+        _judge_stats = {
+            k: v - _judge_stats_before.get(k, 0)
+            for k, v in _judge_stats_fn().items()
+        }
+        # planner 格式可打分率（Rf 的原料）：本 rollout 的 planner 步里多少满足
+        # "payload 可解析 + 工具合法且 tool_input 非空 + prediction 规范 YES/NO"。
+        # The flag is written by the adapted planner (sft_prompts.
+        # planner_step_scoreable) into each action and survives in the episode
+        # state, so no extra import is needed on the runner side.
+        scoreable_steps = 0
+        total_steps = 0
+        _state = agentflow_state_from_messages(getattr(raw, "messages", None) or [])
+        for action in ((_state or {}).get("actions") or {}).values():
+            if not isinstance(action, dict) or not action.get("prediction_event_id"):
+                continue
+            total_steps += 1
+            if action.get("planner_scoreable"):
+                scoreable_steps += 1
+        scoreable_rate = float(scoreable_steps / total_steps) if total_steps else 0.0
         n_search = traj.n_search
         n_python = traj.n_python
         n_fetch = int(getattr(traj, "n_fetch", 0) or 0)
@@ -391,6 +428,19 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                     "tir.n_fetch": int(n_fetch),
                     "tir.wall_time": float(time.time() - start),
                     "tir.format_ok": bool(format_ok),
+                    # Reward ledger: O_i (answer outcome) and acc_i (strict 0/1).
+                    # Daemon reads tir.reward for O and tir.judge_correct for Ra.
+                    "tir.reward": float(reward),
+                    "tir.judge_correct": float(judge_correct),
+                    "tir.scoreable_rate": float(scoreable_rate),
+                    # r6: judge API observability. llm_judge_correct fails
+                    # silent (returns 0.0), so a val collapse could not be
+                    # attributed to judge-API drift vs real regression. These
+                    # deltas are per-rollout judge attempts/failures during
+                    # this episode's scoring (0 unless local EM/F1 needed
+                    # the LLM fallback and it errored).
+                    "tir.judge_calls": float(_judge_stats.get("calls", 0)),
+                    "tir.judge_fails": float(_judge_stats.get("fails", 0)),
                     "tir.mas_fault": (mas_faults[0][:500] if mas_faults else ""),
                     "tir.obs_hashes": "|".join(hashes),
                     "tir.ig_deltas": "|".join(f"{x:.6f}" for x in ig_list),

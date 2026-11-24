@@ -42,11 +42,37 @@ def audit_records(records: List[Dict[str, Any]], *, threshold: float = 0.5, wind
     strict_n = strict_d = 0
     adjacent = windowed = lineage = false_corr = p_cross_pos = 0
     pairs = 0
+    # Substrate-health counters, computed over EVERY event (not only the ones
+    # that survive the p/label filter below). These reproduce the daemon's
+    # leading indicators offline so the scoring fix can be verified on r3's
+    # dumped rollout without a training run (see rl/REWARD.md, run 9a45bbd456ad).
+    # Denominators match rl/hooks/daemon.py:binary_prediction_metrics exactly:
+    #   predicted      = events carrying a prediction_event_id
+    #   scoreable      = planner_scoreable when present, else "p_satisfy is a
+    #                    finite number" (the fallback for pre-fix events)
+    #   dropped_pred   = wrote a prediction string but got no p_satisfy number
+    predicted = dropped_pred = scoreable = 0
+    unscoreable_flagged = 0
     for record in records:
         events = record.get("events") or []
         if not isinstance(events, list):
             continue
         for chain in _chains(events).values():
+            for event in chain:
+                if not isinstance(event, dict) or not event.get("prediction_event_id"):
+                    continue
+                predicted += 1
+                probability = _float(event.get("p_satisfy"))
+                if bool(event.get("prediction")) and probability is None:
+                    dropped_pred += 1
+                flag = event.get("planner_scoreable")
+                if flag is None:
+                    if probability is not None:
+                        scoreable += 1
+                elif bool(flag):
+                    scoreable += 1
+                if event.get("prediction_unscoreable"):
+                    unscoreable_flagged += 1
             usable = []
             for event in chain:
                 probability = _float(event.get("p_satisfy"))
@@ -128,6 +154,14 @@ def audit_records(records: List[Dict[str, Any]], *, threshold: float = 0.5, wind
         "false_correction": false_corr,
         "p_cross_positive": p_cross_pos,
         "sparsity_source": source,
+        "substrate": {
+            "predicted": predicted,
+            "scoreable": scoreable,
+            "dropped_pred": dropped_pred,
+            "unscoreable_flagged": unscoreable_flagged,
+            "pred_parse_rate": rate(scoreable, predicted),
+            "score_drop_rate": rate(dropped_pred, predicted),
+        },
     }
 
 
@@ -176,6 +210,13 @@ def flat_rates(stats: Dict[str, Any], *, prefix: str = "fcr") -> Dict[str, float
         cross_n,
     ))
     out[f"{prefix}/strict_event_count"] = float(strict["count"])
+    sub = stats.get("substrate") or {}
+    predicted_n = int(sub.get("predicted") or 0)
+    scoreable_n = int(sub.get("scoreable") or 0)
+    dropped_n = int(sub.get("dropped_pred") or 0)
+    out.update(pack("pred_parse_rate", sub.get("pred_parse_rate"), scoreable_n, predicted_n))
+    out.update(pack("score_drop_rate", sub.get("score_drop_rate"), dropped_n, predicted_n))
+    out[f"{prefix}/unscoreable_flagged"] = float(int(sub.get("unscoreable_flagged") or 0))
     return out
 
 
@@ -198,12 +239,17 @@ def render(name: str, stats: Dict[str, Any]) -> str:
     pred = stats["prediction_recovery"]
     exe = stats["execution_recovery"]
     strict = stats["strict_adjacent"]
+    sub = stats.get("substrate") or {}
     lines = [
         f"# Event audit: {name}",
         "",
         f"- rollouts: {stats['rollouts']}",
         f"- labeled steps: {stats['labeled_steps']}",
         f"- adjacent pairs: {stats['pairs']}",
+        f"- prediction events: {sub.get('predicted', 0)}",
+        f"- pred_parse_rate (scoreable share): {fmt(sub.get('pred_parse_rate'), sub.get('scoreable', 0), sub.get('predicted', 0))}",
+        f"- score_drop_rate (wrote prediction, no p): {fmt(sub.get('score_drop_rate'), sub.get('dropped_pred', 0), sub.get('predicted', 0))}",
+        f"- prediction_unscoreable flags: {sub.get('unscoreable_flagged', 0)}",
         f"- prediction failure rate: {fmt(stats['prediction_failure_rate'], stats['prediction_failure_count'], stats['labeled_steps'])}",
         f"- execution failure rate: {fmt(stats['execution_failure_rate'], stats['execution_failure_count'], stats['labeled_steps'])}",
         f"- P(p recovers | p failed): {fmt(pred['rate'], pred['num'], pred['den'])}",

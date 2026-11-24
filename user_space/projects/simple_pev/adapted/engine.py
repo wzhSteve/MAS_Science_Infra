@@ -18,6 +18,7 @@ import json
 import os
 import re
 import threading
+import time
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -92,6 +93,63 @@ def drain_calls(key: str) -> List[Dict[str, Any]]:
         return _CALL_LOG.pop(key, [])
 
 
+_SCORE_FAIL_LOCK = threading.Lock()
+_SCORE_FAILS: Dict[str, int] = {}
+
+_ECHO_SEMAPHORE_LOCK = threading.Lock()
+_ECHO_SEMAPHORE: Optional[threading.BoundedSemaphore] = None
+
+
+def _echo_semaphore() -> threading.BoundedSemaphore:
+    """Bound concurrent echo prefills so scoring cannot starve rollout decode."""
+    global _ECHO_SEMAPHORE
+    with _ECHO_SEMAPHORE_LOCK:
+        if _ECHO_SEMAPHORE is None:
+            limit = int(os.environ.get("AGENTFLOW_ECHO_CONCURRENCY") or 4)
+            _ECHO_SEMAPHORE = threading.BoundedSemaphore(max(1, limit))
+        return _ECHO_SEMAPHORE
+
+
+def _echo_route(frozen: bool, pinned: Optional[Dict[str, str]], model: str) -> Tuple[str, str, float]:
+    """(base_url, model, timeout) for the echo prefill.
+
+    Defaults to the same server the generation came from (:8000 rollout engine).
+    ``AGENTFLOW_ECHO_BASE_URL`` moves it to the dedicated frozen server (:8001)
+    so a fallback prefill never queues behind actor generations; the model name
+    then has to be the served name there (``AGENTFLOW_ECHO_MODEL``).
+    ``AGENTFLOW_ECHO_TIMEOUT`` bounds the fallback separately from the 90s main
+    LLM timeout.
+    """
+    base = os.environ.get("AGENTFLOW_ECHO_BASE_URL")
+    out_model = os.environ.get("AGENTFLOW_ECHO_MODEL") or model
+    timeout = float(os.environ.get("AGENTFLOW_ECHO_TIMEOUT") or 180)
+    if base:
+        return base.rstrip("/"), out_model, timeout
+    return _endpoint(frozen, pinned), out_model, timeout
+
+
+def note_score_failure(reason: str) -> None:
+    """Count a silent-scoring failure by reason. Never swallow these again.
+
+    Run 9a45bbd456ad lost label_coverage 0.999 -> 0.341 because every regex
+    miss landed in ``except: {}`` with no counter, so format drift carried zero
+    reward gradient. The daemon exports ``fcr/score_drop_rate`` from these
+    counts plus the per-call ``prediction_score_failure`` trace flag.
+    """
+    with _SCORE_FAIL_LOCK:
+        _SCORE_FAILS[reason] = _SCORE_FAILS.get(reason, 0) + 1
+
+
+def score_failure_counts() -> Dict[str, int]:
+    with _SCORE_FAIL_LOCK:
+        return dict(_SCORE_FAILS)
+
+
+def reset_score_failure_counts() -> None:
+    with _SCORE_FAIL_LOCK:
+        _SCORE_FAILS.clear()
+
+
 def _rollout_binding() -> Dict[str, str]:
     try:
         from workflow.llm_scope import current_rollout_llm
@@ -100,15 +158,35 @@ def _rollout_binding() -> Dict[str, str]:
     return current_rollout_llm()
 
 
+def _frozen_dedicated() -> bool:
+    """True when AGENTFLOW_DEDICATED_FROZEN=1 routes frozen roles off the rollout engine."""
+    return os.environ.get("AGENTFLOW_DEDICATED_FROZEN", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def frozen_generation_cap(requested: int, trainable: bool) -> int:
+    """Bound frozen-role generations. The trainable planner keeps its request."""
+    if trainable:
+        return int(requested)
+    cap = int(os.environ.get("AGENTFLOW_FROZEN_MAX_TOKENS") or 1024)
+    return min(int(requested), max(1, cap))
+
+
 def _endpoint(frozen: bool, pinned: Optional[Dict[str, str]] = None) -> str:
+    # Frozen roles (verifier/executor/tool) prefer a dedicated local server.
+    # Sharing the rollout engine (port 8000) serialized verifier prefill behind
+    # actor generations; the 15+ "Request timed out" errors in steps 5-7 of run
+    # 9a45bbd456ad dropped label_coverage 0.999 -> 0.370 and starved the Correct
+    # reward of the (t, t+1) labels it needs. Env overrides win over the pin.
+    if frozen:
+        dedicated = os.environ.get("AGENTFLOW_FIXED_BASE_URL")
+        if dedicated:
+            return dedicated.rstrip("/")
     pin = (pinned or {}).get("endpoint") or ""
     if pin:
         return str(pin).rstrip("/")
     bound = _rollout_binding().get("endpoint") or ""
     if bound:
         return bound.rstrip("/")
-    if frozen and os.environ.get("AGENTFLOW_FIXED_BASE_URL"):
-        return os.environ["AGENTFLOW_FIXED_BASE_URL"].rstrip("/")
     return (
         os.environ.get("OPENAI_API_BASE_URL")
         or os.environ.get("OPENAI_API_BASE")
@@ -118,14 +196,16 @@ def _endpoint(frozen: bool, pinned: Optional[Dict[str, str]] = None) -> str:
 
 
 def _model(frozen: bool, pinned: Optional[Dict[str, str]] = None) -> str:
+    if frozen:
+        dedicated = os.environ.get("AGENTFLOW_FIXED_MODEL")
+        if dedicated:
+            return dedicated
     pin = (pinned or {}).get("model") or ""
     if pin:
         return str(pin)
     bound = _rollout_binding().get("model") or ""
     if bound:
         return bound
-    if frozen and os.environ.get("AGENTFLOW_FIXED_MODEL"):
-        return os.environ["AGENTFLOW_FIXED_MODEL"]
     return (
         os.environ.get("MODEL_NAME")
         or os.environ.get("MODEL_Name")
@@ -203,11 +283,23 @@ _PROMPT_SLACK = 192
 _TRUNC_MARK = "...[truncated]..."
 
 
-def _serving_model_len(override: Optional[int] = None) -> int:
+def _serving_model_len(override: Optional[int] = None, *, frozen: Optional[bool] = None) -> int:
+    """Context window the target server will accept.
+
+    Frozen roles may sit on a dedicated vLLM with a SMALLER ``--max-model-len``
+    than the rollout engine. Clamping only against ``TIR_MAX_MODEL_LEN`` then
+    400s ("maximum context length is 8192 ... requested 6817") and the verifier
+    loses the label — the exact substrate failure this pipeline fix targets.
+    ``AGENTFLOW_FIXED_MODEL_LEN`` declares the dedicated server's window.
+    """
     if override is not None:
         return int(override)
-    raw = int(os.environ.get("TIR_MAX_MODEL_LEN") or 0)
-    return raw or 8192
+    raw = int(os.environ.get("TIR_MAX_MODEL_LEN") or 0) or 8192
+    if frozen:
+        fixed = int(os.environ.get("AGENTFLOW_FIXED_MODEL_LEN") or 0)
+        if fixed > 0:
+            return min(raw, fixed)
+    return raw
 
 
 def _conservative_tokens(text: str) -> int:
@@ -503,23 +595,33 @@ class LocalChatEngine:
         """Prompt-token logprobs for ``prompt``. ``max_tokens=0`` adds no new tokens."""
         import httpx
 
-        llm_timeout = float(os.environ.get("AGENTFLOW_LLM_TIMEOUT") or 90)
-        with httpx.Client(trust_env=False, timeout=llm_timeout) as http_client:
-            _note_active_http(http_client)
-            client = build_chat_client(
-                http_client,
-                base_url=_endpoint(frozen, self._pinned),
-                api_key=_api_key(self._pinned),
-                timeout=llm_timeout,
-            )
-            resp = client.completions.create(
-                model=model,
-                prompt=prompt,
-                max_tokens=0,
-                echo=True,
-                logprobs=1,
-                temperature=0,
-            )
+        base_url, echo_model, llm_timeout = _echo_route(frozen, self._pinned, model)
+        # Concurrent echo prefills serialize behind actor generations on the
+        # rollout engine; bound them and take an independent timeout so a slow
+        # fallback never eats the 300s planner window.
+        sem = _echo_semaphore()
+        if not sem.acquire(timeout=llm_timeout):
+            note_score_failure("echo_queue_timeout")
+            raise TimeoutError("echo scoring queue is full")
+        try:
+            with httpx.Client(trust_env=False, timeout=llm_timeout) as http_client:
+                _note_active_http(http_client)
+                client = build_chat_client(
+                    http_client,
+                    base_url=base_url,
+                    api_key=_api_key(self._pinned),
+                    timeout=llm_timeout,
+                )
+                resp = client.completions.create(
+                    model=echo_model,
+                    prompt=prompt,
+                    max_tokens=0,
+                    echo=True,
+                    logprobs=1,
+                    temperature=0,
+                )
+        finally:
+            sem.release()
         choice = resp.choices[0]
         payload = getattr(choice, "logprobs", None)
         values = getattr(payload, "token_logprobs", None)
@@ -529,11 +631,18 @@ class LocalChatEngine:
 
     def _score_from_choice_logprobs(self, choice: Any, completion: str) -> Dict[str, Any]:
         """Score YES/NO from the generation's top-logprobs, without a second prefill."""
-        from prediction_probs import SATISFY, UNSATISFY, prediction_record, written_prediction
+        from prediction_probs import (
+            SATISFY,
+            UNSATISFY,
+            prediction_anchor,
+            prediction_record,
+            written_prediction,
+        )
 
         logprobs = getattr(choice, "logprobs", None)
         content = getattr(logprobs, "content", None) if logprobs is not None else None
         if not content:
+            note_score_failure("logprobs_missing")
             return {}
         pieces: List[str] = []
         items: List[Any] = []
@@ -544,16 +653,19 @@ class LocalChatEngine:
             pieces.append(str(token or "").replace("Ġ", " ").replace("▁", " "))
             items.append(item)
         acc = "".join(pieces)
-        match = re.search(r'"prediction"\s*:\s*"', acc)
+        match = prediction_anchor(acc)
         if not match:
-            match = re.search(r'"prediction"\s*:\s*"', str(completion or ""))
-            if not match:
-                return {}
-            # Generation logprobs still include <think> tokens; locate the quote in pieces.
-            match = re.search(r'"prediction"\s*:\s*"', acc)
-            if not match:
-                return {}
-        value_start = match.end()
+            # No recognizable label value in the generation itself. Either the
+            # step was truncated before the field, or the policy wrote a value
+            # outside the YES/NO word list. Counted, never silent.
+            note_score_failure(
+                "anchor_missing_truncated"
+                if '"prediction"' not in acc
+                else "anchor_value_unreadable"
+            )
+            return {}
+        # Position of the label characters (works for quoted and bare forms).
+        value_start = match.start(2)
         pos = 0
         start = None
         for i, piece in enumerate(pieces):
@@ -563,6 +675,7 @@ class LocalChatEngine:
                 break
             pos = nxt
         if start is None or start >= len(items):
+            note_score_failure("anchor_token_out_of_range")
             return {}
 
         def _top_map(item: Any) -> Dict[str, float]:
@@ -600,6 +713,7 @@ class LocalChatEngine:
         s_satisfy = _pick(first, SATISFY, "ĠYES", " YES")
         s_unsatisfy = _pick(first, UNSATISFY, "ĠNO", " NO")
         if s_satisfy is None or s_unsatisfy is None:
+            note_score_failure("top_logprobs_missing_label")
             return {}
         record = prediction_record(written_prediction(completion), float(s_satisfy), float(s_unsatisfy))
         tok = _planner_tokenizer()
@@ -618,18 +732,26 @@ class LocalChatEngine:
         frozen: bool,
         choice: Any = None,
     ) -> None:
-        """Score YES and NO at the prediction quote. Failures leave probs empty."""
+        """Score YES and NO at the prediction value. Failures are counted, not silent.
+
+        ``self.last_score_failure`` keeps the most recent reason (``""`` on
+        success) so the call entry in the execution trace carries the flag;
+        ``fcr/score_drop_rate`` in the daemon counts those.
+        """
         self.last_label_probs = {}
+        self.last_score_failure = ""
         if self.role != "planner":
             return
         if choice is not None:
             try:
                 scored = self._score_from_choice_logprobs(choice, completion)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
                 scored = {}
+                note_score_failure(f"choice_score_error:{type(exc).__name__}")
             if scored:
                 self.last_label_probs = scored
                 return
+            self.last_score_failure = "choice_logprobs_unscoreable"
         try:
             from prediction_probs import (
                 SATISFY,
@@ -639,14 +761,20 @@ class LocalChatEngine:
                 sum_suffix_logprobs,
                 written_prediction,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            note_score_failure(f"import_error:{type(exc).__name__}")
+            self.last_score_failure = "import_error"
             return
         prefix = prediction_prefix(completion)
         if not prefix:
+            note_score_failure("fallback_anchor_missing")
+            self.last_score_failure = "fallback_anchor_missing"
             return
         try:
             tok = _planner_tokenizer()
             if tok is None:
+                note_score_failure("tokenizer_unavailable")
+                self.last_score_failure = "tokenizer_unavailable"
                 return
             base = tok.apply_chat_template(
                 [
@@ -684,18 +812,22 @@ class LocalChatEngine:
             self.last_label_probs["prediction_token_start"] = len(
                 tok.encode(prefix, add_special_tokens=False)
             )
-        except Exception:
+            self.last_score_failure = ""
+        except Exception as exc:  # noqa: BLE001
+            note_score_failure(f"echo_error:{type(exc).__name__}")
+            self.last_score_failure = f"echo_error:{type(exc).__name__}"
             self.last_label_probs = {}
 
     def _complete(self, prompt: str, system_prompt: str, max_tokens: int) -> str:
         import httpx
 
         frozen = not self.trainable
+        max_tokens = frozen_generation_cap(max_tokens, self.trainable)
         model = _model(frozen, self._pinned)
         # enable_thinking in .env covers every role, including the planner.
         quiet = skip_thinking(self.trainable)
         user = prompt.rstrip() + "\n/no_think" if quiet else prompt
-        model_len = _serving_model_len()
+        model_len = _serving_model_len(frozen=frozen)
         user = fit_user_to_context(user, system_prompt=system_prompt, model_len=model_len)
         # trust_env=False: an ambient HTTP proxy 502s the trainable rollout URL
         # (172.17/10.x) and the planner window never reaches exec.
@@ -744,7 +876,11 @@ class LocalChatEngine:
                 )
                 resp = client.chat.completions.with_raw_response.create(**kwargs).parse()
             text = _THINK_RE.sub("", str(resp.choices[0].message.content or "")).strip()
-            entry["response_head"] = " ".join(text.split())[:300]
+            # User rule: never truncate the planner response. The [:300] head
+            # cut the JSON before its ``prediction`` field (written after
+            # outline/subgoal/tool_input), which made run 9a45bbd456ad's drift
+            # un-scorable offline. Whitespace folded, text kept whole.
+            entry["response_head"] = " ".join(text.split())
             self._score_prediction_labels(
                 system_prompt, user_text, text, model, frozen, choice=resp.choices[0]
             )
@@ -758,16 +894,49 @@ class LocalChatEngine:
                     entry["token_entropies"] = per_token
             return text
 
-        try:
+        def _is_transient(exc: BaseException) -> bool:
+            """Timeouts/connection resets against a loaded engine: worth a retry.
+
+            The SDK keeps ``max_retries=0`` (a retry there stacks 90s waits into
+            the 300s window), so transient errors on FROZEN calls are retried
+            here with a short backoff. Trainable calls never retry: their spans
+            are recorded by agentlightning and a second attempt would double
+            the token ids.
+            """
+            import httpx
+
+            if isinstance(
+                exc,
+                (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError),
+            ):
+                return True
             try:
-                return _send(user)
-            except Exception as exc:
-                if not _is_context_error(exc):
-                    raise
-                shorter = truncate_user_middle(user, 600, 600)
-                if shorter == user:
-                    shorter = truncate_user_middle(user, 200, 200)
-                return _send(shorter)
+                import openai
+
+                if isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)):
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+
+        try:
+            attempt = 0
+            while True:
+                try:
+                    return _send(user)
+                except Exception as exc:
+                    if _is_context_error(exc):
+                        shorter = truncate_user_middle(user, 600, 600)
+                        if shorter == user:
+                            shorter = truncate_user_middle(user, 200, 200)
+                        return _send(shorter)
+                    # Frozen calls only: a retry re-sends the same prompt to the
+                    # dedicated server. Trainable spans are token-matched by
+                    # agentlightning, so a second attempt would corrupt them.
+                    if not frozen or attempt + 1 >= 3 or not _is_transient(exc):
+                        raise
+                    attempt += 1
+                    time.sleep(min(2.0 * attempt, 4.0))
         except Exception as exc:
             detail = ""
             response = getattr(exc, "response", None)
@@ -776,7 +945,7 @@ class LocalChatEngine:
                     detail = " " + (response.text or "")[:180]
                 except Exception:
                     detail = ""
-            entry["response_head"] = f"{type(exc).__name__}: {exc}{detail}"[:300]
+            entry["response_head"] = f"{type(exc).__name__}: {exc}{detail}"
             raise
         finally:
             record_call(str(self._log_key()), entry)

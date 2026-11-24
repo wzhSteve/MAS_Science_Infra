@@ -1,0 +1,4 @@
+ts=14:08:07 h=2.80 alive=False mem=[26035, 0] prog=('256', '256') engine_dead_tail=9
+  step13: ppo_kl=0.000 kl_loss=10.000 ent=0.005 grad=nan search=4.409 fetch=0.958 Ra=0.187 val=None collapse=False nan_grad=True
+HARD=['ActorDied']
+WARN_GPU1_EMPTY_WITH_ENGINEDEAD

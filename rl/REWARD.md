@@ -2,6 +2,38 @@
 
 四算法对比的默认训练标量是终局答案对错，由 `EVALUATION_MODEL`（当前为 gpt-4o）打 0/1。主曲线用这一列，不要把格式加减分混进同一张图。
 
+## FCR-GRPO 记账恒等式
+
+每轨迹总分与 token 注入严格同式：
+
+```
+R_i = w_a·Ra_i + w_c·Rc_i + w_f·rate_i
+    默认 w_a=0.5, w_c=0.5, w_f=0.1
+
+Ra_i ∈ [0, 1.1]   soft F1（accuracy / tir.reward；+ 可选 multi_tool；format 不打 -1）
+Rc_i ∈ [0, 1]     correct pattern：N_i/N_max（弱 require_prev_fail + 硬分母）
+rate_i ∈ [0, 1]   planner scoreable_rate → Rf = w_f·rate
+EM_i ∈ {0,1}      binary_correct → fcr/em_mean（仅统计，不进 R）
+```
+
+注入点（`rl/hooks/advantage.py`）：**先清零**该 rollout 所有 response token，再在
+**最后一行末 token** 写入一次 `R_i`（避免多轮放大）。
+
+指标口径（同名必须同义）：
+
+| 键 | 含义 | 分母 |
+|----|------|------|
+| `val/reward` / `fcr/R_answer_mean` | mean(Ra soft F1) | per-rollout |
+| `fcr/em_mean` | mean(binary_correct) | per-rollout |
+| `fcr/outcome_mean` | 同 Ra（诊断别名） | per-rollout |
+| `fcr/R_correct_mean` | mean(Rc 原始 pattern，注入前) | per-rollout |
+| `fcr/Rf_mean` | mean(w_f·rate) | per-rollout |
+| `fcr/R_total_mean` | `w_a·Ra + w_c·Rc + Rf` | per-rollout |
+| `fcr/row_*` / `fcr/reward_identity_gap` | 注入后 row 口径；gap 对 `Ra_part+Rc_part+Rf` | watch >1e-6 STOP |
+
+`training/reward`（per-rollout final_reward 均值）与 `fcr/R_total_mean` 分母不同，
+对账只看 `fcr/reward_identity_gap`。
+
 ## 默认：答案对错
 
 | 算法 | `algorithm.reward.outcome` | 训练标量 |
@@ -10,45 +42,11 @@
 | Flow-GRPO | `llm_binary` | gpt-4o 0/1 |
 | ARPO | `llm_binary` | gpt-4o 0/1 |
 | APPO | `llm_binary` | gpt-4o 0/1 |
+| FCR-GRPO | `hierarchical` | Ra soft F1（见上恒等式） |
 
-Judge 读 `.env` 的 `EVALUATION_MODEL_API_KEY` / `EVALUATION_MODEL_API_BASE` / `EVALUATION_MODEL`，与训练用的 `OPENAI_MODEL` 分开。实现在 `rl/rewards/llm_judge.py`。抽取出的终局答案送进 Flow-GRPO 同款 prompt；调用失败记 0，训练不中断。
-
-`rl/hooks/overlay.py` 的 `_apply_reward_outcome` 写入上述 outcome。`mas/train_tir_agent.py` 的 `reward_outcome_for` 把同一结果放到环境变量 `TIR_REWARD_OUTCOME`，采集端 `mas/workflow/collector.py` 据此打分。
-
-手写的 `algorithm.reward.outcome`（且 `meta.outcome_source` 不是 `preset`）优先于上表。
+Judge 读 `.env` 的 `EVALUATION_MODEL_*`。实现在 `rl/rewards/llm_judge.py`。
 
 ## ARPO / APPO 可选：格式 reward
 
-只对 ARPO、APPO 生效。配置键：
-
-```yaml
-algorithm:
-  reward:
-    include_format: false   # 默认。true 才叠加格式分
-```
-
-界面：采样设置或训练方案里，算法为 ARPO / APPO 时出现 Reward 下拉。
-
-- `仅答案对错（gpt-4o）` → `include_format: false`，outcome 仍是 `llm_binary`。
-- `答案对错 + 格式` → `include_format: true`，outcome 改为 `deep_research_llm`。
-
-格式项来自 ARPO/APPO 的 `deep_research.py`，准确度已从 token F1 换成 gpt-4o 0/1。实现在 `rl/rewards/deep_research.py`。答错保持 0，格式项只改「抽不出答案」和「已经判对」的样本：
-
-| 项 | 何时 | 幅度 |
-|----|------|------|
-| 不可解析 | 抽不出答案 | -0.3 |
-| strict 不符 | 已判对，工具标签或 `\boxed{}` 不完整 | -0.05 |
-| 缺 boxed | 已判对，且解析路径不是 `<answer>` 内的 `\boxed{}` | -0.05 |
-| 双工具 | 已判对，且 search 与 python 都用过 | +0.1 |
-
-GRPO / Flow-GRPO 忽略 `include_format`，始终是 `llm_binary`。
-
-## Loss（与 reward 开关无关）
-
-`rl/hooks/overlay.py` 的 `_apply_algo_actor_loss` 按源码写入，不随格式开关变化。
-
-| 算法 | KL | clip low / high | 其它 |
-|------|----|-----------------|------|
-| GRPO、Flow-GRPO | `use_kl_loss=true`，`kl_loss_coef=0.001` | 0.2 / 0.3 | `entropy_coeff=0` |
-| ARPO | `use_kl_loss=true`，`kl_loss_coef=0.0` | 0.2 / 0.3 | `loss_mode=vanilla` |
-| APPO | `use_kl_loss=true`，`kl_loss_coef=0.001` | 0.2 / 0.28 | `loss_mode=future_kl` |
+ARPO/APPO 默认无格式；`include_format: true` 时 soft 格式揉进 outcome 进 GRPO。
+FCR 用独立 Rf（`w_f·scoreable_rate`）末 token 注入，默认 `w_f=0.1`。

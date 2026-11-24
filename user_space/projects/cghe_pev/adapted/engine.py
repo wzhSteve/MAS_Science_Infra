@@ -101,14 +101,20 @@ def _rollout_binding() -> Dict[str, str]:
 
 
 def _endpoint(frozen: bool, pinned: Optional[Dict[str, str]] = None) -> str:
+    # Frozen roles (verifier/executor/tool) prefer a dedicated local server:
+    # sharing the rollout engine serialized verifier prefill behind actor
+    # generations and the resulting timeouts dropped verifier labels
+    # (run 9a45bbd456ad, label_coverage 0.999 -> 0.370). Env beats the pin.
+    if frozen:
+        dedicated = os.environ.get("AGENTFLOW_FIXED_BASE_URL")
+        if dedicated:
+            return dedicated.rstrip("/")
     pin = (pinned or {}).get("endpoint") or ""
     if pin:
         return str(pin).rstrip("/")
     bound = _rollout_binding().get("endpoint") or ""
     if bound:
         return bound.rstrip("/")
-    if frozen and os.environ.get("AGENTFLOW_FIXED_BASE_URL"):
-        return os.environ["AGENTFLOW_FIXED_BASE_URL"].rstrip("/")
     return (
         os.environ.get("OPENAI_API_BASE_URL")
         or os.environ.get("OPENAI_API_BASE")
@@ -203,11 +209,18 @@ _PROMPT_SLACK = 192
 _TRUNC_MARK = "...[truncated]..."
 
 
-def _serving_model_len(override: Optional[int] = None) -> int:
+def _serving_model_len(override: Optional[int] = None, *, frozen: Optional[bool] = None) -> int:
+    # Frozen roles on a dedicated vLLM may have a SMALLER --max-model-len than
+    # the rollout engine; clamping only against TIR_MAX_MODEL_LEN then 400s and
+    # the verifier loses its label. AGENTFLOW_FIXED_MODEL_LEN declares that window.
     if override is not None:
         return int(override)
-    raw = int(os.environ.get("TIR_MAX_MODEL_LEN") or 0)
-    return raw or 8192
+    raw = int(os.environ.get("TIR_MAX_MODEL_LEN") or 0) or 8192
+    if frozen:
+        fixed = int(os.environ.get("AGENTFLOW_FIXED_MODEL_LEN") or 0)
+        if fixed > 0:
+            return min(raw, fixed)
+    return raw
 
 
 def _conservative_tokens(text: str) -> int:

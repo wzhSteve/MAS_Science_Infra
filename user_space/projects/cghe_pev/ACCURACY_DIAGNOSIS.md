@@ -63,3 +63,38 @@
 | full | bamboogle | 20 | 0.600 | 0.550 | 0.950 | 0 | 2 |
 | forceregen | hotpot | 20 | 0.500 | 0.500 | 1.000 | 0 | 2 |
 | forceregen | bamboogle | 20 | 0.750 | 0.750 | 1.000 | 4 | 3 |
+
+## 消融结果
+
+目录：`/root/autodl-tmp/MAS_Science_Infra/user_space/projects/cghe_pev/artifacts/smoke20_deepen_20261108_181647`
+
+| 臂 | 数据集 | n | EM | accuracy | nonempty | pruned | regen |
+|---|---|---|---|---|---|---|---|
+| full | hotpot | 20 | 0.450 | 0.450 | 1.000 | 19 | 6 |
+| full | bamboogle | 20 | 0.600 | 0.600 | 1.000 | 25 | 10 |
+
+## 消融结果
+
+目录：`/root/autodl-tmp/MAS_Science_Infra/user_space/projects/cghe_pev/artifacts/smoke20_dedup_20261109_114003`
+
+| 臂 | 数据集 | n | EM | accuracy | nonempty | pruned | regen |
+|---|---|---|---|---|---|---|---|
+| full | hotpot | 20 | 0.400 | 0.400 | 1.000 | 0 | 8 |
+| full | bamboogle | 20 | 0.550 | 0.500 | 0.950 | 0 | 6 |
+
+## Dedup-refund 实验结论（2026-11-09，已回滚禁用）
+
+方案：命中缓存的重复调用退步（`max_dedup_refunds_per_episode=3`）。
+smoke20 同题对照（vs smoke20_deepen_20261108_181647）：
+
+| 数据集 | dedup acc | deepen acc | dedup llm/题 | deepen llm/题 | 配对 gained/lost |
+|---|---|---|---|---|---|
+| hotpot | 0.40 | 0.45 | 17.9 | 14.7 | 0 / 1 |
+| bamboogle | 0.50 | 0.60 | 16.2 | 14.5 | 2 / 4 |
+
+机制触发正常（70-75% 题有 refund、非empty 保持），但**假设被证伪**：退步没有转化为
+新的有效搜索（exec/题反而 2.0<2.3），而是让 agent 在 EXHAUST 后的同一批节点上
+免费空转（24 题出现 EXHAUST→dedup 空转），多烧 LLM 调用、acc 下降、并出现 1 例空答案。
+处理：runtime.yaml/RUNTIME_DEFAULTS 将 cap 置 0（代码保留、门控关闭）；单测与回归 155 项通过。
+推论：full 数据里"高重复→高兜底率"是相关性而非因果——重复调用是"无路可走"的症状，
+不是预算浪费的原因；真正的瓶颈是 DAG 在证据不足时缺少更聪明的前进方式。
