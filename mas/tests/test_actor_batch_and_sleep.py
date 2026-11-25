@@ -160,6 +160,68 @@ os._exit(0)
     assert "illegal memory access" in combined
 
 
+def _server_cls():
+    from rl.verl_backend.verl.workers.rollout.vllm_rollout.vllm_async_server import AsyncvLLMServer
+
+    return getattr(AsyncvLLMServer, "__ray_actor_class__", AsyncvLLMServer)
+
+
+def test_closed_server_does_not_enter_the_engine():
+    server = object.__new__(_server_cls())
+    server._accepting = False
+    entered = {"chat": 0, "completion": 0}
+
+    class Chat:
+        async def create_chat_completion(self, *args, **kwargs):
+            entered["chat"] += 1
+
+    class Comp:
+        async def create_completion(self, *args, **kwargs):
+            entered["completion"] += 1
+
+    server.openai_serving_chat = Chat()
+    server.openai_serving_completion = Comp()
+
+    class Req:
+        async def json(self):
+            raise AssertionError("closed server must not read the body")
+
+    chat = asyncio.run(server.chat_completion(Req()))
+    comp = asyncio.run(server.completion(Req()))
+    assert chat.status_code == 503
+    assert comp.status_code == 503
+
+    async def collect():
+        return [item async for item in server.chat_completion_generator(object())]
+
+    yielded = asyncio.run(collect())
+    assert yielded[0][0] == 503
+    assert entered == {"chat": 0, "completion": 0}
+
+
+def test_sleep_closes_the_gate_before_drain_and_wake_reopens_it():
+    server = object.__new__(_server_cls())
+    server._accepting = True
+    seen = []
+
+    class Engine:
+        output_processor = None
+
+        async def sleep(self):
+            seen.append(server._accepting)
+
+        async def wake_up(self):
+            seen.append(("wake", server._accepting))
+
+    server.engine = Engine()
+    asyncio.run(server.sleep())
+    assert seen == [False]
+    assert server._accepting is False
+    asyncio.run(server.wake_up())
+    assert seen[1] == ("wake", False)
+    assert server._accepting is True
+
+
 def test_sleep_timeout_is_not_swallowed():
     from rl.verl_backend.verl.workers.rollout.vllm_rollout.vllm_async_server import drain_then_sleep
 

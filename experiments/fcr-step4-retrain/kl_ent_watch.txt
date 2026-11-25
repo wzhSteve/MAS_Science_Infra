@@ -1,4 +1,0 @@
-ts=11:00:03 elapsed_h=1.97 alive=True ckpts=['global_step_11', 'global_step_12', 'global_step_13', 'global_step_5'] progress=('1', '64')
-  step13: ppo_kl=0.0 kl_loss=10.0 ent=0.005 search=4.097 fetch=1.014 Ra=0.137 val=NA
-    collapse_fingerprint=False has_kl_loss=True
-  FATAL_PATTERNS=['Traceback \\(most recent call last\\)']

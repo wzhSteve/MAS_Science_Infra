@@ -173,6 +173,8 @@ class AsyncvLLMServer(AsyncServerBase):
         self.vllm_dp_rank = vllm_dp_rank
         self.wg_prefix = wg_prefix
         self.engine: AsyncLLM = None
+        # Closed before level-2 unmap so a late HTTP call cannot enter execute_model.
+        self._accepting = True
 
     async def init_engine(self):
         """Init vLLM AsyncLLM engine."""
@@ -293,11 +295,19 @@ class AsyncvLLMServer(AsyncServerBase):
             request_logger=request_logger,
         )
 
+    def _closed_response(self) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"error": {"message": "planner is sleeping", "type": "server_error"}},
+        )
+
     async def chat_completion(self, raw_request: Request):
         """OpenAI-compatible HTTP endpoint.
 
         API reference: https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html
         """
+        if not self._accepting:
+            return self._closed_response()
         request_json = await raw_request.json()
         request = ChatCompletionRequest(**request_json)
         generator = await self.openai_serving_chat.create_chat_completion(request, raw_request)
@@ -312,6 +322,8 @@ class AsyncvLLMServer(AsyncServerBase):
 
     async def completion(self, raw_request: Request):
         """OpenAI completions endpoint for prompt-echo logprobs."""
+        if not self._accepting:
+            return self._closed_response()
         request_json = await raw_request.json()
         request = CompletionRequest(**request_json)
         generator = await self.openai_serving_completion.create_completion(request, raw_request)
@@ -332,6 +344,9 @@ class AsyncvLLMServer(AsyncServerBase):
         Returns:
             AsyncGenerator[Tuple[int, str]]: async generator of (status_code, data) pairs.
         """
+        if not self._accepting:
+            yield 503, 'data: {"error":{"message":"planner is sleeping","type":"server_error"}}\n\n'
+            return
         generator = await self.openai_serving_chat.create_chat_completion(request)
         if isinstance(generator, ErrorResponse):
             data = generator.model_dump_json(exclude_unset=True)
@@ -347,10 +362,13 @@ class AsyncvLLMServer(AsyncServerBase):
 
     async def wake_up(self):
         await self.engine.wake_up()
+        self._accepting = True
 
     async def sleep(self):
         # A leftover request makes engine.sleep() wait forever
         # (https://github.com/vllm-project/vllm/issues/17103) and a level-2
         # unmap while that request's kernel is still running corrupts CUDA.
-        # Drain first. A timeout must raise so the driver does not save.
+        # Refuse new calls first, then drain. A timeout must raise so the
+        # driver does not save.
+        self._accepting = False
         await drain_then_sleep(self.engine)

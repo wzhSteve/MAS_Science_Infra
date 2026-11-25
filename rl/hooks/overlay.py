@@ -55,6 +55,9 @@ DEFAULT_TIR: Dict[str, Any] = {
     # R = fcr_ra_weight·Ra(soft F1) + fcr_rc_weight·Rc + fcr_format_weight·rate.
     "fcr_ra_weight": 0.5,
     "fcr_rc_weight": 0.5,
+    # When true, Aa is written onto every planner row of the rollout. Default
+    # keeps Aa on the final planner row so in-flight runs stay comparable.
+    "fcr_ra_broadcast": False,
     # Planner format Rf = fcr_format_weight * scoreable_rate (default on at 0.1).
     "fcr_format_enabled": True,
     "fcr_format_weight": 0.1,

@@ -1,3 +1,0 @@
-ts=18:51:43 alive=True mem=[45463, 18899] prog=('0', '64')
-  step13: kl=0.000 ppo_kl=0.949 clip=0.650 grad=43.518 search=4.075 fetch=1.185 Ra=0.232
-STEP13_WRITTEN

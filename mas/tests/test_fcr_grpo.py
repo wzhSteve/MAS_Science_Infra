@@ -877,3 +877,91 @@ def test_zero_rc_group_has_no_correction_advantage():
     assert out.batch["advantages"][1].tolist() == pytest.approx([(0.3) / sigma, (0.3) / sigma])
     assert out.meta_info["fcr/n_traj_ac_nonzero"] == pytest.approx(0.0)
     assert out.meta_info["fcr/n_rc_credit_tokens"] == pytest.approx(0.0)
+
+
+def _ra_broadcast_batch():
+    """Five rows: rollout a has two repair steps, rollout b has none.
+
+    Lengths 1, 3, 2, 2, 2 pad to width 3. Ra is 0.2 vs 0.8, so Aa is -1 / +1.
+    """
+    return _mk_batch(
+        [[0.0], [0.0, 0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        extra={
+            "rollout_id_list": ["a", "a", "a", "a", "b"],
+            "planner_step_list": [1, 2, 3, 4, 1],
+            "p_satisfy_list": [0.9, 0.8, 0.9, 0.8, 0.2],
+            "actual_satisfied_list": [False, True, False, True, False],
+            "answer_score_list": [0.2, 0.2, 0.2, 0.2, 0.8],
+            "data_id_list": ["q", "q", "q", "q", "q"],
+        },
+    )
+
+
+def _apply_ra_broadcast(broadcast):
+    from rl.hooks.advantage import apply_fcr_split_advantage, inject_failure_reallocation_rewards
+
+    tir = {"fcr_threshold": 0.5, "fcr_format_enabled": False, "fcr_ra_broadcast": broadcast}
+    injected = inject_failure_reallocation_rewards(_ra_broadcast_batch(), tir)
+    rewards = injected.batch["token_level_rewards"].clone()
+    out = apply_fcr_split_advantage(injected, tir)
+    return out, rewards
+
+
+def test_ra_broadcast_spreads_aa_and_keeps_ac_on_repair_steps():
+    out, rewards_before = _apply_ra_broadcast(True)
+    adv = out.batch["advantages"]
+    assert adv[0].tolist() == pytest.approx([-1.0, 0.0, 0.0])
+    assert adv[1].tolist() == pytest.approx([-0.5, -0.5, -0.5])
+    assert adv[2].tolist() == pytest.approx([-1.0, -1.0, 0.0])
+    assert adv[3].tolist() == pytest.approx([-0.5, -0.5, 0.0])
+    assert adv[4].tolist() == pytest.approx([1.0, 1.0, 0.0])
+    assert out.meta_info["fcr/n_ra_credit_tokens"] == pytest.approx(10.0)
+    assert out.meta_info["fcr/n_rc_credit_tokens"] == pytest.approx(5.0)
+    assert torch.equal(out.batch["token_level_rewards"], rewards_before)
+    assert float(out.batch["token_level_rewards"][0:4].sum()) == pytest.approx(1.2)
+    assert float(out.batch["token_level_rewards"][4].sum()) == pytest.approx(0.8)
+    assert out.meta_info["fcr/reward_identity_gap"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_ra_broadcast_off_matches_last_row_aa():
+    on, rewards_on = _apply_ra_broadcast(True)
+    off, rewards_off = _apply_ra_broadcast(False)
+    adv = off.batch["advantages"]
+    assert adv[0].tolist() == pytest.approx([0.0, 0.0, 0.0])
+    assert adv[1].tolist() == pytest.approx([0.5, 0.5, 0.5])
+    assert adv[2].tolist() == pytest.approx([0.0, 0.0, 0.0])
+    assert adv[3].tolist() == pytest.approx([-0.5, -0.5, 0.0])
+    assert adv[4].tolist() == pytest.approx([1.0, 1.0, 0.0])
+    assert off.meta_info["fcr/n_ra_credit_tokens"] == pytest.approx(4.0)
+    assert off.meta_info["fcr/n_rc_credit_tokens"] == pytest.approx(5.0)
+    assert torch.equal(on.batch["token_level_rewards"], rewards_on)
+    assert torch.equal(off.batch["token_level_rewards"], rewards_off)
+    assert torch.equal(on.batch["token_level_rewards"], off.batch["token_level_rewards"])
+    assert off.meta_info["fcr/reward_identity_gap"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_ra_broadcast_counts_coverage_when_aa_is_zero():
+    from rl.hooks.advantage import apply_fcr_split_advantage, inject_failure_reallocation_rewards
+
+    batch = _mk_batch(
+        [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        extra={
+            "rollout_id_list": ["a", "a", "b"],
+            "planner_step_list": [1, 2, 1],
+            "p_satisfy_list": [0.9, 0.8, 0.2],
+            "actual_satisfied_list": [False, True, False],
+            "answer_score_list": [1.0, 1.0, 1.0],
+            "data_id_list": ["q", "q", "q"],
+        },
+    )
+    out = apply_fcr_split_advantage(
+        inject_failure_reallocation_rewards(batch, {"fcr_threshold": 0.5, "fcr_format_enabled": False}),
+        {"fcr_threshold": 0.5, "fcr_ra_broadcast": True},
+    )
+    adv = out.batch["advantages"]
+    # Aa is 0, so the non-repair row stays 0 even though the broadcast ran.
+    assert adv[0].tolist() == pytest.approx([0.0, 0.0])
+    assert adv[1].tolist() == pytest.approx([1.0, 1.0])
+    assert adv[2].tolist() == pytest.approx([0.0, 0.0])
+    assert out.meta_info["fcr/n_ra_credit_tokens"] == pytest.approx(6.0)
+    assert out.meta_info["fcr/n_rc_credit_tokens"] == pytest.approx(2.0)

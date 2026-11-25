@@ -36,6 +36,17 @@ except Exception:  # noqa: BLE001
         return nullcontext()
 
 
+def _val_generation_slot(trainable_call: bool) -> Any:
+    """At most eight validation planner calls occupy the rollout engine at once."""
+    if not trainable_call:
+        return nullcontext()
+    try:
+        from val_inflight import hold_planner_generation
+    except ImportError:
+        return nullcontext()
+    return hold_planner_generation()
+
+
 def _note_active_http(client: Any) -> None:
     """Let a window timeout close this socket. Missing the helper is not fatal."""
     try:
@@ -612,14 +623,15 @@ class LocalChatEngine:
                     api_key=_api_key(self._pinned),
                     timeout=llm_timeout,
                 )
-                resp = client.completions.create(
-                    model=echo_model,
-                    prompt=prompt,
-                    max_tokens=0,
-                    echo=True,
-                    logprobs=1,
-                    temperature=0,
-                )
+                with _val_generation_slot(not frozen):
+                    resp = client.completions.create(
+                        model=echo_model,
+                        prompt=prompt,
+                        max_tokens=0,
+                        echo=True,
+                        logprobs=1,
+                        temperature=0,
+                    )
         finally:
             sem.release()
         choice = resp.choices[0]
@@ -874,7 +886,8 @@ class LocalChatEngine:
                     api_key=_api_key(self._pinned),
                     timeout=llm_timeout,
                 )
-                resp = client.chat.completions.with_raw_response.create(**kwargs).parse()
+                with _val_generation_slot(self.trainable):
+                    resp = client.chat.completions.with_raw_response.create(**kwargs).parse()
             text = _THINK_RE.sub("", str(resp.choices[0].message.content or "")).strip()
             # User rule: never truncate the planner response. The [:300] head
             # cut the JSON before its ``prediction`` field (written after

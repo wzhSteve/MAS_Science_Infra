@@ -34,6 +34,7 @@ from workflow.runtime import (
 )
 from workflow.spec import load_spec
 from workflow.centralized_runtime import agentflow_state_from_messages
+from val_inflight import bind_val_mode
 
 load_repo_dotenv()
 
@@ -174,11 +175,11 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
             langchain_callbacks=[handler] if handler else None,
         )
         logger.info("[Rollout %s] source=%s q=%s", rollout_id, source, question[:180])
-        # user_space windows (AgentFlow / EPC-AW) read OPENAI_* from env, not WindowLLM.
-        from mas_agent import bind_training_llm_env
-
-        with bind_training_llm_env(endpoint=endpoint, model=str(llm.model), api_key="EMPTY"):
-            return self._rollout_with_bound_llm(
+        # Planner generations take a slot inside the HTTP call. Tool waits do not.
+        with bind_val_mode(str(rollout.mode)):
+            return self._rollout_inside_slot(
+                endpoint=endpoint,
+                llm_model=str(llm.model),
                 task_run=task_run,
                 cfg=cfg,
                 question=question,
@@ -186,6 +187,37 @@ class LitTirAgent(agl.LitAgent[Dict[str, Any]]):
                 source=source,
                 rollout_id=rollout_id,
                 attempt_id=str(rollout.attempt.attempt_id),
+                resume_parent=resume_parent,
+                start=start,
+            )
+
+    def _rollout_inside_slot(
+        self,
+        *,
+        endpoint: str,
+        llm_model: str,
+        task_run: Dict[str, Any],
+        cfg: LLMConfig,
+        question: str,
+        ground_truth: str,
+        source: str,
+        rollout_id: str,
+        attempt_id: str,
+        resume_parent: str,
+        start: float,
+    ) -> float | None:
+        # user_space windows (AgentFlow / EPC-AW) read OPENAI_* from env, not WindowLLM.
+        from mas_agent import bind_training_llm_env
+
+        with bind_training_llm_env(endpoint=endpoint, model=llm_model, api_key="EMPTY"):
+            return self._rollout_with_bound_llm(
+                task_run=task_run,
+                cfg=cfg,
+                question=question,
+                ground_truth=ground_truth,
+                source=source,
+                rollout_id=rollout_id,
+                attempt_id=attempt_id,
                 resume_parent=resume_parent,
                 start=start,
             )

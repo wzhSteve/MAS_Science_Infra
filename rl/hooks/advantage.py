@@ -111,6 +111,7 @@ def apply_tir_advantages(
             "fcr/unscoreable_batch_advantage_zeroed",
             "fcr_batch_scored_ratio",
             "fcr/n_traj_ac_nonzero",
+            "fcr/n_ra_credit_tokens",
             "fcr/n_rc_credit_tokens",
         )
     }
@@ -1400,11 +1401,12 @@ def inject_failure_reallocation_rewards(batch: DataProto, tir: Dict[str, Any]) -
 
 
 def apply_fcr_split_advantage(batch: DataProto, tir: Optional[Dict[str, Any]] = None) -> DataProto:
-    """Separate population-std GRPO for Ra and Rc, placed on the decision rows.
+    """Separate population-std GRPO for Ra and Rc.
 
-    Skips stock per-row GRPO. Advantages are constant on the response mask of
-    the final planner row (Aa) and of each repair row (Ac / m). Other planner
-    rows stay at 0.
+    Skips stock per-row GRPO. Ac/m stays on the response mask of each repair
+    row. Aa stays on the final planner row when ``fcr_ra_broadcast`` is false,
+    and is written onto every planner row of that rollout when the flag is
+    true. Other positions stay at 0.
     """
     if not bool((getattr(batch, "meta_info", None) or {}).get("fcr_reward_injected")):
         return batch
@@ -1465,11 +1467,16 @@ def apply_fcr_split_advantage(batch: DataProto, tir: Optional[Dict[str, Any]] = 
             ac[rid] = correct_adv
     advantages = torch.zeros_like(template)
     credit_tokens = 0
+    ra_credit_tokens = 0
     ac_nonzero = 0
+    broadcast = bool(tir.get("fcr_ra_broadcast", False))
     for rid, last in last_row.items():
-        mask = response_mask[last] > 0
-        if bool(mask.any()):
-            advantages[last] = advantages[last] + mask.to(advantages.dtype) * float(aa.get(rid, 0.0))
+        answer_adv = float(aa.get(rid, 0.0))
+        rows = by_rollout[rid] if broadcast else [last]
+        for row in rows:
+            row_mask = response_mask[row] > 0
+            ra_credit_tokens += int(row_mask.sum().item())
+            advantages[row] = advantages[row] + row_mask.to(dtype=advantages.dtype) * answer_adv
         correct_adv = float(ac.get(rid, 0.0))
         if correct_adv != 0.0:
             ac_nonzero += 1
@@ -1487,6 +1494,7 @@ def apply_fcr_split_advantage(batch: DataProto, tir: Optional[Dict[str, Any]] = 
     batch.batch["returns"] = advantages.clone()
     meta = dict(getattr(batch, "meta_info", None) or {})
     meta["fcr/n_traj_ac_nonzero"] = float(ac_nonzero)
+    meta["fcr/n_ra_credit_tokens"] = float(ra_credit_tokens)
     meta["fcr/n_rc_credit_tokens"] = float(credit_tokens)
     batch.meta_info = meta
     return batch

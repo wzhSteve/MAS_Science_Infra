@@ -1,5 +1,8 @@
 profile: a800_2gpu
 algo: fcr_grpo
+# r5: 8 → 24 runners. Rollout dominates the step (91.7% wall clock, GPU0 util
+# ~0% waiting on serial HTTP/tool latency); runners scale near-linearly while
+# Bing stays serialized by the TIR_BING_MIN_INTERVAL file lock (mas/tools/search.py).
 n_runners: 24
 rollout_per_gpu: 2
 devices:
@@ -16,6 +19,7 @@ algorithm:
     fcr_threshold: 0.5
     fcr_lambda: 0.0
     fcr_pattern_enabled: true
+    # R = 0.5·Ra(soft F1) + 0.5·Rc + 0.1·Rf. Rc = main-weak + hard denom.
     fcr_pattern_require_prev_fail: false
     fcr_pattern_soft_denominator: false
     fcr_pattern_min_label_coverage: 0.8
@@ -29,7 +33,8 @@ algorithm:
     fcr_brier_beta: 0.0
     fcr_brier_mode: fixed
     fcr_hard_beam_cap: true
-    initial_rollouts: 2
+    fcr_ra_broadcast: true
+    initial_rollouts: 4
     max_branch_depth: 2
     beam_size: 2
     ready_batch: true
@@ -68,11 +73,14 @@ data:
   val_batch_size: null
 actor_rollout_ref:
   rollout:
-    tensor_model_parallel_size: 1
+    # Both A800s serve the planner. TP=2 at rollout; FSDP world size stays 2 at update.
+    tensor_model_parallel_size: 2
     n: 8
     log_prob_micro_batch_size_per_gpu: 1
     name: vllm
-    gpu_memory_utilization: 0.28
+    # Shares both A800s with the frozen TP=2 engine (util 0.18). 0.45+0.18=0.63.
+    # The update sleeps both engines at level 2 so the KV pools are released.
+    gpu_memory_utilization: 0.45
     engine_kwargs:
       vllm:
         enable_auto_tool_choice: true
@@ -80,11 +88,19 @@ actor_rollout_ref:
         max_model_len: 10240
         served_model_name: LLM/Qwen3-4B
   actor:
-    ppo_mini_batch_size: 1
+    # Worker does mini * rollout.n / fsdp_world. world=2, n=8 -> 1024 rows/rank.
+    # Triplet steps are often shorter than 2048; the trainer then keeps a
+    # multiple of world size and the actor runs one Adam step on that batch.
+    ppo_mini_batch_size: 256
     ppo_micro_batch_size_per_gpu: 1
     optim:
-      lr: 1.0e-06
-    entropy_coeff: 0
+      # Isolate run: keep 5e-7 after O/Rc/Rf isolation (Rf off, Rc=main-weak).
+      lr: 5.0e-7
+    # Brake tool-use collapse after high-Ra steps (ppo_kl was 11–23 with no KL term).
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    entropy_coeff: 0.01
     fsdp_config:
       param_offload: true
       optimizer_offload: true
@@ -98,34 +114,46 @@ actor_rollout_ref:
     enable_gradient_checkpointing: true
 trainer:
   n_gpus_per_node: 2
-  val_before_train: true
+  val_before_train: false
   critic_warmup: 0
   logger:
   - console
   - tensorboard
   project_name: AgentLightning
-  experiment_name: fcr_step6_valcheck_r7
-  default_local_dir: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/fcr_step6_valcheck_r7
+  experiment_name: fcr_qwen3_4b
+  default_local_dir: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/fcr_qwen3_4b
   nnodes: 1
-  test_freq: 0
+  # Every step must record val Ra/Rc. ~45 min per val.
+  test_freq: 1
   total_epochs: 1
-  total_training_steps: 10
-  save_freq: 0
+  # Fresh run from the Qwen3-4B base weights. 17 Adam steps, val after each.
+  total_training_steps: 17
+  save_freq: 1
+  # 1 → retain.py keeps only the latest step and the best val Ra.
   max_actor_ckpt_to_keep: 1
-  resume_mode: resume_path
-  resume_from_path: /root/autodl-tmp/MAS_Science_Infra/mas/checkpoints/AgentLightning/fcr_step4_retrain/global_step_6
-  val_only: true
+  resume_mode: disable
 env:
   FCR_GRAD_DIAGNOSTICS: '0'
   FCR_BRIER_MAX_ROWS: '0'
-  FCR_EVENT_LOG: experiments/fcr-step4-retrain/artifacts/events/fcr_step6_valcheck_r7.jsonl
+  FCR_EVENT_LOG: experiments/fcr-qwen3-4b/artifacts/events/fcr_qwen3_4b.jsonl
   AGENTFLOW_FIXED_BASE_URL: http://127.0.0.1:8001/v1
   AGENTFLOW_FIXED_MODEL: Qwen3-4B
+  # Server root, not /v1. Sharding manager sleeps this engine before FSDP.
+  FCR_FROZEN_VLLM_URL: http://127.0.0.1:8001
+  # Echo fallback goes to the dedicated frozen server (:8001), bounded
+  # separately from the 90s main LLM timeout. r5: 4 → 8 so echo prefill
+  # keeps up with 24 runners instead of becoming the new serialization point
+  # (:8001 has its own 80GB card headroom once verifier moves to GPU0 util 0.3).
   AGENTFLOW_ECHO_BASE_URL: http://127.0.0.1:8001/v1
   AGENTFLOW_ECHO_MODEL: Qwen3-4B
   AGENTFLOW_ECHO_TIMEOUT: '180'
   AGENTFLOW_ECHO_CONCURRENCY: '8'
-  AGENTFLOW_LLM_TIMEOUT: '60'
-  BRIGHT_DATA_TIMEOUT: '15'
-  BRIGHT_DATA_MAX_RETRIES: '1'
+  # Planner/actor chat timeout. 60s caused Request timed out → 0 triplets
+  # after step-boundary vLLM wake_up; 180s matches eval defaults.
+  AGENTFLOW_LLM_TIMEOUT: '300'
+  # Bright Data: 15s ReadTimeout caused auto-mode snowballs; 45s is module default.
+  BRIGHT_DATA_TIMEOUT: '45'
+  BRIGHT_DATA_MAX_RETRIES: '2'
+  # r7: tool-layer cache hard-off; empty env is double insurance so train/val
+  # both measure live search (aligned with bf16 step5 val 0.3304).
   MAS_SEARCH_CACHE: ''

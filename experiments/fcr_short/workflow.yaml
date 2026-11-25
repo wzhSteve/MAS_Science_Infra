@@ -66,7 +66,7 @@ sampling:
   mode: grpo_n
   group_n: 8
   beam_size: 2
-  initial_rollouts: 2
+  initial_rollouts: 4
   max_branch_depth: 2
   expand_in_runner: true
   sites:
